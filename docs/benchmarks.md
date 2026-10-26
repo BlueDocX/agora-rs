@@ -51,4 +51,15 @@ One brief on `muse-spark-1.3`, standard pricing. The brief asked for a one-page 
 - The final "assemble" task was rejected twice for exceeding a word limit and left for a person. Word limits should be checked in code, not by a model (next change).
 - **Reasoning tokens are 83% of output** even at `low` effort, so effort per role is the biggest cost lever. B2 will measure acceptance rate against effort.
 
-Reproduce: `MODEL_API_KEY=... cargo run -p agora-engine --bin agora-run -- "<brief>"`. A single run varies; B2 will repeat many briefs.
+**Second run, same brief, after word limits and required headings became code checks** (the planner sets them per task, and plain code checks them before any review call):
+
+| Tasks | Calls | Wall time | Input tokens (cached) | Output tokens (reasoning) | Cost |
+|---|---|---|---|---|---|
+| 5 | 11 | 32.9 s | 8,780 (791 = 9%) | 12,162 (7,999 = 66%) | $0.062 |
+
+- All 5 tasks were accepted on the first draft. The assembled plan is 428 words, which is one page.
+- That run also showed that the deliverable repeated the inputs the assembler had already merged (1,949 words). It now shows only final results: tasks that no accepted task built on.
+- A third run after the review fixes cost $0.075 (13 calls, 39.7 s). Its deliverable is just the assembled plan: 379 words, with the four requested sections as headings.
+- Three runs are anecdotes, not a comparison: the drop from $0.16 to $0.06 may be mostly run-to-run variance. B2 measures this properly.
+
+Reproduce: `MODEL_API_KEY=... cargo run -p agora-engine --bin agora-run -- "<brief>"`.

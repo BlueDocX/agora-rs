@@ -4,7 +4,7 @@
 //! [`Plan::new`] checks the graph. An invalid graph goes back to the model with the
 //! exact error, up to [`MAX_ATTEMPTS`] times.
 
-use agora_core::{Plan, PlanError, TaskSpec};
+use agora_core::{Limits, Plan, PlanError, TaskSpec};
 use agora_muse::{Effort, Message, MuseClient, Request, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -20,7 +20,10 @@ const PLANNER_ROLE: &str = "You are the planner. Split the brief into at most 8 
 specialists can do independently. Give each task a short kebab-case id, a title, \
 instructions a specialist can follow without seeing the other tasks, the ids it \
 depends on (only when it truly needs their output), and 2-4 acceptance criteria a \
-reviewer can check by reading the result. Prefer wide plans over long chains.";
+reviewer can check by reading the result. When the brief implies a length, set \
+max_words for the task (0 = no limit). When the result needs particular sections, list \
+their heading text in required_headings, without # marks (empty = none). These two are checked exactly by \
+code, so don't repeat them as acceptance criteria. Prefer wide plans over long chains.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
@@ -29,6 +32,17 @@ pub struct Task {
     pub instructions: String,
     pub deps: Vec<String>,
     pub acceptance: Vec<String>,
+    /// 0 = no limit. Checked by code, not by a model.
+    pub max_words: u32,
+    /// Markdown headings the result must contain. Checked by code.
+    pub required_headings: Vec<String>,
+}
+
+impl Task {
+    #[must_use]
+    pub fn limits(&self) -> Limits {
+        Limits { max_words: self.max_words, required_headings: self.required_headings.clone() }
+    }
 }
 
 #[derive(Deserialize)]
@@ -74,9 +88,11 @@ fn schema() -> Value {
                 "title": {"type": "string"},
                 "instructions": {"type": "string"},
                 "deps": strings,
-                "acceptance": strings
+                "acceptance": strings,
+                "max_words": {"type": "integer", "minimum": 0},
+                "required_headings": strings
             },
-            "required": ["id", "title", "instructions", "deps", "acceptance"],
+            "required": ["id", "title", "instructions", "deps", "acceptance", "max_words", "required_headings"],
             "additionalProperties": false
         }}},
         "required": ["tasks"],
@@ -135,6 +151,8 @@ mod tests {
             instructions: String::new(),
             deps: deps.iter().map(|d| (*d).to_string()).collect(),
             acceptance: vec!["is checked".into()],
+            max_words: 0,
+            required_headings: Vec::new(),
         }
     }
 

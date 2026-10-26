@@ -93,7 +93,8 @@ async fn mock(script: Script) -> (String, Arc<Mutex<Seen>>) {
 }
 
 fn task(id: &str, deps: &[&str]) -> Value {
-    json!({"id": id, "title": id, "instructions": format!("do {id}"), "deps": deps, "acceptance": [format!("{id} is done")]})
+    json!({"id": id, "title": id, "instructions": format!("do {id}"), "deps": deps, "acceptance": [format!("{id} is done")],
+           "max_words": 0, "required_headings": []})
 }
 
 fn plan_of(tasks: &[Value]) -> Value {
@@ -130,8 +131,10 @@ async fn runs_a_plan_and_feeds_each_task_its_inputs() {
     let seen = seen.lock().unwrap();
     assert!(seen.worker_prompts["write"][0].contains("Input from finished task \"research\":\ndraft 1 of research"));
     assert!(!seen.worker_prompts["design"][0].contains("Input from finished task"));
+    // "research" fed "write", so only the final results appear.
     let deliverable = report.deliverable();
-    assert!(deliverable.find("## research").unwrap() < deliverable.find("## write").unwrap());
+    assert!(!deliverable.contains("## research"), "{deliverable}");
+    assert!(deliverable.contains("## write\n\ndraft 1 of write") && deliverable.contains("## design"), "{deliverable}");
     assert_eq!(report.spend.calls, 1 + 3 + 3);
 }
 
@@ -172,9 +175,14 @@ async fn retries_with_the_failed_criteria_then_leaves_it_for_a_person() {
 
     let Outcome::Done(fixed) = &report.outcomes[0] else { panic!("{:?}", report.outcomes[0]) };
     assert_eq!(fixed.drafts, 2);
-    assert!(seen.lock().unwrap().worker_prompts["fixable"][1].contains("Unmet criteria:\n- fixable is done"));
+    assert!(seen.lock().unwrap().worker_prompts["fixable"][1].contains("does not meet these criteria yet:\n- fixable is done"));
     assert!(matches!(&report.outcomes[1], Outcome::Failed(TaskError::Rejected { failed_criteria }) if failed_criteria == &["hopeless is done"]));
     assert!(matches!(report.outcomes[2], Outcome::Skipped));
+    // A partial run keeps its section titles and says what is missing.
+    assert_eq!(
+        report.deliverable(),
+        "## fixable\n\ndraft 2 of fixable\n\n_Not included, needs a person: hopeless; after._\n"
+    );
 }
 
 #[tokio::test]
@@ -243,4 +251,40 @@ async fn a_cut_off_draft_is_refused_but_still_charged() {
     assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Call(CallError::Unfinished { status })) if status == "incomplete"));
     assert_eq!(seen.lock().unwrap().reviews, 0, "a cut-off draft is never reviewed");
     assert_eq!(report.spend.calls, 2, "the plan and the cut-off draft are both charged");
+}
+
+#[tokio::test]
+async fn limits_are_checked_by_code_before_any_review() {
+    let mut short = task("short", &[]);
+    short["max_words"] = json!(3); // "draft 1 of short" is 4 words
+    let (base, seen) = mock(Script {
+        plan: Arc::new(move |_| plan_of(&[short.clone()])),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    })
+    .await;
+    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.reviews, 0, "no model review for a draft that breaks a limit");
+    assert!(seen.worker_prompts["short"][0].contains("- at most 3 words"));
+    assert!(seen.worker_prompts["short"][1].contains("at most 3 words (it has 4; cut 1)"));
+    // Code-check misses don't use up the review retry: three drafts, then a person.
+    assert_eq!(seen.worker_prompts["short"].len(), 3);
+    assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Rejected { .. })));
+}
+
+#[tokio::test]
+async fn an_input_stays_in_the_deliverable_if_any_task_built_on_it_failed() {
+    let (base, _) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("research", &[]), task("write", &["research"]), task("assemble", &["research"])])),
+        verdict: Arc::new(|title, _| if title == "assemble" { fail("assemble is done") } else { pass() }),
+        worker_status: "completed",
+    })
+    .await;
+    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+
+    let deliverable = report.deliverable();
+    assert!(deliverable.contains("## research") && deliverable.contains("## write"), "{deliverable}");
+    assert!(deliverable.ends_with("_Not included, needs a person: assemble._\n"), "{deliverable}");
 }

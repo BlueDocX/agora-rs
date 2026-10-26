@@ -90,14 +90,36 @@ pub struct RunReport {
 }
 
 impl RunReport {
-    /// Accepted results in dependency order, one section per task.
+    /// The final results, in dependency order. An accepted result is left out only
+    /// when every task that built on it was accepted too (an accepted "assemble" task
+    /// replaces its inputs); if any of them failed, it is shown so nothing is lost.
+    /// A complete run with one final result shows it as is; a partial run says what
+    /// is missing.
     #[must_use]
     pub fn deliverable(&self) -> String {
+        let plan = &self.planned.plan;
+        let done = |i: usize| self.outcomes[i].is_done();
+        let finals: Vec<(usize, &Accepted)> = plan
+            .topo_order()
+            .iter()
+            .filter_map(|&i| match &self.outcomes[i] {
+                Outcome::Done(a) if plan.dependents(i).is_empty() || !plan.dependents(i).iter().all(|&d| done(d)) => {
+                    Some((i, a))
+                }
+                _ => None,
+            })
+            .collect();
+        let missing: Vec<&str> =
+            (0..plan.len()).filter(|&i| !done(i)).map(|i| self.planned.tasks[i].title.as_str()).collect();
+        if let ([(_, only)], true) = (finals.as_slice(), missing.is_empty()) {
+            return format!("{}\n", only.text.trim());
+        }
         let mut out = String::new();
-        for &i in self.planned.plan.topo_order() {
-            if let Outcome::Done(accepted) = &self.outcomes[i] {
-                let _ = write!(out, "## {}\n\n{}\n\n", self.planned.tasks[i].title, accepted.text.trim());
-            }
+        for (i, accepted) in finals {
+            let _ = write!(out, "## {}\n\n{}\n\n", self.planned.tasks[i].title, accepted.text.trim());
+        }
+        if !missing.is_empty() {
+            let _ = writeln!(out, "_Not included, needs a person: {}._", missing.join("; "));
         }
         out
     }
@@ -182,6 +204,15 @@ impl Ctx {
             task.instructions,
             bullets(&task.acceptance)
         );
+        if task.max_words > 0 {
+            let _ = writeln!(prompt, "- at most {} words", task.max_words);
+        }
+        for heading in &task.required_headings {
+            let heading = heading.trim().trim_start_matches('#').trim();
+            if !heading.is_empty() {
+                let _ = writeln!(prompt, "- has a Markdown heading \"{heading}\" (written with #)");
+            }
+        }
         let accepted = self.accepted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for &d in &self.deps[i] {
             if let Some(text) = &accepted[d] {
@@ -217,6 +248,11 @@ impl Ctx {
         if draft.trim().is_empty() {
             return Ok((vec!["the result is empty".into()], 0));
         }
+        // Exact checks first: free, instant, and a model can't miscount.
+        let broken = agora_core::checks::check(draft, &self.tasks[i].limits());
+        if !broken.is_empty() {
+            return Ok((broken, 0));
+        }
         let first = self.review(i, draft).await?;
         if first.confidence == Confidence::High {
             return Ok((tally(&[first]), 1));
@@ -241,7 +277,9 @@ impl Ctx {
 
     async fn work(&self, i: usize) -> Result<Accepted, TaskError> {
         let mut input = vec![Message::system(CHARTER), Message::system(WORKER_ROLE), Message::user(self.task_prompt(i))];
-        let (mut drafts, mut reviews) = (0, 0);
+        // A draft that only misses a code-checked limit doesn't use up the model
+        // review's one retry; three drafts is the hard cap either way.
+        let (mut drafts, mut reviews, mut model_rejections) = (0, 0, 0);
         loop {
             drafts += 1;
             let request = Request::new(&self.model, input.clone()).effort(Effort::Low).cache_key("agora-worker");
@@ -252,12 +290,15 @@ impl Ctx {
                 self.accepted.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[i] = Some(draft.clone());
                 return Ok(Accepted { text: draft, drafts, reviews });
             }
-            if drafts == 2 {
+            if used > 0 {
+                model_rejections += 1;
+            }
+            if model_rejections == 2 || drafts == 3 {
                 return Err(TaskError::Rejected { failed_criteria: failed });
             }
             input.push(Message { role: Role::Assistant, content: draft });
             input.push(Message::user(format!(
-                "A reviewer rejected this result. Unmet criteria:\n{}\nFix exactly these and return the full corrected result.",
+                "This result does not meet these criteria yet:\n{}\nFix exactly these and return the full corrected result.",
                 bullets(&failed)
             )));
         }
