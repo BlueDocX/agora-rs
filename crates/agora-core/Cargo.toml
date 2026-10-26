@@ -1,0 +1,15 @@
+[package]
+name = "agora-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Domain types for the Agora office: plans, tasks and their dependency graph."
+
+[dependencies]
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

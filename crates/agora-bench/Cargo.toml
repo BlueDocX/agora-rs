@@ -1,0 +1,20 @@
+[package]
+name = "agora-bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Benchmarks for the Agora engine."
+publish = false
+
+[[bin]]
+name = "sched-sim"
+path = "src/bin/sched_sim.rs"
+
+[dependencies]
+agora-core.workspace = true
+agora-engine.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
