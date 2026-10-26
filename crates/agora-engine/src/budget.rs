@@ -7,11 +7,15 @@ use std::sync::Mutex;
 
 use agora_muse::{Price, Response, Usage, price_for};
 
+/// What this process paid for. Replies replayed from the journal are counted in
+/// `replayed_usd` instead: they still count against the cap (the run paid for them
+/// earlier), so resuming never resets a run's budget.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Spend {
     pub usage: Usage,
     pub cost_usd: f64,
     pub calls: u32,
+    pub replayed_usd: f64,
 }
 
 #[derive(Debug)]
@@ -61,8 +65,9 @@ impl Budget {
     /// # Errors
     /// [`OverBudget`] once the run has spent its cap.
     pub fn check(&self) -> Result<(), OverBudget> {
-        let spent = self.spend().cost_usd;
-        if spent >= self.cap_usd { Err(OverBudget { spent_usd: spent, cap_usd: self.cap_usd }) } else { Ok(()) }
+        let Spend { cost_usd, replayed_usd, .. } = self.spend();
+        let total = cost_usd + replayed_usd;
+        if total >= self.cap_usd { Err(OverBudget { spent_usd: total, cap_usd: self.cap_usd }) } else { Ok(()) }
     }
 
     pub fn charge(&self, response: &Response) {
@@ -71,6 +76,12 @@ impl Budget {
         spent.usage += response.usage;
         spent.cost_usd += cost;
         spent.calls += 1;
+    }
+
+    /// Count a reply replayed from the journal against the cap, not as a new call.
+    pub fn charge_replayed(&self, response: &Response) {
+        let cost = self.price.cost_usd(&response.usage);
+        self.spent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replayed_usd += cost;
     }
 
     #[must_use]
@@ -105,6 +116,14 @@ mod tests {
         budget.charge(&response(4_000, 1_000));
         assert!(budget.check().is_err());
         assert_eq!(budget.spend().calls, 2);
+    }
+
+    #[test]
+    fn replayed_replies_count_against_the_cap() {
+        let budget = Budget::new("muse-spark-1.3", 0.01).unwrap();
+        budget.charge_replayed(&response(8_000, 2_000)); // 0.0185
+        assert!(budget.check().is_err());
+        assert_eq!(budget.spend().calls, 0);
     }
 
     #[test]

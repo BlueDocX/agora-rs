@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agora_engine::{CallError, Outcome, RunConfig, TaskError, run};
+use agora_engine::{CallError, Journal, Outcome, RunConfig, TaskError, run};
 use agora_muse::MuseClient;
 use axum::Json;
 use axum::routing::post;
@@ -125,7 +125,7 @@ async fn runs_a_plan_and_feeds_each_task_its_inputs() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "launch plan").await.unwrap();
+    let report = run(client(base), &config(1.0), "launch plan", None).await.unwrap();
 
     assert!(report.outcomes.iter().all(Outcome::is_done));
     let seen = seen.lock().unwrap();
@@ -152,7 +152,7 @@ async fn sends_an_invalid_plan_back_with_the_exact_error() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     assert_eq!(report.planned.attempts, 2);
     let retry = last_user(&seen.lock().unwrap().plan_requests[1]);
@@ -171,7 +171,7 @@ async fn retries_with_the_failed_criteria_then_leaves_it_for_a_person() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     let Outcome::Done(fixed) = &report.outcomes[0] else { panic!("{:?}", report.outcomes[0]) };
     assert_eq!(fixed.drafts, 2);
@@ -201,7 +201,7 @@ async fn an_unsure_reviewer_triggers_a_majority_vote() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     let Outcome::Done(accepted) = &report.outcomes[0] else { panic!("{:?}", report.outcomes[0]) };
     assert_eq!((accepted.drafts, accepted.reviews), (1, 3));
@@ -217,7 +217,7 @@ async fn stops_calling_the_model_once_the_budget_is_spent() {
     })
     .await;
     // Each mocked call costs $0.001675; the plan alone spends this cap.
-    let report = run(client(base), &config(0.001), "brief").await.unwrap();
+    let report = run(client(base), &config(0.001), "brief", None).await.unwrap();
 
     assert!(matches!(report.outcomes[0], Outcome::Failed(TaskError::Call(CallError::OverBudget(_)))));
     assert!(matches!(report.outcomes[1], Outcome::Skipped));
@@ -232,7 +232,7 @@ async fn a_reply_that_is_not_plan_json_gets_another_attempt() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     assert_eq!(report.planned.attempts, 2);
     assert!(last_user(&seen.lock().unwrap().plan_requests[1]).contains("not valid plan JSON"));
@@ -246,7 +246,7 @@ async fn a_cut_off_draft_is_refused_but_still_charged() {
         worker_status: "incomplete",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Call(CallError::Unfinished { status })) if status == "incomplete"));
     assert_eq!(seen.lock().unwrap().reviews, 0, "a cut-off draft is never reviewed");
@@ -263,7 +263,7 @@ async fn limits_are_checked_by_code_before_any_review() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     let seen = seen.lock().unwrap();
     assert_eq!(seen.reviews, 0, "no model review for a draft that breaks a limit");
@@ -282,9 +282,89 @@ async fn an_input_stays_in_the_deliverable_if_any_task_built_on_it_failed() {
         worker_status: "completed",
     })
     .await;
-    let report = run(client(base), &config(1.0), "brief").await.unwrap();
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
     let deliverable = report.deliverable();
     assert!(deliverable.contains("## research") && deliverable.contains("## write"), "{deliverable}");
     assert!(deliverable.ends_with("_Not included, needs a person: assemble._\n"), "{deliverable}");
+}
+
+fn journal_path(name: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    std::env::temp_dir().join(format!("agora-run-{name}-{nanos}.db"))
+}
+
+#[tokio::test]
+async fn a_resumed_run_pays_only_for_what_never_finished() {
+    let (base, seen) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("a", &[]), task("b", &["a"])])),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    })
+    .await;
+    let path = journal_path("resume");
+    // $0.001675 a call: the plan, a's draft and a's review fit; b's draft does not.
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+    let first = run(client(base.clone()), &config(0.004), "brief", Some(journal)).await.unwrap();
+    assert!(first.outcomes[0].is_done());
+    assert!(matches!(first.outcomes[1], Outcome::Failed(TaskError::Call(CallError::OverBudget(_)))));
+
+    let (journal, record) = Journal::resume(&path, first.run_id.as_deref().unwrap()).unwrap();
+    let resumed = run(client(base), &config(1.0), &record.brief, Some(journal)).await.unwrap();
+
+    assert!(resumed.outcomes.iter().all(Outcome::is_done));
+    assert_eq!(resumed.replayed, 3, "the plan, a's draft and a's review");
+    assert_eq!(resumed.spend.calls, 2, "only b's draft and review are paid for");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.plan_requests.len(), 1);
+    assert_eq!(seen.worker_prompts["a"].len(), 1);
+    remove_db(&path);
+}
+
+#[tokio::test]
+async fn a_finished_run_replays_without_touching_the_model() {
+    let (base, _) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("research", &[]), task("write", &["research"])])),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    })
+    .await;
+    let path = journal_path("replay");
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+    let first = run(client(base), &config(1.0), "brief", Some(journal)).await.unwrap();
+
+    // Nothing listens here: any real call would fail the run.
+    let (journal, _) = Journal::resume(&path, first.run_id.as_deref().unwrap()).unwrap();
+    let again = run(client("http://127.0.0.1:9/v1".into()), &config(1.0), "brief", Some(journal)).await.unwrap();
+
+    assert_eq!(again.deliverable(), first.deliverable());
+    assert_eq!((again.replayed, again.spend.calls), (first.spend.calls, 0));
+    remove_db(&path);
+}
+
+fn remove_db(path: &std::path::Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        std::fs::remove_file(format!("{}{suffix}", path.display())).ok();
+    }
+}
+
+#[tokio::test]
+async fn resuming_does_not_reset_the_budget() {
+    let (base, _) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("a", &[]), task("b", &["a"])])),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    })
+    .await;
+    let path = journal_path("cap");
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+    let first = run(client(base.clone()), &config(0.004), "brief", Some(journal)).await.unwrap();
+
+    // Same cap again: the replayed $0.005 already spent it, so nothing new is paid.
+    let (journal, _) = Journal::resume(&path, first.run_id.as_deref().unwrap()).unwrap();
+    let resumed = run(client(base), &config(0.004), "brief", Some(journal)).await.unwrap();
+
+    assert_eq!(resumed.spend.calls, 0);
+    assert!(matches!(resumed.outcomes[1], Outcome::Failed(TaskError::Call(CallError::OverBudget(_)))));
+    remove_db(&path);
 }

@@ -63,3 +63,11 @@ One brief on `muse-spark-1.3`, standard pricing. The brief asked for a one-page 
 - Three runs are anecdotes, not a comparison: the drop from $0.16 to $0.06 may be mostly run-to-run variance. B2 measures this properly.
 
 Reproduce: `MODEL_API_KEY=... cargo run -p agora-engine --bin agora-run -- "<brief>"`.
+
+## Kill and resume (2026-10-27, live)
+
+We started a different brief (a remote designer's onboarding guide), killed it with `SIGKILL` after 20 s, then ran `agora-run --resume <run-id>`.
+
+- The resumed run replayed **5 completed calls from the journal for free**. It paid for 10 new calls ($0.058) and finished in 37.3 s.
+- The resumed run made no repeated paid calls.
+- The final assembly was rejected because it "does not invent specific facts" (the assembler made up names and tools the brief didn't give). It was left for a person, which is the reviewer doing its job.

@@ -5,13 +5,12 @@
 //! exact error, up to [`MAX_ATTEMPTS`] times.
 
 use agora_core::{Limits, Plan, PlanError, TaskSpec};
-use agora_muse::{Effort, Message, MuseClient, Request, Role};
+use agora_muse::{Effort, Message, Request, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::CHARTER;
-use crate::budget::Budget;
-use crate::call::{CallError, call};
+use crate::call::{CallError, Caller};
 
 const MAX_ATTEMPTS: usize = 3;
 pub const MAX_TASKS: usize = 8;
@@ -116,7 +115,7 @@ fn validate(tasks: Vec<Task>) -> Result<(Plan, Vec<Task>), String> {
 /// # Errors
 /// A model or budget error, or [`PlannerError::Invalid`] if the model never produced
 /// a valid plan.
-pub async fn plan(muse: &MuseClient, model: &str, budget: &Budget, brief: &str) -> Result<Planned, PlannerError> {
+pub(crate) async fn plan(caller: &Caller, model: &str, brief: &str) -> Result<Planned, PlannerError> {
     let mut input = vec![Message::system(CHARTER), Message::system(PLANNER_ROLE), Message::user(brief)];
     let mut last_problem = String::new();
     for attempt in 1..=MAX_ATTEMPTS {
@@ -124,7 +123,7 @@ pub async fn plan(muse: &MuseClient, model: &str, budget: &Budget, brief: &str) 
             .effort(Effort::Medium)
             .json_schema("Plan", schema())
             .cache_key("agora-planner");
-        let response = call(muse, budget, &request).await.map_err(PlannerError::Call)?;
+        let response = caller.call(&request).await.map_err(PlannerError::Call)?;
         let checked = serde_json::from_str::<Draft>(&response.text)
             .map_err(|e| format!("the reply is not valid plan JSON ({e})"))
             .and_then(|draft| validate(draft.tasks));

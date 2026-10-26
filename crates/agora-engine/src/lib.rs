@@ -2,12 +2,14 @@
 
 pub mod budget;
 pub mod call;
+pub mod journal;
 pub mod planner;
 pub mod run;
 pub mod scheduler;
 
 pub use budget::{Budget, BudgetError, OverBudget, Spend};
 pub use call::CallError;
+pub use journal::{Journal, JournalError, RunRecord};
 pub use planner::{Planned, PlannerError, Task};
 pub use run::{Accepted, RunConfig, RunError, RunReport, TaskError, run};
 pub use scheduler::{Outcome, run_ready_queue, run_waves};

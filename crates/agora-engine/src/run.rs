@@ -14,7 +14,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::budget::{Budget, BudgetError, Spend};
-use crate::call::{CallError, call};
+use crate::call::{CallError, Caller};
+use crate::journal::Journal;
 use crate::planner::{self, Planned, PlannerError, Task};
 use crate::scheduler::{Outcome, run_ready_queue};
 use crate::CHARTER;
@@ -86,6 +87,12 @@ pub struct RunReport {
     pub planned: Planned,
     pub outcomes: Vec<Outcome<Accepted, TaskError>>,
     pub spend: Spend,
+    /// Calls answered from the journal instead of the model (free now; already paid).
+    pub replayed: u32,
+    /// Replies the journal failed to store: used, but not replayable on resume.
+    pub journal_write_failures: u32,
+    /// Set when the run is journaled; pass it to resume.
+    pub run_id: Option<String>,
     pub elapsed: Duration,
 }
 
@@ -179,9 +186,8 @@ fn bullets(items: &[String]) -> String {
 }
 
 struct Ctx {
-    muse: MuseClient,
+    caller: Caller,
     model: String,
-    budget: Budget,
     brief: String,
     tasks: Vec<Task>,
     deps: Vec<Vec<usize>>,
@@ -192,7 +198,7 @@ struct Ctx {
 
 impl Ctx {
     async fn call(&self, request: Request) -> Result<agora_muse::Response, TaskError> {
-        call(&self.muse, &self.budget, &request).await.map_err(TaskError::Call)
+        self.caller.call(&request).await.map_err(TaskError::Call)
     }
 
     fn task_prompt(&self, i: usize) -> String {
@@ -307,23 +313,26 @@ impl Ctx {
 
 /// Plan the brief, run every task, and return what happened.
 ///
+/// With a `journal`, every completed reply is stored as it arrives, and a run
+/// resumed from the same journal replays them instead of paying again.
+///
 /// # Errors
 /// [`RunError`] for an unusable config or a failed plan. Task failures are reported
 /// per task in the report.
-pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str) -> Result<RunReport, RunError> {
+pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Option<Journal>) -> Result<RunReport, RunError> {
     let started = Instant::now();
     if config.max_parallel == 0 {
         return Err(RunError::NoWorkers);
     }
     let budget = Budget::new(&config.model, config.cap_usd).map_err(RunError::Budget)?;
-    let planned = planner::plan(&muse, &config.model, &budget, brief).await.map_err(RunError::Plan)?;
+    let caller = Caller { muse, budget, journal };
+    let planned = planner::plan(&caller, &config.model, brief).await.map_err(RunError::Plan)?;
 
     let plan = &planned.plan;
     let deps = (0..plan.len()).map(|i| plan.deps(i).to_vec()).collect();
     let ctx = Arc::new(Ctx {
-        muse,
+        caller,
         model: config.model.clone(),
-        budget,
         brief: brief.to_string(),
         tasks: planned.tasks.clone(),
         deps,
@@ -336,5 +345,14 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str) -> Result<Ru
     })
     .await;
 
-    Ok(RunReport { spend: ctx.budget.spend(), planned, outcomes, elapsed: started.elapsed() })
+    let journal = ctx.caller.journal.as_ref();
+    Ok(RunReport {
+        spend: ctx.caller.budget.spend(),
+        replayed: journal.map_or(0, Journal::replayed),
+        journal_write_failures: journal.map_or(0, Journal::write_failures),
+        run_id: journal.map(|j| j.run_id().to_string()),
+        planned,
+        outcomes,
+        elapsed: started.elapsed(),
+    })
 }
