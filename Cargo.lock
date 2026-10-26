@@ -23,7 +23,11 @@ name = "agora-engine"
 version = "0.1.0"
 dependencies = [
  "agora-core",
+ "agora-muse",
+ "axum",
  "proptest",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

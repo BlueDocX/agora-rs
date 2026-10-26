@@ -38,3 +38,17 @@ Every number here comes from a command in this repository. Where a result was we
 - With unlimited slots the ready-queue can't lose: it finishes exactly on the critical path. A property test checks this on random plans.
 - With 2 slots, greedy list scheduling can occasionally lose (Graham's anomaly): 7-32 plans per 1,000, at worst about 10% slower.
 - Scheduling alone is not why to rebuild the engine. The larger expected gains are in verification, caching and cost control, which B2 measures.
+
+## First live run (2026-10-26, not a benchmark)
+
+One brief on `muse-spark-1.3`, standard pricing. The brief asked for a one-page delivery launch plan for a Pune bakery.
+
+| Tasks | Calls | Wall time | Input tokens (cached) | Output tokens (reasoning) | Cost |
+|---|---|---|---|---|---|
+| 5 | 19 | 67.2 s | 19,921 (9,119 = 46%) | 33,885 (28,016 = 83%) | $0.159 |
+
+- 4 tasks were accepted. One of them (the WhatsApp message) was accepted on its second draft, after the reviewer listed what was missing.
+- The final "assemble" task was rejected twice for exceeding a word limit and left for a person. Word limits should be checked in code, not by a model (next change).
+- **Reasoning tokens are 83% of output** even at `low` effort, so effort per role is the biggest cost lever. B2 will measure acceptance rate against effort.
+
+Reproduce: `MODEL_API_KEY=... cargo run -p agora-engine --bin agora-run -- "<brief>"`. A single run varies; B2 will repeat many briefs.
