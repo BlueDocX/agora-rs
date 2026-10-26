@@ -16,6 +16,7 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
 
 - **`agora-core`:** validates a planner's task graph. Duplicate ids, self-dependencies, unknown dependencies and cycles are rejected, each with a message the planner model can act on.
 - **`agora-engine`:** the ready-queue scheduler. A task starts the moment its own dependencies finish, the longest remaining chain goes first, and a failure skips only what depends on it. Property tests check dependency order, the parallel cap, critical-path optimality, and failure isolation on random plans.
+- **`agora-muse`:** a typed client for Meta's Model API (Responses endpoint). It supports structured output and prompt-cache keys. It retries 429 and 5xx responses up to 4 times, waiting at least as long as `Retry-After` asks. It reads the rate-limit headers and computes the exact cost of every call, billing cached tokens at the cached rate. The API key can't appear in debug output. Tested against a local mock server; `examples/smoke.rs` checks it against the live API.
 - **`agora-bench`:** B1, the old wave scheduler vs the ready-queue. Results and caveats are in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Run it
@@ -25,6 +26,9 @@ Requires Rust 1.99 or newer.
 ```bash
 cargo test --workspace
 cargo run -p agora-bench --release --bin sched-sim
+
+# needs a Model API key
+MODEL_API_KEY=... cargo run -p agora-muse --example smoke
 ```
 
 ## Principles

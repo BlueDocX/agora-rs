@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/agora-core", "crates/agora-engine", "crates/agora-bench"]
+members = ["crates/agora-core", "crates/agora-engine", "crates/agora-muse", "crates/agora-bench"]
 
 [workspace.package]
 edition = "2024"
@@ -11,8 +11,13 @@ repository = "https://github.com/Ritesh-Root/agora-rs"
 [workspace.dependencies]
 agora-core = { path = "crates/agora-core" }
 agora-engine = { path = "crates/agora-engine" }
+agora-muse = { path = "crates/agora-muse" }
 tokio = { version = "=1.54.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 proptest = "=1.12.0"
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "json", "http2"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+axum = "=0.8.9"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
