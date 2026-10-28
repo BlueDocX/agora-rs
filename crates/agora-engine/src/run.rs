@@ -253,6 +253,9 @@ impl Ctx {
         )
         .effort(Effort::Low)
         .json_schema("Verdict", verdict_schema())
+        // A verdict is tiny, but constrained decoding on some hosts can emit long
+        // whitespace runs inside the JSON (seen live on Baseten); cap the damage.
+        .max_output_tokens(8_000)
         .cache_key("agora-verifier");
         let response = self.call(Route::Reviewer, request).await?;
         // Decoding is constrained to the schema, so a parse failure is an API fault.

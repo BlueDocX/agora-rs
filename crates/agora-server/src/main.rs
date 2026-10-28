@@ -31,7 +31,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "" | "meta" => None,
         "baseten" => Some(Remote {
             client: MuseClient::baseten_from_env()?,
-            model: env_or("AGORA_REVIEWER_MODEL", "meta-models/muse-spark-open".to_string())?,
+            model: // Baseten's docs say `meta-models/muse-spark-open`; with a hackathon key that
+                // id answers 403 "check the api-key", and only the dated id works (checked
+                // live 2026-10-30).
+                env_or("AGORA_REVIEWER_MODEL", "meta-models/muse-spark-open-1026".to_string())?,
         }),
         other => return Err(format!("AGORA_REVIEWER={other:?}: use \"baseten\" or leave it unset").into()),
     };
