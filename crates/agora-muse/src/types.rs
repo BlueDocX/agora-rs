@@ -101,6 +101,40 @@ impl Request {
         }
         body
     }
+
+    /// The same request as an OpenAI-style Chat Completions body, for hosts that
+    /// only speak that (Baseten serves Muse Spark Open this way).
+    ///
+    /// Adapted for open-weight chat templates: consecutive system messages are
+    /// merged into one (many templates accept a single leading system turn), `max`
+    /// effort is sent as `high` (the highest value these hosts accept), and the
+    /// schema is marked `strict` so decoding is constrained. Prefix caching is
+    /// automatic there, so `prompt_cache_key` is not sent.
+    #[must_use]
+    pub fn to_chat_body(&self) -> Value {
+        let mut messages: Vec<Message> = Vec::with_capacity(self.input.len());
+        for m in &self.input {
+            match messages.last_mut() {
+                Some(last) if last.role == Role::System && m.role == Role::System => {
+                    last.content.push_str("\n\n");
+                    last.content.push_str(&m.content);
+                }
+                _ => messages.push(m.clone()),
+            }
+        }
+        let mut body = json!({ "model": self.model, "messages": messages });
+        if let Some(effort) = self.effort {
+            body["reasoning_effort"] = json!(if effort == Effort::Max { Effort::High } else { effort });
+        }
+        if let Some((name, schema)) = &self.json_schema {
+            body["response_format"] =
+                json!({ "type": "json_schema", "json_schema": { "name": name, "schema": schema, "strict": true } });
+        }
+        if let Some(n) = self.max_output_tokens {
+            body["max_tokens"] = json!(n);
+        }
+        body
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -199,6 +233,69 @@ pub(crate) enum RawContent {
     Other,
 }
 
+/// A Chat Completions reply, reduced to what [`Response`] holds.
+#[derive(Deserialize)]
+pub(crate) struct RawChatResponse {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub choices: Vec<RawChoice>,
+    #[serde(default)]
+    pub usage: RawChatUsage,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RawChoice {
+    pub message: RawChatMessage,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RawChatMessage {
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct RawChatUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    #[serde(default)]
+    prompt_tokens_details: Option<Value>,
+    #[serde(default)]
+    completion_tokens_details: Option<Value>,
+}
+
+impl RawChatResponse {
+    /// `finish_reason` becomes a Responses-style status: `stop` is `completed`,
+    /// `length` is `incomplete`, anything else (including `tool_calls`, which Agora
+    /// never asks for and which carries no text) is passed through, so the engine
+    /// refuses it as unfinished.
+    pub(crate) fn into_response(self, rate_limit: RateLimit) -> Response {
+        let choice = self.choices.into_iter().next();
+        let status = match choice.as_ref().and_then(|c| c.finish_reason.as_deref()) {
+            Some("stop") => "completed".to_string(),
+            Some("length") => "incomplete".to_string(),
+            Some(other) => other.to_string(),
+            None => "unknown".to_string(),
+        };
+        let detail = |v: &Option<Value>, key: &str| v.as_ref().and_then(|d| d.get(key)).and_then(Value::as_u64).unwrap_or(0);
+        let usage = Usage {
+            input_tokens: self.usage.prompt_tokens,
+            output_tokens: self.usage.completion_tokens,
+            cached_tokens: detail(&self.usage.prompt_tokens_details, "cached_tokens"),
+            reasoning_tokens: detail(&self.usage.completion_tokens_details, "reasoning_tokens"),
+        };
+        let text = choice.and_then(|c| c.message.content).unwrap_or_default();
+        Response { id: self.id, model: self.model, status, text, usage, rate_limit }
+    }
+}
+
 impl RawResponse {
     pub(crate) fn into_response(self, rate_limit: RateLimit) -> Response {
         let text = self
@@ -242,6 +339,49 @@ mod tests {
                 "max_output_tokens": 2000
             })
         );
+    }
+
+    #[test]
+    fn chat_body_carries_the_same_options() {
+        let body = Request::new(
+            "meta-models/muse-spark-open",
+            vec![Message::system("Charter."), Message::system("Role."), Message::user("Check this")],
+        )
+        .effort(Effort::Max)
+            .json_schema("Verdict", json!({"type": "object"}))
+            .cache_key("ignored-here")
+            .max_output_tokens(500)
+            .to_chat_body();
+        assert_eq!(
+            body,
+            json!({
+                "model": "meta-models/muse-spark-open",
+                "messages": [{"role": "system", "content": "Charter.\n\nRole."}, {"role": "user", "content": "Check this"}],
+                "reasoning_effort": "high",
+                "response_format": {"type": "json_schema", "json_schema": {"name": "Verdict", "schema": {"type": "object"}, "strict": true}},
+                "max_tokens": 500
+            })
+        );
+    }
+
+    #[test]
+    fn parses_a_chat_completion_and_maps_finish_reasons() {
+        let reply = |finish: &str| {
+            serde_json::from_value::<RawChatResponse>(json!({
+                "id": "chatcmpl-1", "model": "meta-models/muse-spark-open",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": finish}],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 9, "prompt_tokens_details": {"cached_tokens": 32},
+                          "completion_tokens_details": {"reasoning_tokens": 5}}
+            }))
+            .unwrap()
+            .into_response(RateLimit::default())
+        };
+        let done = reply("stop");
+        assert_eq!((done.status.as_str(), done.text.as_str()), ("completed", "ok"));
+        assert_eq!(done.usage, Usage { input_tokens: 40, output_tokens: 9, cached_tokens: 32, reasoning_tokens: 5 });
+        assert_eq!(reply("length").status, "incomplete");
+        assert_eq!(reply("content_filter").status, "content_filter");
+        assert_eq!(reply("tool_calls").status, "tool_calls");
     }
 
     #[test]

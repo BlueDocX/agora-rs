@@ -42,6 +42,8 @@ pub struct RunRecord {
     pub id: String,
     pub brief: String,
     pub model: String,
+    /// The reviewer's model on its own host, if the run used one.
+    pub reviewer: Option<String>,
 }
 
 /// One run's view of the journal file.
@@ -74,6 +76,12 @@ fn open(path: &Path) -> Result<Connection, JournalError> {
              created_at INTEGER NOT NULL,
              PRIMARY KEY (run_id, key, n));",
     )?;
+    // Journals from before the reviewer was recorded: add the column (empty = none).
+    let has_reviewer: bool =
+        db.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name = 'reviewer'", [], |r| r.get(0))?;
+    if !has_reviewer {
+        db.execute_batch("ALTER TABLE runs ADD COLUMN reviewer TEXT NOT NULL DEFAULT ''")?;
+    }
     Ok(db)
 }
 
@@ -99,14 +107,15 @@ impl Journal {
     ///
     /// # Errors
     /// If the file can't be opened or written.
-    pub fn start(path: &Path, brief: &str, model: &str) -> Result<Self, JournalError> {
+    pub fn start(path: &Path, brief: &str, model: &str, reviewer: Option<&str>) -> Result<Self, JournalError> {
         let db = open(path)?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
         let run_id = format!("run-{nanos:x}");
-        db.execute("INSERT INTO runs (id, brief, model, created_at) VALUES (?1, ?2, ?3, ?4)", params![
+        db.execute("INSERT INTO runs (id, brief, model, reviewer, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![
             run_id,
             brief,
             model,
+            reviewer.unwrap_or(""),
             now_secs()
         ])?;
         Ok(Self::with(db, run_id))
@@ -123,8 +132,14 @@ impl Journal {
         }
         let db = open(path)?;
         let record = db
-            .query_row("SELECT id, brief, model FROM runs WHERE id = ?1", params![run_id], |r| {
-                Ok(RunRecord { id: r.get(0)?, brief: r.get(1)?, model: r.get(2)? })
+            .query_row("SELECT id, brief, model, reviewer FROM runs WHERE id = ?1", params![run_id], |r| {
+                let reviewer: String = r.get(3)?;
+                Ok(RunRecord {
+                    id: r.get(0)?,
+                    brief: r.get(1)?,
+                    model: r.get(2)?,
+                    reviewer: (!reviewer.is_empty()).then_some(reviewer),
+                })
             })
             .optional()?
             .ok_or_else(|| JournalError(format!("no run \"{run_id}\" in {}", path.display())))?;
@@ -253,7 +268,7 @@ mod tests {
         let path = temp_path("reopen");
         let request = Request::new("muse-spark-1.3", vec![Message::user("review this")]);
         let run_id = {
-            let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+            let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
             for text in ["first vote", "second vote"] {
                 let (key, n) = journal.claim(&request);
                 journal.record(&key, n, &response(text));
@@ -262,7 +277,7 @@ mod tests {
         };
 
         let (journal, record) = Journal::resume(&path, &run_id).unwrap();
-        assert_eq!(record.brief, "brief");
+        assert_eq!((record.brief.as_str(), record.reviewer), ("brief", None));
         let replies: Vec<String> = (0..3)
             .map(|_| {
                 let (key, n) = journal.claim(&request);
@@ -282,13 +297,28 @@ mod tests {
     }
 
     #[test]
+    fn a_journal_from_before_reviewers_were_recorded_still_resumes() {
+        let path = temp_path("old");
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE runs (id TEXT PRIMARY KEY, brief TEXT NOT NULL, model TEXT NOT NULL, created_at INTEGER NOT NULL);
+                 INSERT INTO runs VALUES ('run-old', 'old brief', 'muse-spark-1.3', 0);",
+            )
+            .unwrap();
+        let (_, record) = Journal::resume(&path, "run-old").unwrap();
+        assert_eq!((record.brief.as_str(), record.reviewer), ("old brief", None));
+        remove_db(&path);
+    }
+
+    #[test]
     fn resuming_an_unknown_run_says_so_and_a_missing_file_is_not_created() {
         let path = temp_path("unknown");
         let err = Journal::resume(&path, "run-nope").unwrap_err();
         assert!(err.to_string().contains("no journal at"), "{err}");
         assert!(!path.exists());
 
-        Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+        Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
         let err = Journal::resume(&path, "run-nope").unwrap_err();
         assert!(err.to_string().contains("no run \"run-nope\""), "{err}");
         remove_db(&path);

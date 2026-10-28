@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agora_engine::{CallError, Journal, Outcome, RunConfig, TaskError, run};
+use agora_engine::{CallError, Journal, Outcome, Remote, RunConfig, TaskError, run};
 use agora_muse::MuseClient;
 use axum::Json;
 use axum::routing::post;
@@ -110,7 +110,7 @@ fn fail(criterion: &str) -> Value {
 }
 
 fn config(cap_usd: f64) -> RunConfig {
-    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd }
+    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd, reviewer: None }
 }
 
 fn client(base: String) -> MuseClient {
@@ -304,7 +304,7 @@ async fn a_resumed_run_pays_only_for_what_never_finished() {
     .await;
     let path = journal_path("resume");
     // $0.001675 a call: the plan, a's draft and a's review fit; b's draft does not.
-    let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
     let first = run(client(base.clone()), &config(0.004), "brief", Some(journal)).await.unwrap();
     assert!(first.outcomes[0].is_done());
     assert!(matches!(first.outcomes[1], Outcome::Failed(TaskError::Call(CallError::OverBudget(_)))));
@@ -330,7 +330,7 @@ async fn a_finished_run_replays_without_touching_the_model() {
     })
     .await;
     let path = journal_path("replay");
-    let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
     let first = run(client(base), &config(1.0), "brief", Some(journal)).await.unwrap();
 
     // Nothing listens here: any real call would fail the run.
@@ -357,7 +357,7 @@ async fn resuming_does_not_reset_the_budget() {
     })
     .await;
     let path = journal_path("cap");
-    let journal = Journal::start(&path, "brief", "muse-spark-1.3").unwrap();
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
     let first = run(client(base.clone()), &config(0.004), "brief", Some(journal)).await.unwrap();
 
     // Same cap again: the replayed $0.005 already spent it, so nothing new is paid.
@@ -367,4 +367,30 @@ async fn resuming_does_not_reset_the_budget() {
     assert_eq!(resumed.spend.calls, 0);
     assert!(matches!(resumed.outcomes[1], Outcome::Failed(TaskError::Call(CallError::OverBudget(_)))));
     remove_db(&path);
+}
+
+#[tokio::test]
+async fn reviews_go_to_the_reviewer_host_and_everything_else_to_meta() {
+    // The "Meta" mock refuses reviews; the "open weights" mock only accepts them.
+    let (meta, meta_seen) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("a", &[])])),
+        verdict: Arc::new(|_, _| panic!("reviews must not reach the Meta host")),
+        worker_status: "completed",
+    })
+    .await;
+    let (open, open_seen) = mock(Script {
+        plan: Arc::new(|_| panic!("planning must not reach the reviewer host")),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    })
+    .await;
+    // The same model name on both hosts: routing is by role, so nothing gets mixed up.
+    let reviewer = Remote { client: client(open), model: "muse-spark-1.3".into() };
+    let config = RunConfig { reviewer: Some(reviewer), ..config(1.0) };
+    let report = run(client(meta), &config, "brief", None).await.unwrap();
+
+    assert!(report.outcomes[0].is_done());
+    assert_eq!(meta_seen.lock().unwrap().reviews, 0);
+    assert_eq!(open_seen.lock().unwrap().reviews, 1);
+    assert!(open_seen.lock().unwrap().worker_prompts.is_empty());
 }

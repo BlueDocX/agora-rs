@@ -6,12 +6,14 @@
 //! Every completed model reply is journaled in `AGORA_JOURNAL` (default
 //! `agora-journal.db`). Resuming replays those for free and continues from the first
 //! call that never completed. Optional: `AGORA_MODEL` (default `muse-spark-1.3`),
-//! `AGORA_CAP_USD` (default 0.50), `AGORA_PARALLEL` (default 4). The deliverable goes
-//! to stdout, the report to stderr.
+//! `AGORA_CAP_USD` (default 0.50), `AGORA_PARALLEL` (default 4), and
+//! `AGORA_REVIEWER=baseten` to review on Muse Spark Open (open weights) on Baseten
+//! with `BASETEN_API_KEY` (`AGORA_REVIEWER_MODEL` overrides the model id). The
+//! deliverable goes to stdout, the report to stderr.
 
 use std::path::PathBuf;
 
-use agora_engine::{Journal, Outcome, RunConfig, run};
+use agora_engine::{Journal, Outcome, Remote, RunConfig, run};
 use agora_muse::MuseClient;
 
 /// The variable parsed, or `default` if unset. A value that doesn't parse is an
@@ -31,23 +33,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model: env_or("AGORA_MODEL", "muse-spark-1.3".to_string())?,
         max_parallel: env_or("AGORA_PARALLEL", 4)?,
         cap_usd: env_or("AGORA_CAP_USD", 0.50)?,
+        reviewer: match env_or("AGORA_REVIEWER", String::new())?.as_str() {
+            "" | "meta" => None,
+            "baseten" => Some(Remote {
+                client: MuseClient::baseten_from_env()?,
+                model: env_or("AGORA_REVIEWER_MODEL", "meta-models/muse-spark-open".to_string())?,
+            }),
+            other => return Err(format!("AGORA_REVIEWER={other:?}: use \"baseten\" or leave it unset").into()),
+        },
     };
     let muse = MuseClient::from_env()?; // before journaling a run that can't start
     let (journal, brief) = match args.as_slice() {
         [flag, run_id] if flag == "--resume" => {
+            // Replay only matches the same models, so the run's own setup wins over
+            // whatever the environment says now.
             let (journal, record) = Journal::resume(&path, run_id)?;
-            config.model = record.model; // replay only matches the same model
+            config.model = record.model;
+            config.reviewer = match record.reviewer {
+                Some(model) => Some(Remote { client: MuseClient::baseten_from_env()?, model }),
+                None => None,
+            };
             (journal, record.brief)
         }
         _ if !args.is_empty() && !args[0].starts_with("--") && !args.join(" ").trim().is_empty() => {
             let brief = args.join(" ");
-            (Journal::start(&path, &brief, &config.model)?, brief)
+            let reviewer = config.reviewer.as_ref().map(|r| r.model.as_str());
+            (Journal::start(&path, &brief, &config.model, reviewer)?, brief)
         }
         _ => return Err("usage: agora-run \"<brief>\" | agora-run --resume <run-id>".into()),
     };
     eprintln!("run {} (journal {})", journal.run_id(), path.display());
     let report = run(muse, &config, &brief, Some(journal)).await?;
 
+    if let Some(r) = &config.reviewer {
+        eprintln!("reviewer: {} (open weights, Baseten)", r.model);
+    }
     eprintln!("plan: {} tasks (planner attempts: {})", report.planned.tasks.len(), report.planned.attempts);
     for (task, outcome) in report.planned.tasks.iter().zip(&report.outcomes) {
         let status = match outcome {

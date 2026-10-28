@@ -7,15 +7,26 @@ use reqwest::StatusCode;
 use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 
-use crate::types::RawResponse;
+use crate::types::{RawChatResponse, RawResponse};
 use crate::{RateLimit, Request, Response};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.meta.ai/v1";
+/// Baseten's OpenAI-compatible Model APIs, which serve Muse Spark Open.
+pub const BASETEN_BASE_URL: &str = "https://inference.baseten.co/v1";
+
+/// Which wire format the host speaks. Meta's Model API speaks both; partner hosts of
+/// the open-weight models speak Chat Completions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Api {
+    Responses,
+    ChatCompletions,
+}
 const MAX_ATTEMPTS: u32 = 4;
 
 #[derive(Debug)]
 pub enum MuseError {
-    MissingKey,
+    /// The named environment variable is unset or empty.
+    MissingKey(&'static str),
     /// The API answered with an error status. `message` is the API's own error text.
     Api { status: u16, message: String },
     Transport(String),
@@ -25,10 +36,10 @@ pub enum MuseError {
 impl fmt::Display for MuseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingKey => write!(f, "MODEL_API_KEY is not set"),
-            Self::Api { status, message } => write!(f, "Model API returned {status}: {message}"),
-            Self::Transport(e) => write!(f, "could not reach the Model API: {e}"),
-            Self::Decode(e) => write!(f, "unexpected response from the Model API: {e}"),
+            Self::MissingKey(var) => write!(f, "{var} is not set"),
+            Self::Api { status, message } => write!(f, "the model host returned {status}: {message}"),
+            Self::Transport(e) => write!(f, "could not reach the model host: {e}"),
+            Self::Decode(e) => write!(f, "unexpected response from the model host: {e}"),
         }
     }
 }
@@ -50,6 +61,7 @@ pub struct MuseClient {
     http: reqwest::Client,
     base_url: String,
     key: ApiKey,
+    api: Api,
     first_backoff: Duration,
 }
 
@@ -66,6 +78,7 @@ impl MuseClient {
             http,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             key: ApiKey(api_key.into()),
+            api: Api::Responses,
             first_backoff: Duration::from_millis(500),
         }
     }
@@ -75,9 +88,22 @@ impl MuseClient {
     /// # Errors
     /// [`MuseError::MissingKey`] if `MODEL_API_KEY` is unset or empty.
     pub fn from_env() -> Result<Self, MuseError> {
-        let key = std::env::var("MODEL_API_KEY").ok().filter(|k| !k.is_empty()).ok_or(MuseError::MissingKey)?;
         let base = std::env::var("MUSE_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-        Ok(Self::new(base, key))
+        Ok(Self::new(base, env_key("MODEL_API_KEY")?))
+    }
+
+    /// Baseten (Chat Completions) with `BASETEN_API_KEY`, for Muse Spark Open.
+    ///
+    /// # Errors
+    /// [`MuseError::MissingKey`] if `BASETEN_API_KEY` is unset or empty.
+    pub fn baseten_from_env() -> Result<Self, MuseError> {
+        Ok(Self::new(BASETEN_BASE_URL, env_key("BASETEN_API_KEY")?).with_api(Api::ChatCompletions))
+    }
+
+    #[must_use]
+    pub fn with_api(mut self, api: Api) -> Self {
+        self.api = api;
+        self
     }
 
     /// The first retry waits this long; each later one doubles it (plus jitter).
@@ -93,8 +119,10 @@ impl MuseClient {
     /// # Errors
     /// The last error once retries are exhausted, or the first non-retryable one.
     pub async fn respond(&self, request: &Request) -> Result<Response, MuseError> {
-        let url = format!("{}/responses", self.base_url);
-        let body = request.to_body();
+        let (url, body) = match self.api {
+            Api::Responses => (format!("{}/responses", self.base_url), request.to_body()),
+            Api::ChatCompletions => (format!("{}/chat/completions", self.base_url), request.to_chat_body()),
+        };
         let mut attempt = 0;
         loop {
             attempt += 1;
@@ -102,8 +130,13 @@ impl MuseClient {
             let (error, retry_after) = match sent {
                 Ok(res) if res.status().is_success() => {
                     let rate_limit = rate_limit(res.headers());
-                    let raw: RawResponse = res.json().await.map_err(|e| MuseError::Decode(e.to_string()))?;
-                    return Ok(raw.into_response(rate_limit));
+                    let decode = |e: reqwest::Error| MuseError::Decode(e.to_string());
+                    return match self.api {
+                        Api::Responses => Ok(res.json::<RawResponse>().await.map_err(decode)?.into_response(rate_limit)),
+                        Api::ChatCompletions => {
+                            Ok(res.json::<RawChatResponse>().await.map_err(decode)?.into_response(rate_limit))
+                        }
+                    };
                 }
                 Ok(res) => {
                     let status = res.status();
@@ -142,6 +175,10 @@ impl MuseClient {
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos();
         base + base.mul_f64(f64::from(nanos % 1000) / 2000.0)
     }
+}
+
+fn env_key(var: &'static str) -> Result<String, MuseError> {
+    std::env::var(var).ok().filter(|k| !k.is_empty()).ok_or(MuseError::MissingKey(var))
 }
 
 fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {

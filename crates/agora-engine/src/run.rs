@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::budget::{Budget, BudgetError, Spend};
-use crate::call::{CallError, Caller};
+use crate::call::{CallError, Caller, Remote, Route};
 use crate::journal::Journal;
 use crate::planner::{self, Planned, PlannerError, Task};
 use crate::scheduler::{Outcome, run_ready_queue};
@@ -31,9 +31,13 @@ ambiguous or cannot be judged from the text.";
 
 #[derive(Debug, Clone)]
 pub struct RunConfig {
+    /// Planner and workers.
     pub model: String,
     pub max_parallel: usize,
     pub cap_usd: f64,
+    /// Review on a different model and host (e.g. open weights on Baseten).
+    /// `None` = the reviewer uses `model`.
+    pub reviewer: Option<Remote>,
 }
 
 #[derive(Debug)]
@@ -188,6 +192,7 @@ fn bullets(items: &[String]) -> String {
 struct Ctx {
     caller: Caller,
     model: String,
+    reviewer_model: String,
     brief: String,
     tasks: Vec<Task>,
     deps: Vec<Vec<usize>>,
@@ -197,8 +202,8 @@ struct Ctx {
 }
 
 impl Ctx {
-    async fn call(&self, request: Request) -> Result<agora_muse::Response, TaskError> {
-        self.caller.call(&request).await.map_err(TaskError::Call)
+    async fn call(&self, route: Route, request: Request) -> Result<agora_muse::Response, TaskError> {
+        self.caller.call(route, &request).await.map_err(TaskError::Call)
     }
 
     fn task_prompt(&self, i: usize) -> String {
@@ -232,7 +237,7 @@ impl Ctx {
         let task = &self.tasks[i];
         let criteria = bullets(&task.acceptance);
         let request = Request::new(
-            &self.model,
+            &self.reviewer_model,
             vec![
                 Message::system(CHARTER),
                 Message::system(VERIFIER_ROLE),
@@ -242,7 +247,7 @@ impl Ctx {
         .effort(Effort::Low)
         .json_schema("Verdict", verdict_schema())
         .cache_key("agora-verifier");
-        let response = self.call(request).await?;
+        let response = self.call(Route::Reviewer, request).await?;
         // Decoding is constrained to the schema, so a parse failure is an API fault.
         serde_json::from_str(&response.text).map_err(|e| TaskError::Call(CallError::Model(MuseError::Decode(e.to_string()))))
     }
@@ -289,7 +294,7 @@ impl Ctx {
         loop {
             drafts += 1;
             let request = Request::new(&self.model, input.clone()).effort(Effort::Low).cache_key("agora-worker");
-            let draft = self.call(request).await?.text;
+            let draft = self.call(Route::Main, request).await?.text;
             let (failed, used) = self.check(i, &draft).await?;
             reviews += used;
             if failed.is_empty() {
@@ -324,8 +329,9 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     if config.max_parallel == 0 {
         return Err(RunError::NoWorkers);
     }
-    let budget = Budget::new(&config.model, config.cap_usd).map_err(RunError::Budget)?;
-    let caller = Caller { muse, budget, journal };
+    let reviewer_model = config.reviewer.as_ref().map_or(config.model.clone(), |r| r.model.clone());
+    let budget = Budget::new(&[&config.model, &reviewer_model], config.cap_usd).map_err(RunError::Budget)?;
+    let caller = Caller { muse, reviewer: config.reviewer.as_ref().map(|r| r.client.clone()), budget, journal };
     let planned = planner::plan(&caller, &config.model, brief).await.map_err(RunError::Plan)?;
 
     let plan = &planned.plan;
@@ -333,6 +339,7 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     let ctx = Arc::new(Ctx {
         caller,
         model: config.model.clone(),
+        reviewer_model,
         brief: brief.to_string(),
         tasks: planned.tasks.clone(),
         deps,

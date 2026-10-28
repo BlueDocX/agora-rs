@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use agora_muse::{Message, MuseClient, MuseError, Request};
+use agora_muse::{Api, Message, MuseClient, MuseError, Request};
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -120,6 +120,32 @@ async fn respond_json_parses_structured_output() {
     let req = Request::new("m", vec![Message::user("check")]).json_schema("Verdict", json!({"type": "object"}));
     let (verdict, _): (Verdict, _) = client(base).respond_json(&req).await.unwrap();
     assert!(verdict.pass);
+}
+
+#[tokio::test]
+async fn speaks_chat_completions_to_partner_hosts() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<Value>| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(body["messages"][0]["content"], "hi");
+            async {
+                Json(json!({"id": "c1", "model": "meta-models/muse-spark-open",
+                    "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 1}}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let client = client(format!("http://{addr}/v1")).with_api(Api::ChatCompletions);
+    let res = client.respond(&Request::new("meta-models/muse-spark-open", vec![Message::user("hi")])).await.unwrap();
+    assert_eq!((res.text.as_str(), res.status.as_str(), res.usage.input_tokens), ("hello", "completed", 3));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]

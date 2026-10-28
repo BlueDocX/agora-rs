@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::CHARTER;
-use crate::call::{CallError, Caller};
+use crate::call::{CallError, Caller, Route};
 
 const MAX_ATTEMPTS: usize = 3;
 pub const MAX_TASKS: usize = 8;
@@ -123,7 +123,7 @@ pub(crate) async fn plan(caller: &Caller, model: &str, brief: &str) -> Result<Pl
             .effort(Effort::Medium)
             .json_schema("Plan", schema())
             .cache_key("agora-planner");
-        let response = caller.call(&request).await.map_err(PlannerError::Call)?;
+        let response = caller.call(Route::Main, &request).await.map_err(PlannerError::Call)?;
         let checked = serde_json::from_str::<Draft>(&response.text)
             .map_err(|e| format!("the reply is not valid plan JSON ({e})"))
             .and_then(|draft| validate(draft.tasks));

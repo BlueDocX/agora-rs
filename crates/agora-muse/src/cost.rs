@@ -1,4 +1,5 @@
-//! Per-token prices from dev.meta.ai/docs/pricing-rate-limits (read 2026-10-26).
+//! Per-token prices from dev.meta.ai/docs/pricing-rate-limits (read 2026-10-26) and,
+//! for open weights, from the hosting partner.
 
 use crate::Usage;
 
@@ -26,9 +27,13 @@ impl Price {
 #[must_use]
 pub fn price_for(model: &str) -> Option<Price> {
     match model {
-        "muse-spark-1.3" | "muse-spark-1.2" | "muse-spark-1.1" => {
-            Some(Price { input: 1.25, cached_input: 0.15, output: 4.25 })
-        }
+        // Muse Spark Open on Baseten is priced the same (baseten.co/library/muse-spark-open,
+        // read 2026-10-29).
+        "muse-spark-1.3"
+        | "muse-spark-1.2"
+        | "muse-spark-1.1"
+        | "meta-models/muse-spark-open"
+        | "meta-models/muse-spark-open-1026" => Some(Price { input: 1.25, cached_input: 0.15, output: 4.25 }),
         "muse-spark-1.3-contributor" | "muse-spark-1.2-contributor" => {
             Some(Price { input: 0.10, cached_input: 0.002, output: 0.20 })
         }
