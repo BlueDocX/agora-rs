@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agora_engine::{CallError, Journal, Outcome, Remote, RunConfig, TaskError, run};
+use agora_engine::{CallError, Journal, Outcome, Remote, ReviewedBy, RunConfig, RunEvent, TaskError, run};
 use agora_muse::MuseClient;
 use axum::Json;
 use axum::routing::post;
@@ -110,7 +110,7 @@ fn fail(criterion: &str) -> Value {
 }
 
 fn config(cap_usd: f64) -> RunConfig {
-    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd, reviewer: None }
+    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd, reviewer: None, events: None }
 }
 
 fn client(base: String) -> MuseClient {
@@ -393,4 +393,65 @@ async fn reviews_go_to_the_reviewer_host_and_everything_else_to_meta() {
     assert_eq!(meta_seen.lock().unwrap().reviews, 0);
     assert_eq!(open_seen.lock().unwrap().reviews, 1);
     assert!(open_seen.lock().unwrap().worker_prompts.is_empty());
+}
+
+#[tokio::test]
+async fn reports_each_step_as_it_happens() {
+    let (base, _) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("a", &[]), task("b", &["a"])])),
+        verdict: Arc::new(|title, draft| if title == "a" && draft.starts_with("draft 1") { fail("a is done") } else { pass() }),
+        worker_status: "completed",
+    })
+    .await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let config = RunConfig { events: Some(tx), ..config(1.0) };
+    run(client(base), &config, "brief", None).await.unwrap();
+    drop(config);
+
+    let mut kinds = Vec::new();
+    while let Some(event) = rx.recv().await {
+        kinds.push(match event {
+            RunEvent::Planned { tasks, .. } => format!("planned {}", tasks.len()),
+            RunEvent::TaskStarted { task } => format!("start {task}"),
+            RunEvent::Drafted { task, draft, .. } => format!("draft {task} {draft}"),
+            RunEvent::Reviewed { task, unmet, by, .. } => {
+                assert_eq!(by, ReviewedBy::Model);
+                format!("review {task} unmet={}", unmet.len())
+            }
+            RunEvent::TaskAccepted { task, drafts, .. } => format!("accepted {task} after {drafts}"),
+            RunEvent::TaskFailed { task, .. } => format!("failed {task}"),
+            RunEvent::TaskSkipped { task } => format!("skipped {task}"),
+            RunEvent::Finished { calls, .. } => format!("finished {calls}"),
+            RunEvent::RunFailed { reason } => format!("run failed: {reason}"),
+        });
+    }
+    assert_eq!(kinds, [
+        "planned 2", "start a", "draft a 1", "review a unmet=1", "draft a 2", "review a unmet=0", "accepted a after 2",
+        "start b", "draft b 1", "review b unmet=0", "accepted b after 1", "finished 7",
+    ]);
+}
+
+#[tokio::test]
+async fn a_skip_is_reported_when_its_input_fails_not_at_the_end() {
+    let (base, _) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("a", &[]), task("b", &["a"]), task("c", &["b"])])),
+        verdict: Arc::new(|title, _| if title == "a" { fail("a is done") } else { pass() }),
+        worker_status: "completed",
+    })
+    .await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let config = RunConfig { events: Some(tx), ..config(1.0) };
+    run(client(base), &config, "brief", None).await.unwrap();
+    drop(config);
+
+    let mut order = Vec::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            RunEvent::TaskFailed { task, .. } => order.push(format!("failed {task}")),
+            RunEvent::TaskSkipped { task } => order.push(format!("skipped {task}")),
+            RunEvent::Finished { .. } => order.push("finished".into()),
+            _ => {}
+        }
+    }
+    assert_eq!(order, ["failed a", "skipped b", "skipped c", "finished"]);
 }

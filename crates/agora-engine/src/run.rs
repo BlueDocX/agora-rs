@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::budget::{Budget, BudgetError, Spend};
 use crate::call::{CallError, Caller, Remote, Route};
+use crate::events::{EventSender, ReviewedBy, RunEvent, TaskView, emit};
 use crate::journal::Journal;
 use crate::planner::{self, Planned, PlannerError, Task};
 use crate::scheduler::{Outcome, run_ready_queue};
@@ -38,6 +39,8 @@ pub struct RunConfig {
     /// Review on a different model and host (e.g. open weights on Baseten).
     /// `None` = the reviewer uses `model`.
     pub reviewer: Option<Remote>,
+    /// Live progress for watchers. `None` = nobody is watching.
+    pub events: Option<EventSender>,
 }
 
 #[derive(Debug)]
@@ -196,9 +199,13 @@ struct Ctx {
     brief: String,
     tasks: Vec<Task>,
     deps: Vec<Vec<usize>>,
+    dependents: Vec<Vec<usize>>,
+    /// Tasks already reported as skipped, so a task behind two failures is reported once.
+    skipped: Mutex<Vec<bool>>,
     /// Accepted text per task, written before the task reports done, so a dependent
     /// task (which starts only after that) always finds its inputs.
     accepted: Mutex<Vec<Option<String>>>,
+    events: Option<EventSender>,
 }
 
 impl Ctx {
@@ -286,7 +293,45 @@ impl Ctx {
         Ok((tally(&votes), used))
     }
 
+    fn emit(&self, event: RunEvent) {
+        emit(self.events.as_ref(), event);
+    }
+
+    fn spent(&self) -> f64 {
+        let s = self.caller.budget.spend();
+        s.cost_usd + s.replayed_usd
+    }
+
+    /// [`Self::attempt`], reporting how the task ended.
     async fn work(&self, i: usize) -> Result<Accepted, TaskError> {
+        let task = self.tasks[i].id.clone();
+        self.emit(RunEvent::TaskStarted { task: task.clone() });
+        let result = self.attempt(i).await;
+        match &result {
+            Ok(a) => self.emit(RunEvent::TaskAccepted { task, drafts: a.drafts, reviews: a.reviews }),
+            Err(e) => {
+                self.emit(RunEvent::TaskFailed { task, reason: e.to_string() });
+                self.report_skipped_behind(i);
+            }
+        }
+        result
+    }
+
+    /// Everything downstream of a failed task will be skipped by the scheduler; say
+    /// so now rather than when the whole run ends.
+    fn report_skipped_behind(&self, failed: usize) {
+        let mut skipped = self.skipped.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut stack = self.dependents[failed].clone();
+        while let Some(t) = stack.pop() {
+            if !std::mem::replace(&mut skipped[t], true) {
+                self.emit(RunEvent::TaskSkipped { task: self.tasks[t].id.clone() });
+                stack.extend_from_slice(&self.dependents[t]);
+            }
+        }
+    }
+
+    async fn attempt(&self, i: usize) -> Result<Accepted, TaskError> {
+        let task = &self.tasks[i].id;
         let mut input = vec![Message::system(CHARTER), Message::system(WORKER_ROLE), Message::user(self.task_prompt(i))];
         // A draft that only misses a code-checked limit doesn't use up the model
         // review's one retry; three drafts is the hard cap either way.
@@ -295,8 +340,22 @@ impl Ctx {
             drafts += 1;
             let request = Request::new(&self.model, input.clone()).effort(Effort::Low).cache_key("agora-worker");
             let draft = self.call(Route::Main, request).await?.text;
+            let words = agora_core::checks::word_count(&draft);
+            self.emit(RunEvent::Drafted { task: task.clone(), draft: drafts, words, spent_usd: self.spent() });
             let (failed, used) = self.check(i, &draft).await?;
             reviews += used;
+            let by = match used {
+                0 => ReviewedBy::Code,
+                1 => ReviewedBy::Model,
+                _ => ReviewedBy::Vote,
+            };
+            self.emit(RunEvent::Reviewed {
+                task: task.clone(),
+                draft: drafts,
+                unmet: failed.clone(),
+                by,
+                spent_usd: self.spent(),
+            });
             if failed.is_empty() {
                 self.accepted.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[i] = Some(draft.clone());
                 return Ok(Accepted { text: draft, drafts, reviews });
@@ -333,9 +392,16 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     let budget = Budget::new(&[&config.model, &reviewer_model], config.cap_usd).map_err(RunError::Budget)?;
     let caller = Caller { muse, reviewer: config.reviewer.as_ref().map(|r| r.client.clone()), budget, journal };
     let planned = planner::plan(&caller, &config.model, brief).await.map_err(RunError::Plan)?;
+    let views = planned
+        .tasks
+        .iter()
+        .map(|t| TaskView { id: t.id.clone(), title: t.title.clone(), deps: t.deps.clone() })
+        .collect();
+    emit(config.events.as_ref(), RunEvent::Planned { tasks: views, attempts: planned.attempts });
 
     let plan = &planned.plan;
     let deps = (0..plan.len()).map(|i| plan.deps(i).to_vec()).collect();
+    let dependents = (0..plan.len()).map(|i| plan.dependents(i).to_vec()).collect();
     let ctx = Arc::new(Ctx {
         caller,
         model: config.model.clone(),
@@ -343,7 +409,10 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
         brief: brief.to_string(),
         tasks: planned.tasks.clone(),
         deps,
+        dependents,
+        skipped: Mutex::new(vec![false; plan.len()]),
         accepted: Mutex::new(vec![None; plan.len()]),
+        events: config.events.clone(),
     });
     let priority = plan.remaining_path(&vec![1.0; plan.len()]);
     let outcomes = run_ready_queue(plan, &priority, config.max_parallel, |i| {
@@ -353,7 +422,7 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     .await;
 
     let journal = ctx.caller.journal.as_ref();
-    Ok(RunReport {
+    let report = RunReport {
         spend: ctx.caller.budget.spend(),
         replayed: journal.map_or(0, Journal::replayed),
         journal_write_failures: journal.map_or(0, Journal::write_failures),
@@ -361,5 +430,14 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
         planned,
         outcomes,
         elapsed: started.elapsed(),
-    })
+    };
+    ctx.emit(RunEvent::Finished {
+        // The same total the live `spent_usd` figures show (replayed calls included).
+        cost_usd: report.spend.cost_usd + report.spend.replayed_usd,
+        calls: report.spend.calls,
+        replayed: report.replayed,
+        elapsed_ms: u64::try_from(report.elapsed.as_millis()).unwrap_or(u64::MAX),
+        deliverable: report.deliverable(),
+    });
+    Ok(report)
 }

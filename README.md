@@ -22,6 +22,12 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
   - **Budget.** Every call is checked against a per-run budget cap.
   - **Code checks.** The planner sets word limits and required headings per task. Plain code checks them before any paid review.
   - **Resume.** Every completed reply is saved to a SQLite file (`agora-journal.db`) as it arrives. `agora-run --resume <run-id>` replays those replies for free and continues from the first call that never finished. Tested live by force-killing a run mid-way.
+- **`agora-server`:** the room hub and office board.
+  - Start a brief in the browser and watch each team member's card move: working, drafted, sent back with the unmet criteria, then accepted or needs a person.
+  - The cost updates live, and the deliverable appears at the end.
+  - Runs stream as Server-Sent Events. A link like `/#run-…` replays a run from the start.
+  - It listens on localhost unless `AGORA_TOKEN` is set, and every `/api` call then needs the token. At most 2 runs are active at once.
+- **Open-weights reviewer:** `AGORA_REVIEWER=baseten` reviews on Muse Spark Open via Baseten (Chat Completions), while planning and writing stay on Meta's Model API.
 - **Scheduler (in `agora-engine`):** the ready-queue scheduler. A task starts the moment its own dependencies finish, the longest remaining chain goes first, and a failure skips only what depends on it. Property tests check dependency order, the parallel cap, critical-path optimality, and failure isolation on random plans.
 - **`agora-muse`:** a typed client for Meta's Model API (Responses endpoint). It supports structured output and prompt-cache keys. It retries 429 and 5xx responses up to 4 times, waiting at least as long as `Retry-After` asks. It reads the rate-limit headers and computes the exact cost of every call, billing cached tokens at the cached rate. The API key can't appear in debug output. Tested against a local mock server; `examples/smoke.rs` checks it against the live API.
 - **`agora-bench`:** B1, the old wave scheduler vs the ready-queue. Results and caveats are in [docs/benchmarks.md](docs/benchmarks.md).
@@ -38,6 +44,7 @@ cargo run -p agora-bench --release --bin sched-sim
 MODEL_API_KEY=... cargo run -p agora-muse --example smoke
 MODEL_API_KEY=... cargo run -p agora-engine --bin agora-run -- "your brief" > deliverable.md
 MODEL_API_KEY=... cargo run -p agora-engine --bin agora-run -- --resume <run-id>   # after a crash
+MODEL_API_KEY=... cargo run -p agora-server   # then open http://127.0.0.1:8080
 ```
 
 ## Principles

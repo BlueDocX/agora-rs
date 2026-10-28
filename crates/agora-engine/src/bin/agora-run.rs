@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
             other => return Err(format!("AGORA_REVIEWER={other:?}: use \"baseten\" or leave it unset").into()),
         },
+        events: None,
     };
     let muse = MuseClient::from_env()?; // before journaling a run that can't start
     let (journal, brief) = match args.as_slice() {
