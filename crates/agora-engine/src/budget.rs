@@ -1,4 +1,5 @@
-//! A spending cap shared by every call in a run.
+//! What a run spends, and its optional cap (`f64::INFINITY` = no cap: spend is
+//! still counted and reported).
 //!
 //! The check happens before each call and the charge after it, so a run can overshoot
 //! the cap by at most the calls already in flight (one per worker slot).
@@ -34,7 +35,7 @@ pub struct Budget {
 pub enum BudgetError {
     /// An uncapped run is not allowed, so every model needs a published price.
     UnpricedModel(String),
-    /// The cap must be a positive, finite number of dollars.
+    /// The cap must be a positive number of dollars (or infinity for none).
     InvalidCap(f64),
     /// A budget must price at least one model.
     NoModels,
@@ -44,7 +45,7 @@ impl std::fmt::Display for BudgetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnpricedModel(m) => write!(f, "no published price for model \"{m}\", so its spend can't be capped"),
-            Self::InvalidCap(c) => write!(f, "the budget cap must be a positive number of dollars, not {c}"),
+            Self::InvalidCap(c) => write!(f, "the budget cap must be a positive number of dollars (or none), not {c}"),
             Self::NoModels => write!(f, "a budget needs at least one priced model"),
         }
     }
@@ -59,13 +60,14 @@ pub struct OverBudget {
 }
 
 impl Budget {
-    /// One cap shared by every model the run uses.
+    /// One cap shared by every model the run uses; `f64::INFINITY` means no cap.
     ///
     /// # Errors
-    /// [`BudgetError`] if any of `models` has no published price or `cap_usd` is not
-    /// a positive finite number (NaN would never trip the cap).
+    /// [`BudgetError`] if any of `models` has no published price (spend must always
+    /// be counted) or `cap_usd` is not positive (NaN, which would silently never trip,
+    /// is rejected too).
     pub fn new(models: &[&str], cap_usd: f64) -> Result<Self, BudgetError> {
-        if !(cap_usd.is_finite() && cap_usd > 0.0) {
+        if cap_usd.is_nan() || cap_usd <= 0.0 {
             return Err(BudgetError::InvalidCap(cap_usd));
         }
         if models.is_empty() {
@@ -168,8 +170,20 @@ mod tests {
     fn refuses_an_unpriced_model_and_caps_that_cannot_cap() {
         assert!(matches!(Budget::new(&["muse-spark-1.3", "some-unpriced-model"], 1.0), Err(BudgetError::UnpricedModel(_))));
         assert!(matches!(Budget::new(&[], 1.0), Err(BudgetError::NoModels)));
-        for cap in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
+        // Infinity is allowed (no cap); NaN would never trip, so it is refused.
+        for cap in [f64::NAN, f64::NEG_INFINITY, 0.0, -1.0] {
             assert!(matches!(Budget::new(&["muse-spark-1.3"], cap), Err(BudgetError::InvalidCap(_))), "{cap}");
         }
+    }
+
+    #[test]
+    fn no_cap_never_stops_a_run_but_still_counts() {
+        let budget = Budget::new(&["muse-spark-1.3"], f64::INFINITY).unwrap();
+        for _ in 0..1000 {
+            budget.charge("muse-spark-1.3", &response(1_000_000, 1_000_000));
+        }
+        assert!(budget.check().is_ok());
+        assert!(budget.spend().cost_usd > 1000.0);
+        assert!(Budget::new(&["muse-spark-1.3"], f64::NAN).is_err());
     }
 }

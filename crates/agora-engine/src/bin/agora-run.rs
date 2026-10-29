@@ -6,7 +6,7 @@
 //! Every completed model reply is journaled in `AGORA_JOURNAL` (default
 //! `agora-journal.db`). Resuming replays those for free and continues from the first
 //! call that never completed. Optional: `AGORA_MODEL` (default `muse-spark-1.3`),
-//! `AGORA_CAP_USD` (default 0.50), `AGORA_PARALLEL` (default 4), and
+//! `AGORA_CAP_USD` (a spending cap; none by default), `AGORA_PARALLEL` (default 4), and
 //! `AGORA_REVIEWER=baseten` to review on Muse Spark Open (open weights) on Baseten
 //! with `BASETEN_API_KEY` (`AGORA_REVIEWER_MODEL` overrides the model id), and
 //! `AGORA_TEAM=<preset id>` (e.g. `creative-studio`) to staff the run with a team. The
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = RunConfig {
         model: env_or("AGORA_MODEL", "muse-spark-1.3".to_string())?,
         max_parallel: env_or("AGORA_PARALLEL", 4)?,
-        cap_usd: env_or("AGORA_CAP_USD", 0.50)?,
+        cap_usd: env_or("AGORA_CAP_USD", f64::INFINITY)?,
         reviewer: match env_or("AGORA_REVIEWER", String::new())?.as_str() {
             "" | "meta" => None,
             "baseten" => Some(Remote {

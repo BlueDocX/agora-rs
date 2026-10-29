@@ -19,7 +19,7 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
   - **Plan.** Muse returns a plan in a fixed JSON schema, and an invalid graph goes back to it with the exact error.
   - **Schedule.** See the next bullet.
   - **Work and review.** Each task's result is reviewed against its acceptance criteria. If the reviewer is unsure, two more reviews vote. A rejected draft gets one retry with the exact unmet criteria, and is then left for a person, without blocking unrelated tasks.
-  - **Budget.** Every call is checked against a per-run budget cap.
+  - **Budget.** Every call's cost is counted and shown live. Runs are uncapped by default; `AGORA_CAP_USD` sets a per-run cap (do set one before opening the hub to others).
   - **Code checks.** The planner sets word limits and required headings per task. Plain code checks them before any paid review.
   - **Resume.** Every completed reply is saved to a SQLite file (`agora-journal.db`) as it arrives. `agora-run --resume <run-id>` replays those replies for free and continues from the first call that never finished. Tested live by force-killing a run mid-way.
 - **`agora-server`:** the room hub and office board.

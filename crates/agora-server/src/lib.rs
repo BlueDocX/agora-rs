@@ -359,12 +359,13 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
 struct Info<'a> {
     model: &'a str,
     reviewer: Option<&'a str>,
-    cap_usd: f64,
+    /// `None` when runs have no spending cap.
+    cap_usd: Option<f64>,
 }
 
 async fn info(State(hub): State<Arc<Hub>>) -> Response {
     let c = &hub.config;
-    Json(Info { model: &c.model, reviewer: c.reviewer.as_ref().map(|r| r.model.as_str()), cap_usd: c.cap_usd })
+    Json(Info { model: &c.model, reviewer: c.reviewer.as_ref().map(|r| r.model.as_str()), cap_usd: c.cap_usd.is_finite().then_some(c.cap_usd) })
         .into_response()
 }
 

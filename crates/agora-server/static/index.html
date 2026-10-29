@@ -507,7 +507,7 @@ async function loadInfo() {
     const info = await (await fetch("/api/info")).json();
     $("model").textContent = info.model;
     $("reviewer").textContent = info.reviewer ? info.reviewer.replace(/^meta-models\//, "") : info.model;
-    $("captag").textContent = `Cap $${info.cap_usd.toFixed(2)} / run`;
+    $("captag").textContent = info.cap_usd == null ? "No cap" : `Cap $${info.cap_usd.toFixed(2)} / run`;
   } catch { $("model").textContent = "—"; $("reviewer").textContent = "—"; }
 }
 

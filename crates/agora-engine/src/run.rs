@@ -36,6 +36,7 @@ pub struct RunConfig {
     /// Planner and workers.
     pub model: String,
     pub max_parallel: usize,
+    /// Spending cap in USD; `f64::INFINITY` for none.
     pub cap_usd: f64,
     /// Review on a different model and host (e.g. open weights on Baseten).
     /// `None` = the reviewer uses `model`.

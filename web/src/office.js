@@ -16,6 +16,7 @@ import {
   LoopOnce, LoopRepeat, Mesh, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Scene,
   SRGBColorSpace, Sprite, SpriteMaterial, Vector3, WebGLRenderer,
 } from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
@@ -132,8 +133,11 @@ async function start(host) {
   floor.position.set(base.position.x, FLOOR / 2, base.position.z);
   floor.receiveShadow = true;
   scene.add(base, floor);
-  for (let i = 0; i < width; i++) place(i % 3 === 1 ? "wallWindow" : "wall", ROOM.x0 + i + 0.5, ROOM.z0 + 0.03);
-  for (let i = 0; i < depth; i++) place(i % 3 === 1 ? "wallWindow" : "wall", ROOM.x0 + 0.03, ROOM.z0 + i + 0.5, 1);
+  // Two walls, at the back and the left; each hides while the camera is behind it.
+  const backWall = new Group(), leftWall = new Group();
+  scene.add(backWall, leftWall);
+  for (let i = 0; i < width; i++) place(i % 3 === 1 ? "wallWindow" : "wall", ROOM.x0 + i + 0.5, ROOM.z0 + 0.03, 0, backWall);
+  for (let i = 0; i < depth; i++) place(i % 3 === 1 ? "wallWindow" : "wall", ROOM.x0 + 0.03, ROOM.z0 + i + 0.5, 1, leftWall);
 
   // Meeting table (the Lead's), lounge, coffee nook, bookcase, plants.
   place("rugRound", -2.0, 1.8);
@@ -471,22 +475,23 @@ async function start(host) {
     else if (e.type === "message" && Date.now() - e.message.at_ms < 20000) speaker({ agent: e.message.agent, message: e.message })?.say(e.message.text, 9);
   });
 
-  // ---- Camera: a gentle sway over the diorama's open side; drag to look around ----
-  const orbit = { angle: 0.8, distance: CLOSE ? 5.2 : 8.9, height: CLOSE ? 2.7 : 6.1, dragging: false, lastX: 0, drift: 1 };
-  const MIN_ANGLE = 0.25, MAX_ANGLE = 1.32; // the walls are on two sides: stay on the open ones
-  renderer.domElement.addEventListener("pointerdown", (e) => {
-    orbit.dragging = true;
-    orbit.lastX = e.clientX;
-    renderer.domElement.setPointerCapture(e.pointerId);
+  // ---- Camera: drag to turn all the way round and tilt, wheel or pinch to zoom.
+  // Left alone, it drifts slowly round the room; touching it pauses the drift.
+  const look = new Vector3(0.1, CLOSE ? 0.45 : 0.2, 0.2);
+  const [startDistance, startHeight] = CLOSE ? [5.2, 2.7] : [8.9, 6.1];
+  camera.position.set(look.x + Math.cos(0.8) * startDistance, startHeight, look.z + Math.sin(0.8) * startDistance);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.copy(look);
+  Object.assign(controls, {
+    enableDamping: true, dampingFactor: 0.08, enablePan: false, rotateSpeed: 0.7, zoomSpeed: 0.8,
+    minDistance: 2.5, maxDistance: 15,
+    minPolarAngle: 0.15, maxPolarAngle: 1.38, // from nearly overhead down to just above the floor
+    autoRotate: true, autoRotateSpeed: 0.35,
   });
-  const stopDrag = () => { orbit.dragging = false; };
-  renderer.domElement.addEventListener("pointerup", stopDrag);
-  renderer.domElement.addEventListener("pointercancel", stopDrag);
-  addEventListener("pointermove", (e) => {
-    if (!orbit.dragging) return;
-    orbit.angle -= (e.clientX - orbit.lastX) * 0.006;
-    orbit.lastX = e.clientX;
-  });
+  let resumeDrift = 0;
+  controls.addEventListener("start", () => { controls.autoRotate = false; clearTimeout(resumeDrift); });
+  controls.addEventListener("end", () => { resumeDrift = setTimeout(() => { controls.autoRotate = true; }, 6000); });
+  controls.update();
 
   function resize() {
     const w = host.clientWidth, h = Math.max(300, host.clientHeight);
@@ -499,7 +504,6 @@ async function start(host) {
   new ResizeObserver(resize).observe(host);
   resize();
 
-  const look = new Vector3(0.1, CLOSE ? 0.45 : 0.2, 0.2);
   const step = new Vector3();
   const turnToward = (a, x, z, dt) => {
     const want = Math.atan2(x - a.root.position.x, z - a.root.position.z);
@@ -510,16 +514,10 @@ async function start(host) {
   const loop = (now) => {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    if (!orbit.dragging) {
-      orbit.angle += dt * 0.025 * orbit.drift;
-      if (orbit.angle > MAX_ANGLE - 0.05) orbit.drift = -1;
-      if (orbit.angle < MIN_ANGLE + 0.05) orbit.drift = 1;
-    }
-    orbit.angle = Math.min(MAX_ANGLE, Math.max(MIN_ANGLE, orbit.angle));
-    if (!renderer.xr.isPresenting) {
-      camera.position.set(look.x + Math.cos(orbit.angle) * orbit.distance, orbit.height, look.z + Math.sin(orbit.angle) * orbit.distance);
-      camera.lookAt(look);
-    }
+    if (!renderer.xr.isPresenting) controls.update(dt);
+    // A wall the camera is behind would hide the room: leave it out of the picture.
+    backWall.visible = camera.position.z > ROOM.z0;
+    leftWall.visible = camera.position.x > ROOM.x0;
     for (const a of actors) {
       a.mixer.update(dt);
       if (a.path.length) {
