@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "name": "agora-office-models",
+  "description": "Builds the office's two model files from the Kenney packs. Only needed when the models change.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1"
+  }
+}

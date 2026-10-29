@@ -129,7 +129,8 @@ async fn the_page_is_served_with_a_strict_content_policy() {
     let base = hub(None).await;
     let res = reqwest::get(format!("{base}/")).await.unwrap();
     let csp = res.headers()["content-security-policy"].to_str().unwrap().to_string();
-    assert!(csp.contains("frame-ancestors 'none'") && csp.contains("connect-src 'self'"));
+    assert!(csp.contains("frame-ancestors 'none'") && csp.contains("connect-src 'self' blob:"));
+    assert!(csp.contains("img-src 'self' data: blob:"), "the 3D models' embedded textures load as blob: URLs");
     assert!(res.text().await.unwrap().contains("<title>Agora office</title>"));
     let info: Value = reqwest::get(format!("{base}/api/info")).await.unwrap().json().await.unwrap();
     assert_eq!(info, json!({"model": "muse-spark-1.3", "reviewer": null, "cap_usd": 1.0}));
@@ -144,8 +145,8 @@ async fn the_page_is_served_with_a_strict_content_policy() {
     // `gzip;q=0` refuses gzip.
     let refused = reqwest::Client::new().get(format!("{base}/office.js")).header("Accept-Encoding", "gzip;q=0, identity").send().await.unwrap();
     assert!(refused.headers().get("content-encoding").is_none());
-    // The Blender models, plain and gzipped.
-    for name in ["office-kit", "chibi"] {
+    // The office models, plain and gzipped.
+    for name in ["people", "furniture"] {
         let url = format!("{base}/models/{name}.glb");
         let plain = reqwest::Client::new().get(&url).header("Accept-Encoding", "identity").send().await.unwrap();
         assert_eq!(plain.headers()["content-type"], "model/gltf-binary");

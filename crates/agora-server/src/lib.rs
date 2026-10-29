@@ -48,12 +48,12 @@ const INDEX: &str = include_str!("../static/index.html");
 /// Both are committed, so the server builds without Node.
 const OFFICE_JS: &str = include_str!("../static/office.js");
 const OFFICE_JS_GZ: &[u8] = include_bytes!("../static/office.js.gz");
-/// The office furniture and the teammate, built in Blender by `assets/blender/build_assets.py`,
+/// The office's people and furniture: Kenney's CC0 packs, trimmed by `web/models/build.mjs`,
 /// which writes each model and its gzipped copy together.
-const OFFICE_KIT: &[u8] = include_bytes!("../static/models/office-kit.glb");
-const OFFICE_KIT_GZ: &[u8] = include_bytes!("../static/models/office-kit.glb.gz");
-const CHIBI: &[u8] = include_bytes!("../static/models/chibi.glb");
-const CHIBI_GZ: &[u8] = include_bytes!("../static/models/chibi.glb.gz");
+const PEOPLE: &[u8] = include_bytes!("../static/models/people.glb");
+const PEOPLE_GZ: &[u8] = include_bytes!("../static/models/people.glb.gz");
+const FURNITURE: &[u8] = include_bytes!("../static/models/furniture.glb");
+const FURNITURE_GZ: &[u8] = include_bytes!("../static/models/furniture.glb.gz");
 
 /// How the hub runs briefs.
 #[derive(Debug, Clone)]
@@ -159,8 +159,8 @@ pub fn app(config: HubConfig) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), OFFICE_JS_GZ) }))
-        .route("/models/office-kit.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", OFFICE_KIT, OFFICE_KIT_GZ) }))
-        .route("/models/chibi.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", CHIBI, CHIBI_GZ) }))
+        .route("/models/people.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", PEOPLE, PEOPLE_GZ) }))
+        .route("/models/furniture.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", FURNITURE, FURNITURE_GZ) }))
         .route("/api/info", get(info))
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
         .route("/api/runs", post(start).get(list))
@@ -195,10 +195,11 @@ fn asset(headers: &HeaderMap, content_type: &'static str, plain: &'static [u8], 
 
 async fn index() -> Response {
     // Everything the page shows is set with textContent; this keeps it that way.
-    // Google Fonts is the one outside origin: its stylesheet and the font files.
+    // Google Fonts is the one outside origin: its stylesheet and the font files. `blob:`
+    // is the glTF loader's own: it fetches the models' embedded textures as blob URLs.
     let csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
                style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; \
-               img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+               img-src 'self' data: blob:; connect-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'";
     ([(header::CONTENT_SECURITY_POLICY, csp), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")], Html(INDEX)).into_response()
 }
 

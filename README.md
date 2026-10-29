@@ -26,7 +26,7 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
   - Start a brief in the browser and watch each team member's card move: working, drafted, sent back with the unmet criteria, then accepted or needs a person.
   - The cost updates live, and the deliverable appears at the end.
   - Runs stream as Server-Sent Events. A link like `/#run-…` replays a run from the start.
-  - **3D office:** procedural, flat-shaded Three.js (142 KB gzipped). It shows one desk per task, avatars that change colour with their state, a reviewer who walks to each draft, and an Enter VR button on headsets. Without WebGL2 the 2D cards remain.
+  - **3D office:** Three.js with soft shadows, filmic tone mapping and environment light. Each agent has a desk in a pod; they stand in the aisle while work waits, walk to their chair and sit to work, cheer when accepted, and the reviewer walks the aisles to each draft (skeletal animation with crossfades). Speech bubbles show the chat; Enter VR appears on headsets. Without WebGL2 the kanban remains. Characters and furniture are Kenney's CC0 packs (see Credits).
   - It listens on localhost unless `AGORA_TOKEN` is set, and every `/api` call then needs the token. At most 2 runs are active at once.
 - **Open-weights reviewer:** `AGORA_REVIEWER=baseten` reviews on Muse Spark Open via Baseten (Chat Completions), while planning and writing stay on Meta's Model API.
 - **Scheduler (in `agora-engine`):** the ready-queue scheduler. A task starts the moment its own dependencies finish, the longest remaining chain goes first, and a failure skips only what depends on it. Property tests check dependency order, the parallel cap, critical-path optimality, and failure isolation on random plans.
@@ -56,6 +56,10 @@ cd web && npm ci --ignore-scripts && npm run build
 - Our code is 100% safe Rust (`unsafe_code = "forbid"` in every crate). Dependencies are pinned exactly.
 - Every performance claim comes with the command that reproduces it.
 
+## Credits
+
+- Characters and furniture in the 3D office: [Mini Characters](https://kenney.nl/assets/mini-characters) and [Furniture Kit](https://kenney.nl/assets/furniture-kit) by Kenney (www.kenney.nl), CC0. They are trimmed into two files by `web/models/build.mjs`; see [assets/kenney-src/README.md](assets/kenney-src/README.md). Everything else, including the scene, its animation logic and lighting, is this project's own code.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT for the code. See [LICENSE](LICENSE). The Kenney assets are CC0 (public domain).

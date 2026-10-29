@@ -6,3 +6,6 @@
 *.db-wal
 *.db-shm
 /web/node_modules
+/assets/kenney-src/*
+!/assets/kenney-src/README.md
+/web/models/node_modules
