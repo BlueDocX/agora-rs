@@ -264,14 +264,26 @@ def cooler(x, y=0.0):
 # --- the teammate -------------------------------------------------------------------
 
 
+def keep_below(obj, z):
+    """Cut a mesh to the part below world height z (e.g. a ring into a smile)."""
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for v in obj.data.vertices:
+        v.select = (obj.matrix_world @ v.co).z > z
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.delete(type="VERT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
 def chibi(x, y=0.0):
-    """A round toy-like teammate, about 1.45 tall: big head, short body, headset."""
+    """A round toy-like teammate, about 1.7 tall: one big round head on a small
+    rounded body, stubby arms and legs, big eyes. Matte, like a vinyl toy."""
     r = root("Chibi", x, y)
-    skin = material("Skin", (66, 133, 244), rough=0.45)
-    white = material("EyeWhite", (255, 255, 255), rough=0.2)
-    dark = material("Pupil", (29, 27, 22), rough=0.25)
-    blush = material("Blush", (255, 150, 160), rough=0.6)
-    gear = material("Gear", (40, 40, 46), rough=0.4)
+    skin = material("Skin", (66, 133, 244), rough=0.8)
+    white = material("EyeWhite", (255, 255, 255), rough=0.35)
+    dark = material("Pupil", (24, 22, 18), rough=0.2)
 
     def part(name, z, dx=0.0):
         """A pivot (neck, shoulder, hip) the page rotates to animate that part."""
@@ -282,39 +294,24 @@ def chibi(x, y=0.0):
         return p
 
     body = part("Body", 0.0)
-    ball(body, skin, 0.25, at(r, 0, 0, 0.55), scale=(1.0, 0.9, 1.1))  # torso
-    ball(body, material("Belly", (255, 255, 255), rough=0.5), 0.14, at(r, 0, -0.17, 0.52), scale=(1.0, 0.4, 1.05), seg=16, rings=10)
-    head = part("Head", 0.82)
-    ball(head, skin, 0.44, at(r, 0, 0, 1.08), scale=(1.05, 0.97, 0.94), seg=32, rings=20)
+    ball(body, skin, 0.26, at(r, 0, 0, 0.5), scale=(1.0, 0.88, 1.05), seg=32, rings=20)  # torso, tucked under the head
+    head = part("Head", 0.78)
+    ball(head, skin, 0.52, at(r, 0, 0, 1.12), scale=(1.0, 0.97, 0.95), seg=48, rings=32)
+    ball(head, skin, 0.06, at(r, 0, 0, 1.63), scale=(1.0, 1.0, 1.1), seg=16, rings=10)  # a little nub on top
     for s in (-1, 1):
-        ball(head, white, 0.105, at(r, s * 0.16, -0.36, 1.1), scale=(0.85, 0.5, 1.15), seg=18, rings=12)
-        ball(head, dark, 0.07, at(r, s * 0.16, -0.4, 1.09), scale=(0.85, 0.5, 1.15), seg=14, rings=10)
-        ball(head, white, 0.022, at(r, s * 0.16 + 0.025, -0.43, 1.13), seg=8, rings=6)  # sparkle
-        ball(head, blush, 0.06, at(r, s * 0.28, -0.32, 0.98), scale=(1.0, 0.3, 0.6), seg=12, rings=8)
-        # Headset: ear cups on each side.
-        cyl(head, gear, 0.09, 0.07, at(r, s * 0.45, 0, 1.08), verts=20, rot=(0, math.pi / 2, 0), bevel=0.02)
-    torus(head, dark, 0.05, 0.012, at(r, 0, -0.39, 0.97), rot=(math.pi / 2 + 0.25, 0, 0))  # smile
-    band = torus(head, gear, 0.46, 0.025, at(r, 0, 0, 1.1), rot=(math.pi / 2, 0, 0))  # ear to ear
-    # Keep only the top half of the band.
-    bpy.context.view_layer.objects.active = band
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="DESELECT")
-    bpy.ops.object.mode_set(mode="OBJECT")
-    for v in band.data.vertices:
-        v.select = (band.matrix_world @ v.co).z < 1.1
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.delete(type="VERT")
-    bpy.ops.object.mode_set(mode="OBJECT")
-    cyl(head, gear, 0.012, 0.18, at(r, -0.42, -0.12, 0.98), verts=8, rot=(1.3, 0, -0.5))  # mic boom
-    ball(head, gear, 0.025, at(r, -0.36, -0.25, 0.94), seg=10, rings=6)
-    ball(head, skin, 0.07, at(r, 0.02, 0.02, 1.53), scale=(0.7, 0.7, 1.2), seg=12, rings=8, rot=(0, 0.35, 0))  # a little tuft
+        # Big eyes on the front of the head (Blender -Y is the front), slightly apart.
+        ball(head, white, 0.135, at(r, s * 0.18, -0.455, 1.13), scale=(0.95, 0.4, 1.15), seg=24, rings=16)
+        ball(head, dark, 0.088, at(r, s * 0.175, -0.49, 1.115), scale=(0.95, 0.4, 1.15), seg=20, rings=14)
+        ball(head, white, 0.026, at(r, s * 0.175 - 0.03, -0.53, 1.16), seg=10, rings=8)  # the shine
+    smile = torus(head, dark, 0.065, 0.015, at(r, 0, -0.485, 0.99), rot=(math.pi / 2 + 0.18, 0, 0))
+    keep_below(smile, 0.99)
     for s, name in ((-1, "ArmR"), (1, "ArmL")):
-        arm = part(name, 0.68, s * 0.24)
-        ball(arm, skin, 0.075, at(r, s * 0.29, 0, 0.56), scale=(0.9, 0.9, 2.0), seg=14, rings=10, rot=(0, s * 0.35, 0))
+        arm = part(name, 0.66, s * 0.25)
+        ball(arm, skin, 0.085, at(r, s * 0.29, 0, 0.54), scale=(0.95, 0.95, 1.7), seg=16, rings=12, rot=(0, s * 0.16, 0))
     for s, name in ((-1, "LegR"), (1, "LegL")):
-        leg = part(name, 0.32, s * 0.11)
-        ball(leg, skin, 0.085, at(r, s * 0.11, 0, 0.2), scale=(1.0, 1.0, 1.6), seg=14, rings=10)
-        ball(leg, skin, 0.09, at(r, s * 0.11, -0.04, 0.06), scale=(1.0, 1.35, 0.65), seg=14, rings=10)  # foot
+        leg = part(name, 0.32, s * 0.12)
+        ball(leg, skin, 0.1, at(r, s * 0.12, 0, 0.17), scale=(1.0, 1.0, 1.45), seg=16, rings=12)
+        ball(leg, skin, 0.1, at(r, s * 0.12, -0.035, 0.06), scale=(1.0, 1.3, 0.6), seg=16, rings=12)  # a round foot
     return r
 
 
@@ -373,5 +370,5 @@ export(OUT / "office-kit.glb", kit)
 reset()
 team = [chibi(0.0)]
 if PREVIEW:
-    preview(PREVIEW / "chibi.png", (0, 0, 0.8), 3.2)
+    preview(PREVIEW / "chibi.png", (0, 0, 0.85), 3.6)
 export(OUT / "chibi.glb", team)

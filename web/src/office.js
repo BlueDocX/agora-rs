@@ -23,6 +23,9 @@ const STATE = {
 };
 const SEATED = new Set(["working", "review"]);
 const HOME = new Vector3(0, 0, 2.35); // where the reviewer waits, between two chairs at the planning table
+// `?close` frames the office tight, for close-ups (a demo video, a small screen).
+const CLOSE = new URLSearchParams(location.search).has("close");
+const TAG_SIZE = CLOSE ? 0.5 : 1; // tags and bubbles are sized for the far view
 
 // Started after the constants above exist (the bundle turns them into plain vars).
 const host = document.getElementById("office3d");
@@ -160,8 +163,8 @@ async function start(host) {
     const map = new CanvasTexture(c);
     map.colorSpace = SRGBColorSpace;
     const sprite = new Sprite(new SpriteMaterial({ map, depthWrite: false }));
-    sprite.scale.set(3.2, 0.82, 1);
-    sprite.position.y = 2.3;
+    sprite.scale.set(3.2 * TAG_SIZE, 0.82 * TAG_SIZE, 1);
+    sprite.position.y = CLOSE ? 2.05 : 2.3;
     return sprite;
   }
   const dropTag = (s) => { s.parent?.remove(s); s.material.map?.dispose(); s.material.dispose(); };
@@ -250,8 +253,8 @@ async function start(host) {
       refresh(d);
       desks.set(entry.key, d);
     });
-    orbit.distance = radius * 1.5 + 7;
-    orbit.height = radius * 1.1 + 6.5;
+    orbit.distance = CLOSE ? radius + 4.5 : radius * 1.5 + 7;
+    orbit.height = CLOSE ? 3.4 : radius * 1.1 + 6.5;
   }
 
   // Faint blue lines on the floor for "this desk needs that one's output".
@@ -342,8 +345,8 @@ async function start(host) {
     const map = new CanvasTexture(c);
     map.colorSpace = SRGBColorSpace;
     const sprite = new Sprite(new SpriteMaterial({ map, depthWrite: false }));
-    sprite.scale.set(3.0, 1.11, 1);
-    sprite.position.y = 3.2;
+    sprite.scale.set(3.0 * TAG_SIZE, 1.11 * TAG_SIZE, 1);
+    sprite.position.y = CLOSE ? 2.6 : 3.2;
     sprite.renderOrder = 2;
     return sprite;
   }
@@ -364,7 +367,7 @@ async function start(host) {
   });
 
   // A slow orbit; drag to look around.
-  const orbit = { angle: 0.75, distance: 17, height: 13, dragging: false, lastX: 0 };
+  const orbit = { angle: 0.75, distance: CLOSE ? 8 : 17, height: CLOSE ? 3.4 : 13, dragging: false, lastX: 0 };
   renderer.domElement.addEventListener("pointerdown", (e) => {
     orbit.dragging = true;
     orbit.lastX = e.clientX;
@@ -409,7 +412,7 @@ async function start(host) {
     if (!orbit.dragging) orbit.angle += dt * 0.04;
     if (!renderer.xr.isPresenting) {
       camera.position.set(Math.cos(orbit.angle) * orbit.distance, orbit.height, Math.sin(orbit.angle) * orbit.distance);
-      camera.lookAt(0, 0.6, 0);
+      camera.lookAt(0, CLOSE ? 1.1 : 0.6, 0);
     }
     for (const d of desks.values()) {
       const p = d.person, u = p.userData;
