@@ -82,6 +82,8 @@ async fn starting_a_run_needs_the_token_and_a_sensible_brief() {
     assert_eq!(stream("?token=s3cret").await.unwrap().status(), 200);
     let missing = http.get(format!("{base}/api/runs/run-none/events?token=s3cret")).send().await.unwrap();
     assert_eq!(missing.status(), 404);
+    // The model names and cap are shown before anyone types a token.
+    assert_eq!(http.get(format!("{base}/api/info")).send().await.unwrap().status(), 200);
 }
 
 #[tokio::test]
@@ -114,6 +116,8 @@ async fn the_page_is_served_with_a_strict_content_policy() {
     let csp = res.headers()["content-security-policy"].to_str().unwrap().to_string();
     assert!(csp.contains("frame-ancestors 'none'") && csp.contains("connect-src 'self'"));
     assert!(res.text().await.unwrap().contains("<title>Agora office</title>"));
+    let info: Value = reqwest::get(format!("{base}/api/info")).await.unwrap().json().await.unwrap();
+    assert_eq!(info, json!({"model": "muse-spark-1.3", "reviewer": null, "cap_usd": 1.0}));
     let office = reqwest::get(format!("{base}/office.js")).await.unwrap();
     assert_eq!(office.headers()["content-type"], "text/javascript; charset=utf-8");
     assert!(office.text().await.unwrap().contains("agora:event"));

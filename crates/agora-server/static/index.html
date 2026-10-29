@@ -4,89 +4,208 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agora office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=Spline+Sans+Mono:wght@400;500;600&display=swap">
 <style>
+  /* Warm editorial: bone paper, warm ink, butter yellow. */
   :root {
-    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dc;
-    --accent: #0866ff; --ok: #1f8a4c; --warn: #b26a00; --bad: #c0392b; --idle: #9a9aa0;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #111214; --panel: #1b1c1f; --ink: #ececee; --muted: #9a9aa2; --line: #2c2d31;
-            --accent: #4c8dff; --ok: #3fbf76; --warn: #e3a23a; --bad: #ef6b5b; --idle: #6d6d74; }
+    color-scheme: light;
+    --bg: #efebe0; --paper: #fcfaf4; --ink: #17150f; --muted: #857d66; --soft: #b3aa8f; --line: #e4ddca;
+    --stone: #f6f2e9; --butter: #f2cc46; --butter-deep: #d9af1b;
+    --accent: #4285f4; --ok: #1f9d55; --warn: #d9af1b; --bad: #e5483b; --idle: #b3aa8f; --reviewer: #6366c9;
+    --sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; align-items: baseline; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
-  header .spend { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
-  main { display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 20px; max-width: 1400px; margin: 0 auto; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 16px; } }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; }
-  textarea, input { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
-                    border-radius: 8px; padding: 10px; }
-  textarea { min-height: 120px; resize: vertical; }
-  button { font: inherit; border: 0; border-radius: 8px; padding: 9px 14px; background: var(--accent); color: #fff; cursor: pointer; }
-  button:disabled { opacity: .5; cursor: default; }
-  .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-  .note { color: var(--muted); font-size: 13px; min-height: 1.2em; }
-  #runs { list-style: none; margin: 0; padding: 0; }
-  #runs li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; gap: 8px; }
-  #runs li:hover, #runs li.on { background: var(--bg); }
-  #runs .brief { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .stack > section + section { margin-top: 20px; }
-  #office3d { position: relative; margin-bottom: 14px; border-radius: 8px; overflow: hidden; background: var(--bg); }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); display: flex; flex-direction: column; }
+  ::selection { background: var(--butter); color: var(--ink); }
+  button { font: inherit; cursor: pointer; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(23,21,15,.12); border-radius: 99px; }
+
+  .label { font: 700 10.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .mono { font-family: var(--mono); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; border: 0; padding: 10px 18px;
+          font: 800 11px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+  .pill.butter { background: var(--butter); color: var(--ink); box-shadow: 0 1px 0 var(--butter-deep); }
+  .pill.butter:hover { background: #f7dc6f; }
+  .pill.ink { background: var(--ink); color: var(--paper); }
+  .pill.ghost { background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
+  .pill:disabled { opacity: .5; cursor: default; }
+  svg.i { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  /* Header */
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 20px; }
+  .logo { width: 34px; height: 34px; border-radius: 50%; background: var(--ink); display: grid; place-items: center; }
+  .logo::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--butter); }
+  header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: .01em; }
+  .ver { font: 500 11px var(--mono); color: var(--muted); }
+  header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .key { display: flex; align-items: center; gap: 6px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 0 12px; color: var(--muted); }
+  .key input { border: 0; background: transparent; font: 500 12px var(--mono); color: var(--ink); width: 150px; padding: 9px 0; outline: none; }
+
+  /* Three panels */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr) 340px; gap: 12px; padding: 0 12px 12px; }
+  .panel { background: var(--paper); border: 1px solid rgba(23,21,15,.06); border-radius: 28px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Logs */
+  .logs { padding: 20px 14px 14px; }
+  .logs > .label { padding: 0 8px 14px; }
+  .tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; }
+  .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 800 10.5px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--zinc, #55503f); }
+  .tabs button.on { background: var(--ink); color: var(--paper); }
+  .feed { flex: 1; overflow: auto; margin: 12px 0 0; padding: 0 6px; list-style: none; }
+  .feed li { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .feed li .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }
+  .feed li .t { color: var(--soft); font: 500 11px var(--mono); margin-left: auto; padding-left: 6px; white-space: nowrap; }
+  .feed.tech li { font: 11.5px/1.5 var(--mono); color: #55503f; word-break: break-word; }
+  .feed .runs-item { cursor: pointer; border-radius: 12px; border-bottom: 0; padding: 10px; }
+  .feed .runs-item:hover, .feed .runs-item.on { background: var(--stone); }
+  .feed .runs-item .brief { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-note { color: var(--muted); font: 800 10.5px var(--sans); letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 70px 10px; border: 0 !important; display: block !important; }
+
+  /* Office */
+  .office { padding: 0; }
+  .bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .team { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff; border-radius: 16px; padding: 10px 14px; font-weight: 800; }
+  .bar .title { line-height: 1.1; }
+  .bar .title b { display: block; font-size: 16px; font-weight: 800; }
+  .chip { display: flex; align-items: center; gap: 14px; background: var(--stone); border: 1px solid var(--line); border-radius: 16px; padding: 7px 14px; }
+  .chip .k { font: 800 9px/1.2 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .chip .v { font: 600 11.5px var(--mono); }
+  .chip .sep { width: 1px; align-self: stretch; background: var(--line); }
+  .bar .spacer { margin-left: auto; }
+  #office3d { position: relative; flex: 1; min-height: 300px; overflow: hidden; }
   #office3d canvas { display: block; touch-action: none; cursor: grab; }
-  #office3d button { position: absolute !important; bottom: 10px !important; }
-  #tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
-  .task { border: 1px solid var(--line); border-left: 4px solid var(--idle); border-radius: 8px; padding: 10px 12px; }
-  .task .title { font-weight: 600; }
-  .task .state { font-size: 13px; color: var(--muted); margin-top: 4px; }
-  .task .unmet { font-size: 13px; color: var(--warn); margin: 6px 0 0; padding-left: 16px; }
-  .task.working { border-left-color: var(--accent); }
-  .task.accepted { border-left-color: var(--ok); }
-  .task.failed { border-left-color: var(--bad); }
-  .task.skipped { border-left-color: var(--idle); opacity: .6; }
-  #log { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); max-height: 220px; overflow: auto; margin: 0; white-space: pre-wrap; }
-  #deliverable { white-space: pre-wrap; margin: 0; font-size: 15px; }
-  .empty { color: var(--muted); }
+  #office3d canvas:active { cursor: grabbing; }
+  #office3d .badge { position: absolute; top: 12px; left: 14px; background: var(--paper); border-radius: 10px; padding: 5px 9px; font: 600 11px var(--mono); }
+  #office3d .hint { position: absolute; inset: auto 0 18px; text-align: center; color: var(--muted); pointer-events: none; }
+  #office3d > button { position: absolute !important; bottom: 12px !important; }
+  .handle { height: 4px; width: 48px; border-radius: 99px; background: var(--line); margin: 8px auto 0; }
+
+  /* Kanban */
+  .kanban { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; padding: 14px 18px 18px; overflow-x: auto; max-height: 42%; min-height: 140px; }
+  .col { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .col h3 { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  .count { background: var(--butter); border-radius: 999px; min-width: 20px; padding: 3px 6px; text-align: center; font: 700 10px var(--mono); color: var(--ink); }
+  .cards { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .hatch { border-radius: 999px; border: 1px solid var(--line); padding: 15px; text-align: center; color: var(--muted); font: 800 10px var(--sans); letter-spacing: .12em;
+           background-image: repeating-linear-gradient(-45deg, rgba(23,21,15,.07) 0 2px, transparent 2px 7px); }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; }
+  .card .who { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; line-height: 1.3; }
+  .card .who .face { width: 18px; height: 18px; border-radius: 50%; flex: none; position: relative; }
+  .card .who .face::before, .card .who .face::after { content: ""; position: absolute; top: 6px; width: 5px; height: 5px; border-radius: 50%; background: #fff; box-shadow: inset 1px 0 0 1.5px var(--ink); }
+  .card .who .face::before { left: 3px; } .card .who .face::after { right: 3px; }
+  .card .state { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .card .unmet { color: #8a6d0b; font-size: 12px; margin: 6px 0 0; padding-left: 16px; }
+  .card.failed { border-color: #f3c2bc; } .card.skipped { opacity: .55; }
+
+  /* Project info */
+  .info { padding: 24px; overflow-y: auto; }
+  .info-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+  .info-head h2 { margin: 0; font-size: 22px; font-weight: 800; }
+  .status { display: inline-flex; align-items: center; gap: 7px; background: var(--stone); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font: 800 9.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
+  .status.live { color: var(--accent); } .status.done { color: var(--ok); } .status.bad { color: var(--bad); }
+  .sect { display: flex; align-items: center; gap: 10px; margin: 24px 0 12px; }
+  .sect::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .sect .tag { order: 2; background: #e7f8ef; color: var(--ok); border: 1px solid #bfe9d1; border-radius: 999px; padding: 5px 10px; font: 800 9.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; }
+  textarea { width: 100%; min-height: 110px; resize: vertical; font: italic 14px/1.5 var(--sans); color: var(--ink); background: var(--stone);
+             border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; outline: none; }
+  textarea:focus { border-color: var(--butter-deep); font-style: normal; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .note { color: var(--muted); font-size: 12px; }
+  .spend { background: var(--ink); color: var(--paper); border-radius: 22px; padding: 22px; position: relative;
+           background-image: radial-gradient(rgba(252,250,244,.14) 1.2px, transparent 1.2px); background-size: 18px 18px; }
+  .spend .big { font: 700 38px/1 var(--mono); letter-spacing: -.02em; }
+  .spend .sub { margin-top: 16px; font: 500 12px var(--mono); color: #ded7c4; }
+  .spend .sub b { color: var(--butter); font-weight: 600; }
+  #deliverable { white-space: pre-wrap; margin: 0; font: 13.5px/1.55 var(--sans); background: var(--stone); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; max-height: 420px; overflow: auto; }
+  #deliverable.empty { color: var(--muted); font-style: italic; }
+
+  @media (max-width: 1180px) {
+    body { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .office { order: -1; }
+    #office3d { flex: none; height: 420px; } /* fixed: the page has no height to share out here */
+    .logs { max-height: 420px; order: 1; } /* office, then the brief, then logs */
+    .key input { width: 100px; }
+  }
+  @media (max-width: 560px) {
+    header { flex-wrap: wrap; padding: 12px 16px; }
+    header .right { margin-left: 0; width: 100%; }
+    .key { flex: 1; } .key input { width: 100%; }
+    .bar .chip { display: none; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>Agora</h1><span class="note">a virtual office on Muse</span>
-  <span class="spend" id="spend"></span>
+  <div class="logo" aria-hidden="true"></div>
+  <h1>AGORA</h1>
+  <span class="ver">v0.2 · Rust · Muse</span>
+  <div class="right">
+    <button class="pill butter" id="newbrief" type="button">
+      <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>New brief
+    </button>
+    <label class="key" title="Access token, if the hub needs one">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2"/></svg>
+      <input id="token" type="password" placeholder="access token" autocomplete="off" aria-label="Access token">
+    </label>
+  </div>
 </header>
 <main>
-  <div class="stack">
-    <section>
-      <h2>New brief</h2>
-      <form id="form">
-        <textarea id="brief" maxlength="4000" placeholder="What should the office deliver?" required></textarea>
-        <input id="token" type="password" placeholder="Access token (if the hub needs one)" autocomplete="off" style="margin-top:8px">
-        <div class="row"><button id="go" type="submit">Start</button><span class="note" id="formnote"></span></div>
-      </form>
-    </section>
-    <section>
-      <h2>Runs</h2>
-      <ul id="runs"><li class="empty">No runs yet.</li></ul>
-    </section>
-  </div>
-  <div class="stack">
-    <section>
-      <h2>Team</h2>
-      <div id="office3d" hidden></div>
-      <div id="tasks"><p class="empty">Start a brief or pick a run.</p></div>
-    </section>
-    <section>
-      <h2>Deliverable</h2>
-      <pre id="deliverable" class="empty">Appears when the run finishes.</pre>
-    </section>
-    <section>
-      <h2>Activity</h2>
-      <pre id="log"></pre>
-    </section>
-  </div>
+  <section class="panel logs">
+    <div class="label">Logs</div>
+    <div class="tabs" role="tablist">
+      <button type="button" data-tab="activity" class="on">Activity</button>
+      <button type="button" data-tab="technical">Technical</button>
+      <button type="button" data-tab="runs">Runs</button>
+    </div>
+    <ul class="feed" id="feed"></ul>
+  </section>
+
+  <section class="panel office">
+    <div class="bar">
+      <span class="team" title="Teammates on this run">
+        <svg class="i" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>
+        <span id="teamsize">0</span>
+      </span>
+      <span class="title"><b>Agora Office</b><span class="label">Muse team</span></span>
+      <span class="spacer"></span>
+      <div class="chip">
+        <div><div class="k">Writer</div><div class="v" id="model">…</div></div>
+        <span class="sep"></span>
+        <div><div class="k">Reviewer</div><div class="v" id="reviewer">…</div></div>
+      </div>
+    </div>
+    <div id="office3d" hidden></div>
+    <div class="handle"></div>
+    <div class="kanban" id="kanban"></div>
+  </section>
+
+  <section class="panel info">
+    <div class="info-head"><h2>Project Info</h2><span class="status" id="status">Ready to start</span></div>
+    <div class="sect"><span class="label">User brief</span></div>
+    <form id="form">
+      <textarea id="brief" maxlength="4000" placeholder="No active brief. Tell the office what to deliver…" required></textarea>
+      <div class="row">
+        <button class="pill butter" id="go" type="submit">
+          <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>Run office
+        </button>
+        <span class="note" id="formnote"></span>
+      </div>
+    </form>
+    <div class="sect"><span class="label">Spend</span><span class="tag" id="captag">Cap —</span></div>
+    <div class="spend">
+      <div class="big" id="spent">$0.0000</div>
+      <div class="sub" id="spendsub"><b>0</b> calls · <b>0</b> replayed free</div>
+    </div>
+    <div class="sect"><span class="label">Deliverable</span></div>
+    <pre id="deliverable" class="empty">Appears when the run finishes.</pre>
+  </section>
 </main>
 <script>
 "use strict";
@@ -95,77 +214,153 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
-let source = null, current = null, tasks = new Map();
+// One color per teammate, in plan order; the 3D office uses the same list.
+const PALETTE = ["#4285f4", "#34a853", "#f2b705", "#ea4335", "#14b8a6", "#f97316", "#ec4899", "#64748b"];
+window.agoraPalette = PALETTE;
+const COLUMNS = [["scheduled", "Scheduled"], ["hold", "On hold"], ["progress", "In progress"], ["done", "Done"]];
+
+let source = null, current = null, tasks = new Map(), tab = "activity", runsCache = [];
+const activity = [], technical = [];
 // Every event of the run being watched, so the 3D office can catch up if it loads late.
 const runEvents = [];
 window.agoraHistory = () => runEvents.slice();
 
-function render() {
-  const box = $("tasks");
-  box.replaceChildren();
-  if (!tasks.size) { box.append(el("p", "empty", "Planning…")); return; }
-  for (const t of tasks.values()) {
-    const card = el("div", "task " + t.cls);
-    card.append(el("div", "title", t.title), el("div", "state", t.state));
-    if (t.unmet && t.unmet.length) {
-      const ul = el("ul", "unmet");
-      t.unmet.forEach((u) => ul.append(el("li", null, u)));
-      card.append(ul);
+function clock() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+
+function note(text, color) { activity.push({ text, color, t: clock() }); if (tab === "activity") renderFeed(); }
+
+function renderFeed() {
+  const feed = $("feed");
+  feed.className = "feed" + (tab === "technical" ? " tech" : "");
+  feed.replaceChildren();
+  if (tab === "runs") {
+    if (!runsCache.length) { feed.append(el("li", "empty-note", runsCache.locked ? "Enter the access token to see runs" : "No runs yet")); return; }
+    for (const r of runsCache) {
+      const li = el("li", "runs-item" + (r.id === current ? " on" : ""));
+      const dot = el("span", "dot"); dot.style.background = r.done ? "var(--ok)" : "var(--accent)";
+      li.append(dot, el("span", "brief", r.brief), el("span", "t", r.done ? "done" : "live"));
+      li.onclick = () => watch(r.id);
+      feed.append(li);
     }
-    box.append(card);
+    return;
+  }
+  const items = tab === "activity" ? activity : technical;
+  if (!items.length) { feed.append(el("li", "empty-note", tab === "activity" ? "No activity yet" : "No technical data")); return; }
+  for (const a of items) {
+    const li = el("li");
+    if (tab === "activity") {
+      const dot = el("span", "dot"); dot.style.background = a.color || "var(--idle)";
+      li.append(dot, el("span", null, a.text), el("span", "t", a.t));
+    } else li.textContent = a;
+    feed.append(li);
+  }
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function column(t) {
+  if (t.cls === "accepted") return "done";
+  if (t.cls === "failed" || t.cls === "skipped") return "hold";
+  if (t.cls === "working" || t.cls === "review") return "progress";
+  return "scheduled";
+}
+
+function renderBoard() {
+  $("teamsize").textContent = tasks.size;
+  const box = $("kanban");
+  box.replaceChildren();
+  for (const [key, name] of COLUMNS) {
+    const col = el("div", "col");
+    const list = [...tasks.values()].filter((t) => column(t) === key);
+    const h = el("h3", "label", name);
+    h.append(el("span", "count", String(list.length)));
+    const cards = el("div", "cards");
+    if (!list.length) cards.append(el("div", "hatch", "EMPTY"));
+    for (const t of list) {
+      const card = el("div", "card " + t.cls);
+      const who = el("div", "who");
+      const face = el("span", "face"); face.style.background = t.color;
+      who.append(face, el("span", null, t.title));
+      card.append(who, el("div", "state", t.state));
+      if (t.unmet.length) { const ul = el("ul", "unmet"); t.unmet.forEach((u) => ul.append(el("li", null, u))); card.append(ul); }
+      cards.append(card);
+    }
+    col.append(h, cards);
+    box.append(col);
   }
 }
 
-function log(line) {
-  const out = $("log");
-  out.textContent += line + "\n";
-  out.scrollTop = out.scrollHeight;
+function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = "status" + (cls ? " " + cls : ""); }
+
+function spend(usd, calls, replayed, secs) {
+  $("spent").textContent = "$" + usd.toFixed(4);
+  const sub = $("spendsub");
+  sub.replaceChildren();
+  const b = (v) => el("b", null, String(v));
+  if (calls == null) { sub.append("running…"); return; }
+  sub.append(b(calls), " calls · ", b(replayed), " replayed free · ", b(secs.toFixed(1) + " s"));
 }
 
 function onEvent(e) {
   runEvents.push(e);
   dispatchEvent(new CustomEvent("agora:event", { detail: e })); // the 3D office
+  technical.push(JSON.stringify(e.type === "finished" ? { ...e, deliverable: `(${e.deliverable.length} chars)` } : e));
   const t = e.task && tasks.get(e.task);
+  if (e.task && !t) { note(`event for an unknown task: ${e.task}`, "var(--bad)"); return; }
+  const color = t ? t.color : undefined;
   switch (e.type) {
     case "planned":
-      tasks = new Map(e.tasks.map((x) => [x.id, { title: x.title, cls: "", state: x.deps.length ? "waiting for " + x.deps.join(", ") : "ready", unmet: [] }]));
-      log(`planned ${e.tasks.length} tasks` + (e.attempts > 1 ? ` (after ${e.attempts} attempts)` : ""));
+      tasks = new Map(e.tasks.map((x, i) => [x.id, { title: x.title, color: PALETTE[i % PALETTE.length], cls: "",
+        state: x.deps.length ? "waiting for " + x.deps.join(", ") : "ready", unmet: [] }]));
+      note(`Planned ${e.tasks.length} tasks` + (e.attempts > 1 ? ` (after ${e.attempts} attempts)` : ""), "var(--ink)");
+      setStatus("Running", "live");
       break;
-    case "task_started": Object.assign(t, { cls: "working", state: "working…" }); log(`${e.task}: started`); break;
-    case "drafted": Object.assign(t, { state: `draft ${e.draft} (${e.words} words), in review` }); log(`${e.task}: draft ${e.draft}, ${e.words} words`); spend(e.spent_usd); break;
+    case "task_started": Object.assign(t, { cls: "working", state: "working…" }); note(`${t.title}: started`, color); break;
+    case "drafted":
+      Object.assign(t, { cls: "review", state: `draft ${e.draft} (${e.words} words), in review` });
+      note(`${t.title}: draft ${e.draft}, ${e.words} words`, color); spend(e.spent_usd); break;
     case "reviewed":
       t.unmet = e.unmet;
-      if (e.unmet.length) t.state = `draft ${e.draft} sent back (${e.by === "code" ? "code check" : e.by === "vote" ? "3-way vote" : "reviewer"})`;
-      log(`${e.task}: ${e.unmet.length ? "sent back: " + e.unmet.join("; ") : "passed"} [${e.by}]`); spend(e.spent_usd); break;
-    case "task_accepted": Object.assign(t, { cls: "accepted", state: `accepted after ${e.drafts} draft${e.drafts > 1 ? "s" : ""}`, unmet: [] }); log(`${e.task}: accepted`); break;
-    case "task_failed": Object.assign(t, { cls: "failed", state: "needs a person: " + e.reason, unmet: [] }); log(`${e.task}: needs a person`); break;
-    case "task_skipped": Object.assign(t, { cls: "skipped", state: "skipped (an input failed)" }); log(`${e.task}: skipped`); break;
-    case "finished":
+      if (e.unmet.length) Object.assign(t, { cls: "working", state: `draft ${e.draft} sent back (${e.by === "code" ? "code check" : e.by === "vote" ? "3-way vote" : "reviewer"})` });
+      note(`${t.title}: ${e.unmet.length ? "sent back: " + e.unmet.join("; ") : "passed"} [${e.by}]`, e.unmet.length ? "var(--warn)" : "var(--reviewer)");
+      spend(e.spent_usd); break;
+    case "task_accepted": Object.assign(t, { cls: "accepted", state: `accepted after ${e.drafts} draft${e.drafts > 1 ? "s" : ""}`, unmet: [] }); note(`${t.title}: accepted`, "var(--ok)"); break;
+    case "task_failed": Object.assign(t, { cls: "failed", state: "needs a person: " + e.reason, unmet: [] }); note(`${t.title}: needs a person`, "var(--bad)"); break;
+    case "task_skipped": Object.assign(t, { cls: "skipped", state: "skipped (an input failed)" }); note(`${t.title}: skipped`, "var(--idle)"); break;
+    case "finished": {
       if (source) source.close(); // the stream ends with the run; don't reconnect
       $("deliverable").className = ""; $("deliverable").textContent = e.deliverable || "Nothing was accepted.";
-      spend(e.cost_usd, `${e.calls} calls${e.replayed ? `, ${e.replayed} replayed` : ""}, ${(e.elapsed_ms / 1000).toFixed(1)} s`);
-      log("finished"); refreshRuns(); break;
+      spend(e.cost_usd, e.calls, e.replayed, e.elapsed_ms / 1000);
+      const open = [...tasks.values()].some((x) => x.cls === "failed" || x.cls === "skipped");
+      setStatus(open ? "Needs a person" : "Delivered", open ? "bad" : "done");
+      note("Finished", "var(--ok)"); refreshRuns(); break;
+    }
     case "run_failed":
       if (source) source.close();
       $("deliverable").className = "empty"; $("deliverable").textContent = "The run could not start: " + e.reason;
-      log("run failed: " + e.reason); refreshRuns(); break;
+      setStatus("Failed", "bad"); note("Run failed: " + e.reason, "var(--bad)"); refreshRuns(); break;
   }
-  render();
+  renderBoard();
+  if (tab === "technical") renderFeed();
 }
-
-function spend(usd, extra) { $("spend").textContent = `$${usd.toFixed(4)}` + (extra ? ` · ${extra}` : ""); }
 
 function watch(id) {
   if (source) source.close();
   current = id;
   if (location.hash.slice(1) !== id) history.replaceState(null, "", "#" + encodeURIComponent(id));
-  document.querySelectorAll("#runs li").forEach((li) => li.classList.toggle("on", li.dataset.id === id));
+  if (tab === "runs") renderFeed();
+  const run = runsCache.find((r) => r.id === id);
+  if (run && !$("brief").value.trim()) $("brief").value = run.brief; // never over a draft
   const token = $("token").value.trim();
   source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events` + (token ? `?token=${encodeURIComponent(token)}` : ""));
   // Every (re)connection replays the whole run, so start from a clean slate.
-  source.onopen = () => { runEvents.length = 0; dispatchEvent(new Event("agora:reset")); tasks = new Map(); $("log").textContent = ""; $("deliverable").className = "empty";
-                          $("deliverable").textContent = "Appears when the run finishes."; $("spend").textContent = ""; render(); };
-  source.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (err) { log("bad event: " + err); } };
+  source.onopen = () => {
+    runEvents.length = 0; activity.length = 0; technical.length = 0;
+    dispatchEvent(new Event("agora:reset"));
+    tasks = new Map(); setStatus("Planning…", "live");
+    $("deliverable").className = "empty"; $("deliverable").textContent = "Appears when the run finishes.";
+    spend(0); renderBoard(); renderFeed();
+  };
+  source.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (err) { note("bad event: " + err, "var(--bad)"); } };
 }
 
 function authHeader() {
@@ -175,26 +370,32 @@ function authHeader() {
 
 async function refreshRuns() {
   const res = await fetch("/api/runs", { headers: authHeader() });
-  if (res.status === 401) { $("runs").replaceChildren(el("li", "empty", "Enter the access token to see runs.")); return; }
-  const runs = await res.json();
-  const ul = $("runs");
-  ul.replaceChildren();
-  if (!runs.length) { ul.append(el("li", "empty", "No runs yet.")); return; }
-  for (const r of runs) {
-    const li = el("li"); li.dataset.id = r.id;
-    li.append(el("span", "brief", r.brief), el("span", "note", r.done ? "done" : "live"));
-    li.onclick = () => watch(r.id);
-    if (r.id === current) li.classList.add("on");
-    ul.append(li);
-  }
+  if (res.status === 401) runsCache = Object.assign([], { locked: true });
+  else if (res.ok) { const runs = await res.json(); runsCache = Array.isArray(runs) ? runs : []; }
+  if (tab === "runs") renderFeed();
 }
 
+async function loadInfo() {
+  try {
+    const info = await (await fetch("/api/info")).json();
+    $("model").textContent = info.model;
+    $("reviewer").textContent = info.reviewer ? info.reviewer.replace(/^meta-models\//, "") : info.model;
+    $("captag").textContent = `Cap $${info.cap_usd.toFixed(2)} / run`;
+  } catch { $("model").textContent = "—"; $("reviewer").textContent = "—"; }
+}
+
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+  if (tab === "runs") refreshRuns();
+  renderFeed();
+});
+$("newbrief").onclick = () => { $("brief").focus(); $("brief").select(); };
 $("token").value = store.get("agora-token");
 $("token").onchange = () => { store.set("agora-token", $("token").value.trim()); refreshRuns(); };
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
-  const token = $("token").value.trim();
-  store.set("agora-token", token);
+  store.set("agora-token", $("token").value.trim());
   $("go").disabled = true; $("formnote").textContent = "Starting…";
   try {
     const res = await fetch("/api/runs", { method: "POST",
@@ -206,9 +407,9 @@ $("form").onsubmit = async (ev) => {
   } catch (err) { $("formnote").textContent = err.message; }
   finally { $("go").disabled = false; }
 };
-refreshRuns();
-// A link like /#run-123 opens that run.
-if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1)));
+renderBoard(); renderFeed(); loadInfo();
+// A link like /#run-123 opens that run (after the list, so its brief shows too).
+refreshRuns().finally(() => { if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1))); });
 </script>
 <script type="module" src="/office.js"></script>
 </body>

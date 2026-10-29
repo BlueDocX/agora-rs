@@ -5,9 +5,11 @@
 //!   are kept in memory; every run is also in the journal).
 //! - `GET /api/runs/{id}/events` streams the run as Server-Sent Events: everything
 //!   that already happened, then each new event live, ending when the run does.
+//! - `GET /api/info` names the models and the per-run cap (no token needed: nothing
+//!   secret, and the page shows it before anyone types a token).
 //! - `GET /` is the office board.
 //!
-//! When a token is set, every `/api` call needs it: as `Authorization: Bearer`, or
+//! When a token is set, every other `/api` call needs it: as `Authorization: Bearer`, or
 //! as `?token=` on the event stream (a browser `EventSource` can't send headers).
 
 use std::collections::HashMap;
@@ -123,6 +125,7 @@ pub fn app(config: HubConfig) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/office.js", get(office_js))
+        .route("/api/info", get(info))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
         .with_state(hub)
@@ -150,7 +153,9 @@ async fn office_js(headers: HeaderMap) -> Response {
 
 async fn index() -> Response {
     // Everything the page shows is set with textContent; this keeps it that way.
-    let csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
+    // Google Fonts is the one outside origin: its stylesheet and the font files.
+    let csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
+               style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; \
                img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
     ([(header::CONTENT_SECURITY_POLICY, csp), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")], Html(INDEX)).into_response()
 }
@@ -273,6 +278,19 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, Json(body): Json
         let _ = tx.send(RunEvent::RunFailed { reason });
     });
     (StatusCode::CREATED, Json(Started { id })).into_response()
+}
+
+#[derive(Serialize)]
+struct Info<'a> {
+    model: &'a str,
+    reviewer: Option<&'a str>,
+    cap_usd: f64,
+}
+
+async fn info(State(hub): State<Arc<Hub>>) -> Response {
+    let c = &hub.config;
+    Json(Info { model: &c.model, reviewer: c.reviewer.as_ref().map(|r| r.model.as_str()), cap_usd: c.cap_usd })
+        .into_response()
 }
 
 #[derive(Serialize)]
