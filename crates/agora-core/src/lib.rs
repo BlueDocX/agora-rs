@@ -2,6 +2,8 @@
 
 pub mod checks;
 pub mod plan;
+pub mod team;
 
 pub use checks::Limits;
 pub use plan::{Plan, PlanError, TaskSpec};
+pub use team::{Agent, Team, preset, presets};

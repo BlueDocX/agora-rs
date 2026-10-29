@@ -44,6 +44,8 @@ pub struct RunRecord {
     pub model: String,
     /// The reviewer's model on its own host, if the run used one.
     pub reviewer: Option<String>,
+    /// The run's team, if it had one (the planner and workers' prompts depend on it).
+    pub team: Option<agora_core::Team>,
 }
 
 /// One run's view of the journal file.
@@ -76,11 +78,16 @@ fn open(path: &Path) -> Result<Connection, JournalError> {
              created_at INTEGER NOT NULL,
              PRIMARY KEY (run_id, key, n));",
     )?;
-    // Journals from before the reviewer was recorded: add the column (empty = none).
-    let has_reviewer: bool =
-        db.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name = 'reviewer'", [], |r| r.get(0))?;
-    if !has_reviewer {
-        db.execute_batch("ALTER TABLE runs ADD COLUMN reviewer TEXT NOT NULL DEFAULT ''")?;
+    // Journals from before these were recorded: add the columns (empty = none).
+    for column in ["reviewer", "team"] {
+        let has: bool = db.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name = ?1",
+            params![column],
+            |r| r.get(0),
+        )?;
+        if !has {
+            db.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"))?;
+        }
     }
     Ok(db)
 }
@@ -107,15 +114,23 @@ impl Journal {
     ///
     /// # Errors
     /// If the file can't be opened or written.
-    pub fn start(path: &Path, brief: &str, model: &str, reviewer: Option<&str>) -> Result<Self, JournalError> {
+    pub fn start(
+        path: &Path,
+        brief: &str,
+        model: &str,
+        reviewer: Option<&str>,
+        team: Option<&agora_core::Team>,
+    ) -> Result<Self, JournalError> {
         let db = open(path)?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
         let run_id = format!("run-{nanos:x}");
-        db.execute("INSERT INTO runs (id, brief, model, reviewer, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![
+        let team = team.map(|t| serde_json::to_string(t).map_err(|e| JournalError(e.to_string()))).transpose()?;
+        db.execute("INSERT INTO runs (id, brief, model, reviewer, team, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![
             run_id,
             brief,
             model,
             reviewer.unwrap_or(""),
+            team.unwrap_or_default(),
             now_secs()
         ])?;
         Ok(Self::with(db, run_id))
@@ -131,18 +146,27 @@ impl Journal {
             return Err(JournalError(format!("no journal at {}", path.display())));
         }
         let db = open(path)?;
-        let record = db
-            .query_row("SELECT id, brief, model, reviewer FROM runs WHERE id = ?1", params![run_id], |r| {
+        let (record, team) = db
+            .query_row("SELECT id, brief, model, reviewer, team FROM runs WHERE id = ?1", params![run_id], |r| {
                 let reviewer: String = r.get(3)?;
-                Ok(RunRecord {
-                    id: r.get(0)?,
-                    brief: r.get(1)?,
-                    model: r.get(2)?,
-                    reviewer: (!reviewer.is_empty()).then_some(reviewer),
-                })
+                let team: String = r.get(4)?;
+                Ok((
+                    RunRecord {
+                        id: r.get(0)?,
+                        brief: r.get(1)?,
+                        model: r.get(2)?,
+                        reviewer: (!reviewer.is_empty()).then_some(reviewer),
+                        team: None,
+                    },
+                    team,
+                ))
             })
             .optional()?
             .ok_or_else(|| JournalError(format!("no run \"{run_id}\" in {}", path.display())))?;
+        let team = (!team.is_empty())
+            .then(|| serde_json::from_str(&team).map_err(|e| JournalError(format!("the run's team is unreadable: {e}"))))
+            .transpose()?;
+        let record = RunRecord { team, ..record };
         Ok((Self::with(db, record.id.clone()), record))
     }
 
@@ -264,11 +288,21 @@ mod tests {
     }
 
     #[test]
+    fn a_runs_team_comes_back_on_resume() {
+        let path = temp_path("team");
+        let team = agora_core::presets().remove(1);
+        let id = Journal::start(&path, "brief", "muse-spark-1.3", None, Some(&team)).unwrap().run_id().to_string();
+        let (_, record) = Journal::resume(&path, &id).unwrap();
+        assert_eq!(record.team, Some(team));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn identical_requests_are_kept_apart_and_survive_a_reopen() {
         let path = temp_path("reopen");
         let request = Request::new("muse-spark-1.3", vec![Message::user("review this")]);
         let run_id = {
-            let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
+            let journal = Journal::start(&path, "brief", "muse-spark-1.3", None, None).unwrap();
             for text in ["first vote", "second vote"] {
                 let (key, n) = journal.claim(&request);
                 journal.record(&key, n, &response(text));
@@ -277,7 +311,7 @@ mod tests {
         };
 
         let (journal, record) = Journal::resume(&path, &run_id).unwrap();
-        assert_eq!((record.brief.as_str(), record.reviewer), ("brief", None));
+        assert_eq!((record.brief.as_str(), record.reviewer, record.team), ("brief", None, None));
         let replies: Vec<String> = (0..3)
             .map(|_| {
                 let (key, n) = journal.claim(&request);
@@ -318,7 +352,7 @@ mod tests {
         assert!(err.to_string().contains("no journal at"), "{err}");
         assert!(!path.exists());
 
-        Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
+        Journal::start(&path, "brief", "muse-spark-1.3", None, None).unwrap();
         let err = Journal::resume(&path, "run-nope").unwrap_err();
         assert!(err.to_string().contains("no run \"run-nope\""), "{err}");
         remove_db(&path);

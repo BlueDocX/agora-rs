@@ -7,6 +7,7 @@ license.workspace = true
 description = "The Agora room hub: start runs and watch them live in the browser."
 
 [dependencies]
+agora-core.workspace = true
 agora-engine.workspace = true
 agora-muse.workspace = true
 axum.workspace = true

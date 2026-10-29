@@ -2,6 +2,7 @@
 //! the glasses view). Sending never blocks the run, and a run with no watcher, or
 //! whose watcher went away, is unaffected.
 
+use agora_core::Team;
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -10,6 +11,8 @@ pub struct TaskView {
     pub id: String,
     pub title: String,
     pub deps: Vec<String>,
+    /// Who does it (an agent id of the run's team), if the run has a team.
+    pub agent: Option<String>,
 }
 
 /// How a draft was judged.
@@ -27,6 +30,8 @@ pub enum ReviewedBy {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
+    /// The team on this run, before planning. Only sent when the run has one.
+    Staffed { team: Team },
     Planned { tasks: Vec<TaskView>, attempts: usize },
     TaskStarted { task: String },
     Drafted { task: String, draft: u32, words: usize, spent_usd: f64 },

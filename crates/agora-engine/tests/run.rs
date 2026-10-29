@@ -28,6 +28,8 @@ struct Script {
 struct Seen {
     plan_requests: Vec<Value>,
     worker_prompts: HashMap<String, Vec<String>>,
+    /// Every message each worker got ("role: text"), by task title.
+    worker_systems: HashMap<String, Vec<String>>,
     reviews: usize,
 }
 
@@ -76,8 +78,11 @@ async fn mock(script: Script) -> (String, Arc<Mutex<Seen>>) {
                         reply(&(script.verdict)(after(&prompt, "Task: "), draft).to_string())
                     }
                     _ => {
-                        let first = body["input"][2]["content"].as_str().unwrap();
+                        let input = body["input"].as_array().unwrap();
+                        let first = input.iter().find(|m| m["role"] == "user").unwrap()["content"].as_str().unwrap();
                         let title = after(first, "Your task: ").to_string();
+                        let systems = input.iter().map(|m| format!("{}: {}", m["role"].as_str().unwrap(), m["content"].as_str().unwrap()));
+                        seen.worker_systems.insert(title.clone(), systems.collect());
                         let drafts = seen.worker_prompts.entry(title.clone()).or_default();
                         drafts.push(last_user(&body));
                         reply_with_status(&format!("draft {} of {title}", drafts.len()), script.worker_status)
@@ -110,7 +115,7 @@ fn fail(criterion: &str) -> Value {
 }
 
 fn config(cap_usd: f64) -> RunConfig {
-    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd, reviewer: None, events: None }
+    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd, reviewer: None, events: None, team: None }
 }
 
 fn client(base: String) -> MuseClient {
@@ -304,7 +309,7 @@ async fn a_resumed_run_pays_only_for_what_never_finished() {
     .await;
     let path = journal_path("resume");
     // $0.001675 a call: the plan, a's draft and a's review fit; b's draft does not.
-    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None, None).unwrap();
     let first = run(client(base.clone()), &config(0.004), "brief", Some(journal)).await.unwrap();
     assert!(first.outcomes[0].is_done());
     assert!(matches!(first.outcomes[1], Outcome::Failed(TaskError::Call(CallError::OverBudget(_)))));
@@ -330,7 +335,7 @@ async fn a_finished_run_replays_without_touching_the_model() {
     })
     .await;
     let path = journal_path("replay");
-    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None, None).unwrap();
     let first = run(client(base), &config(1.0), "brief", Some(journal)).await.unwrap();
 
     // Nothing listens here: any real call would fail the run.
@@ -357,7 +362,7 @@ async fn resuming_does_not_reset_the_budget() {
     })
     .await;
     let path = journal_path("cap");
-    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None).unwrap();
+    let journal = Journal::start(&path, "brief", "muse-spark-1.3", None, None).unwrap();
     let first = run(client(base.clone()), &config(0.004), "brief", Some(journal)).await.unwrap();
 
     // Same cap again: the replayed $0.005 already spent it, so nothing new is paid.
@@ -411,6 +416,7 @@ async fn reports_each_step_as_it_happens() {
     let mut kinds = Vec::new();
     while let Some(event) = rx.recv().await {
         kinds.push(match event {
+            RunEvent::Staffed { team } => format!("staffed {}", team.id),
             RunEvent::Planned { tasks, .. } => format!("planned {}", tasks.len()),
             RunEvent::TaskStarted { task } => format!("start {task}"),
             RunEvent::Drafted { task, draft, .. } => format!("draft {task} {draft}"),
@@ -454,4 +460,47 @@ async fn a_skip_is_reported_when_its_input_fails_not_at_the_end() {
         }
     }
     assert_eq!(order, ["failed a", "skipped b", "skipped c", "finished"]);
+}
+
+#[tokio::test]
+async fn a_team_run_gives_each_task_to_a_member_who_works_in_its_role() {
+    let team = agora_core::presets().into_iter().find(|t| t.id == "creative-studio").unwrap();
+    let (base, seen) = mock(Script {
+        plan: Arc::new(|_| {
+            let mut tagline = task("tagline", &[]);
+            tagline["agent"] = json!("copywriter");
+            let mut look = task("look", &[]);
+            look["agent"] = json!("art-director");
+            plan_of(&[tagline, look])
+        }),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    })
+    .await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let config = RunConfig { events: Some(tx), team: Some(team.clone()), ..config(1.0) };
+    let report = run(client(base), &config, "brief", None).await.unwrap();
+    drop(config);
+    assert!(report.outcomes.iter().all(Outcome::is_done));
+
+    // The team is announced first, then the plan says who does what.
+    assert!(matches!(rx.recv().await, Some(RunEvent::Staffed { team: t }) if t == team));
+    let Some(RunEvent::Planned { tasks, .. }) = rx.recv().await else { panic!("expected the plan") };
+    let who: Vec<_> = tasks.iter().map(|t| t.agent.as_deref().unwrap()).collect();
+    assert_eq!(who, ["copywriter", "art-director"]);
+
+    let seen = seen.lock().unwrap();
+    // The planner saw the roster and could only pick real members.
+    let plan = &seen.plan_requests[0];
+    assert!(plan["input"].to_string().contains("copywriter: Copywriter"));
+    let schema = &plan["text"]["format"]["schema"]["properties"]["tasks"]["items"]["properties"]["agent"]["enum"];
+    assert_eq!(schema.as_array().unwrap().len(), team.agents.len());
+    // Each worker was told who it is, as the user (team text is caller-written, so it
+    // never gets system authority).
+    assert!(seen.worker_systems["tagline"].iter().any(|s| s.starts_with("user: You are Copywriter, on the Creative Studio team")));
+    assert!(seen.worker_systems["look"].iter().any(|s| s.starts_with("user: You are Art Director")));
+    assert!(!seen.worker_systems["tagline"].iter().any(|s| s.starts_with("system: You are Copywriter")));
+    for m in plan["input"].as_array().unwrap() {
+        assert!(m["role"] != "system" || !m["content"].as_str().unwrap().contains("copywriter"), "{m}");
+    }
 }

@@ -125,6 +125,41 @@
   #deliverable { white-space: pre-wrap; margin: 0; font: 13.5px/1.55 var(--sans); background: var(--stone); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; max-height: 420px; overflow: auto; }
   #deliverable.empty { color: var(--muted); font-style: italic; }
 
+  /* Teams */
+  .team-pick { display: flex; gap: 8px; align-items: center; }
+  select { flex: 1; min-width: 0; font: 600 13px var(--sans); color: var(--ink); background: var(--stone); border: 1px solid var(--line); border-radius: 999px; padding: 10px 14px; }
+  .card .owner { font: 600 11px var(--mono); color: var(--muted); margin-top: 3px; }
+  dialog#teams { width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 48px); border: 0; border-radius: 28px; padding: 0;
+                 background: var(--paper); color: var(--ink); box-shadow: 0 32px 64px -12px rgba(23,21,15,.25); }
+  dialog::backdrop { background: rgba(23,21,15,.35); backdrop-filter: blur(4px); }
+  .tm { display: grid; grid-template-columns: 250px minmax(0, 1fr); height: min(640px, calc(100vh - 48px)); }
+  .tm-list { background: var(--stone); padding: 20px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .tm-list .label { padding: 12px 12px 6px; }
+  .tm-list .item { display: block; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 14px; padding: 9px 12px; color: var(--ink); }
+  .tm-list .item.on, .tm-list .item:hover { background: var(--paper); }
+  .tm-list .item b { display: block; font-size: 14px; } .tm-list .item span { font-size: 11.5px; color: var(--muted); }
+  .tm-list .new { margin: 10px 12px 0; justify-content: center; }
+  .tm-edit { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  .tm-edit .head { display: flex; align-items: center; gap: 12px; }
+  .tm-edit h3 { margin: 0; font-size: 22px; font-weight: 800; }
+  .tm-edit .close { margin-left: auto; border: 0; background: var(--stone); border-radius: 50%; width: 34px; height: 34px; font-size: 18px; color: var(--muted); }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field { display: flex; flex-direction: column; gap: 6px; } .field.wide { grid-column: 1 / -1; }
+  .tm-edit input:not([type=color]), .tm-edit textarea { font: 14px/1.4 var(--sans); font-style: normal; color: var(--ink); background: var(--stone);
+                 border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; min-height: 0; width: 100%; }
+  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .agent { border: 1px solid var(--line); border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: #fff; }
+  .agent .top { display: flex; gap: 8px; align-items: center; }
+  .agent .top b { font-size: 15px; }
+  .agent input[type=color] { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: none; flex: none; }
+  .agent textarea { min-height: 64px; resize: vertical; }
+  .agent .x { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 18px; }
+  .agent .face { width: 26px; height: 26px; border-radius: 50%; flex: none; }
+  .agent p { margin: 0; font-size: 13px; color: #55503f; }
+  .tm-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-top: 6px; }
+  .tm-actions .err { color: var(--bad); font-size: 13px; }
+
+  @media (max-width: 720px) { .tm { grid-template-columns: 1fr; height: calc(100vh - 48px); } .tm-list { max-height: 170px; } .fields { grid-template-columns: 1fr; } }
   @media (max-width: 1180px) {
     body { height: auto; }
     main { grid-template-columns: 1fr; }
@@ -150,6 +185,9 @@
     <button class="pill butter" id="newbrief" type="button">
       <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>New brief
     </button>
+    <button class="pill ghost" id="manage" type="button">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Manage teams
+    </button>
     <label class="key" title="Access token, if the hub needs one">
       <svg class="i" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2"/></svg>
       <input id="token" type="password" placeholder="access token" autocomplete="off" aria-label="Access token">
@@ -173,7 +211,7 @@
         <svg class="i" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>
         <span id="teamsize">0</span>
       </span>
-      <span class="title"><b>Agora Office</b><span class="label">Muse team</span></span>
+      <span class="title"><b id="teamname">Agora Office</b><span class="label" id="teamkind">Muse team</span></span>
       <span class="spacer"></span>
       <div class="chip">
         <div><div class="k">Writer</div><div class="v" id="model">…</div></div>
@@ -188,6 +226,12 @@
 
   <section class="panel info">
     <div class="info-head"><h2>Project Info</h2><span class="status" id="status">Ready to start</span></div>
+    <div class="sect"><span class="label">Team</span></div>
+    <div class="team-pick">
+      <select id="teamsel" aria-label="Team for the next run"></select>
+      <button class="pill ghost" id="editteam" type="button">Edit</button>
+    </div>
+    <p class="note" id="teamdesc"></p>
     <div class="sect"><span class="label">User brief</span></div>
     <form id="form">
       <textarea id="brief" maxlength="4000" placeholder="No active brief. Tell the office what to deliver…" required></textarea>
@@ -207,6 +251,7 @@
     <pre id="deliverable" class="empty">Appears when the run finishes.</pre>
   </section>
 </main>
+<dialog id="teams" aria-label="Manage teams"><div class="tm"><nav class="tm-list" id="tmlist"></nav><div class="tm-edit" id="tmedit"></div></div></dialog>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -221,6 +266,8 @@ window.agoraPalette = PALETTE;
 const COLUMNS = [["scheduled", "Scheduled"], ["hold", "On hold"], ["progress", "In progress"], ["done", "Done"]];
 
 let source = null, current = null, tasks = new Map(), tab = "activity", runsCache = [];
+let staffed = null; // the team on the run being watched
+const named = (t) => (t.owner ? `${t.owner} · ${t.title}` : t.title);
 const activity = [], technical = [];
 // Every event of the run being watched, so the 3D office can catch up if it loads late.
 const runEvents = [];
@@ -266,7 +313,7 @@ function column(t) {
 }
 
 function renderBoard() {
-  $("teamsize").textContent = tasks.size;
+  $("teamsize").textContent = staffed ? staffed.agents.length : tasks.size; // agents, or one per task without a team
   const box = $("kanban");
   box.replaceChildren();
   for (const [key, name] of COLUMNS) {
@@ -281,7 +328,9 @@ function renderBoard() {
       const who = el("div", "who");
       const face = el("span", "face"); face.style.background = t.color;
       who.append(face, el("span", null, t.title));
-      card.append(who, el("div", "state", t.state));
+      card.append(who);
+      if (t.owner) card.append(el("div", "owner", t.owner));
+      card.append(el("div", "state", t.state));
       if (t.unmet.length) { const ul = el("ul", "unmet"); t.unmet.forEach((u) => ul.append(el("li", null, u))); card.append(ul); }
       cards.append(card);
     }
@@ -309,24 +358,32 @@ function onEvent(e) {
   if (e.task && !t) { note(`event for an unknown task: ${e.task}`, "var(--bad)"); return; }
   const color = t ? t.color : undefined;
   switch (e.type) {
+    case "staffed":
+      staffed = e.team;
+      $("teamname").textContent = e.team.name; $("teamkind").textContent = e.team.kind || "Team";
+      note(`${e.team.name} is on it: ${e.team.agents.map((a) => a.name).join(", ")}`, "var(--ink)");
+      break;
     case "planned":
-      tasks = new Map(e.tasks.map((x, i) => [x.id, { title: x.title, color: PALETTE[i % PALETTE.length], cls: "",
-        state: x.deps.length ? "waiting for " + x.deps.join(", ") : "ready", unmet: [] }]));
+      tasks = new Map(e.tasks.map((x, i) => {
+        const a = staffed?.agents.find((m) => m.id === x.agent);
+        return [x.id, { title: x.title, owner: a?.name, color: a?.color || PALETTE[i % PALETTE.length], cls: "",
+          state: x.deps.length ? "waiting for " + x.deps.join(", ") : "ready", unmet: [] }];
+      }));
       note(`Planned ${e.tasks.length} tasks` + (e.attempts > 1 ? ` (after ${e.attempts} attempts)` : ""), "var(--ink)");
       setStatus("Running", "live");
       break;
-    case "task_started": Object.assign(t, { cls: "working", state: "working…" }); note(`${t.title}: started`, color); break;
+    case "task_started": Object.assign(t, { cls: "working", state: "working…" }); note(`${named(t)}: started`, color); break;
     case "drafted":
       Object.assign(t, { cls: "review", state: `draft ${e.draft} (${e.words} words), in review` });
-      note(`${t.title}: draft ${e.draft}, ${e.words} words`, color); spend(e.spent_usd); break;
+      note(`${named(t)}: draft ${e.draft}, ${e.words} words`, color); spend(e.spent_usd); break;
     case "reviewed":
       t.unmet = e.unmet;
       if (e.unmet.length) Object.assign(t, { cls: "working", state: `draft ${e.draft} sent back (${e.by === "code" ? "code check" : e.by === "vote" ? "3-way vote" : "reviewer"})` });
-      note(`${t.title}: ${e.unmet.length ? "sent back: " + e.unmet.join("; ") : "passed"} [${e.by}]`, e.unmet.length ? "var(--warn)" : "var(--reviewer)");
+      note(`${named(t)}: ${e.unmet.length ? "sent back: " + e.unmet.join("; ") : "passed"} [${e.by}]`, e.unmet.length ? "var(--warn)" : "var(--reviewer)");
       spend(e.spent_usd); break;
-    case "task_accepted": Object.assign(t, { cls: "accepted", state: `accepted after ${e.drafts} draft${e.drafts > 1 ? "s" : ""}`, unmet: [] }); note(`${t.title}: accepted`, "var(--ok)"); break;
-    case "task_failed": Object.assign(t, { cls: "failed", state: "needs a person: " + e.reason, unmet: [] }); note(`${t.title}: needs a person`, "var(--bad)"); break;
-    case "task_skipped": Object.assign(t, { cls: "skipped", state: "skipped (an input failed)" }); note(`${t.title}: skipped`, "var(--idle)"); break;
+    case "task_accepted": Object.assign(t, { cls: "accepted", state: `accepted after ${e.drafts} draft${e.drafts > 1 ? "s" : ""}`, unmet: [] }); note(`${named(t)}: accepted`, "var(--ok)"); break;
+    case "task_failed": Object.assign(t, { cls: "failed", state: "needs a person: " + e.reason, unmet: [] }); note(`${named(t)}: needs a person`, "var(--bad)"); break;
+    case "task_skipped": Object.assign(t, { cls: "skipped", state: "skipped (an input failed)" }); note(`${named(t)}: skipped`, "var(--idle)"); break;
     case "finished": {
       if (source) source.close(); // the stream ends with the run; don't reconnect
       $("deliverable").className = ""; $("deliverable").textContent = e.deliverable || "Nothing was accepted.";
@@ -357,7 +414,8 @@ function watch(id) {
   source.onopen = () => {
     runEvents.length = 0; activity.length = 0; technical.length = 0;
     dispatchEvent(new Event("agora:reset"));
-    tasks = new Map(); setStatus("Planning…", "live");
+    tasks = new Map(); staffed = null; setStatus("Planning…", "live");
+    $("teamname").textContent = "Agora Office"; $("teamkind").textContent = "Muse team";
     $("deliverable").className = "empty"; $("deliverable").textContent = "Appears when the run finishes.";
     spend(0); renderBoard(); renderFeed();
   };
@@ -399,16 +457,212 @@ $("form").onsubmit = async (ev) => {
   store.set("agora-token", $("token").value.trim());
   $("go").disabled = true; $("formnote").textContent = "Starting…";
   try {
+    // The chosen team must be known before the run goes out, or it would run unstaffed.
+    if (!presets.length) await loadTeams();
+    if (selected && !teamForRun()) throw new Error("The teams couldn't be loaded; try again in a moment.");
     const res = await fetch("/api/runs", { method: "POST",
       headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ brief: $("brief").value }) });
+      body: JSON.stringify({ brief: $("brief").value, team: teamForRun() }) });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || res.statusText);
     $("formnote").textContent = ""; await refreshRuns(); watch(body.id);
   } catch (err) { $("formnote").textContent = err.message; }
   finally { $("go").disabled = false; }
 };
-renderBoard(); renderFeed(); loadInfo();
+// ---- Teams: presets from the server, your own teams in this browser ----
+let presets = [], selected = store.get("agora-team") || "agora", editing = null, draft = null;
+let custom = (() => { try { const v = JSON.parse(store.get("agora-teams") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } })();
+const saveCustom = () => store.set("agora-teams", JSON.stringify(custom));
+const allTeams = () => [...presets, ...custom];
+const findTeam = (id) => allTeams().find((t) => t.id === id);
+const isCustom = (id) => custom.some((t) => t.id === id);
+// Presets go by id; a team of your own is sent whole (the server checks it).
+const teamForRun = () => (isCustom(selected) ? findTeam(selected) : findTeam(selected) ? selected : undefined);
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28);
+const randomId = () => "mine-" + Math.random().toString(16).slice(2, 8);
+
+async function loadTeams() {
+  try { presets = await (await fetch("/api/teams")).json(); } catch { presets = []; }
+  renderTeamPicker();
+}
+
+function renderTeamPicker() {
+  const sel = $("teamsel");
+  sel.replaceChildren();
+  const group = (label, list) => {
+    if (!list.length) return;
+    const g = el("optgroup"); g.label = label;
+    for (const t of list) { const o = el("option", null, `${t.name} · ${t.agents.length} agents`); o.value = t.id; g.append(o); }
+    sel.append(g);
+  };
+  group("Presets", presets);
+  group("Your teams", custom);
+  if (!findTeam(selected)) selected = presets[0]?.id || custom[0]?.id || "";
+  sel.value = selected;
+  const t = findTeam(selected);
+  $("teamdesc").textContent = t ? t.agents.map((a) => `${a.name} (${a.role})`).join(", ") : "";
+}
+
+// The same rules the server applies, so a team is fixed here, not rejected later.
+function problem(t) {
+  const len = (v) => Array.from((v || "").trim()).length;
+  if (len(t.name) < 1 || len(t.name) > 40) return "Give the team a name (up to 40 characters).";
+  if (len(t.kind) > 40 || len(t.description) > 200) return "Keep the kind under 40 and the description under 200 characters.";
+  if (!t.agents.length || t.agents.length > 6) return "A team has 1 to 6 agents.";
+  const names = new Set();
+  for (const a of t.agents) {
+    if (len(a.name) < 1 || len(a.name) > 40 || /[@\u0000-\u001f\u007f]/.test(a.name)) return "Each agent needs a name (up to 40 characters, no @, tabs or line breaks).";
+    if (len(a.role) < 1 || len(a.role) > 80) return `Give ${a.name} a role (up to 80 characters).`;
+    if (len(a.skills) > 600) return `${a.name}'s skills are over 600 characters.`;
+    const key = a.name.trim().toLowerCase();
+    if (names.has(key)) return `Two agents are called ${a.name.trim()}.`;
+    names.add(key);
+  }
+  return "";
+}
+
+// Ids are made from names: unique, kebab-case, as the server expects.
+function normalized(t) {
+  const used = new Set();
+  const agents = t.agents.map((a, i) => {
+    let id = slug(a.name) || `agent-${i + 1}`, n = 2;
+    while (used.has(id)) id = `${slug(a.name) || "agent"}-${n++}`;
+    used.add(id);
+    return { id, name: a.name.trim(), role: a.role.trim(), color: a.color, skills: (a.skills || "").trim() };
+  });
+  return { id: t.id, name: t.name.trim(), kind: (t.kind || "").trim(), description: (t.description || "").trim(), agents };
+}
+
+function openTeams(id) {
+  editing = id || selected;
+  draft = isCustom(editing) ? structuredClone(findTeam(editing)) : null;
+  renderTeams();
+  if (!$("teams").open) $("teams").showModal();
+}
+
+function useTeam(id) {
+  selected = id; store.set("agora-team", id);
+  renderTeamPicker(); $("teams").close();
+}
+
+function renderTeams() {
+  const list = $("tmlist");
+  list.replaceChildren();
+  const section = (label, teams) => {
+    list.append(el("div", "label", label));
+    for (const t of teams) {
+      const b = el("button", "item" + (t.id === editing ? " on" : ""));
+      b.type = "button";
+      b.append(el("b", null, t.name), el("span", null, `${t.kind || "Team"} · ${t.agents.length} agents`));
+      b.onclick = () => openTeams(t.id);
+      list.append(b);
+    }
+  };
+  section("Presets", presets);
+  if (custom.length) section("Your teams", custom);
+  const add = el("button", "pill butter new", "+ New team");
+  add.type = "button";
+  add.onclick = () => {
+    const t = { id: randomId(), name: "My team", kind: "Custom", description: "", agents: [{ id: "writer", name: "Writer", role: "Writes the deliverable", color: PALETTE[0], skills: "" }] };
+    custom.push(t); saveCustom(); renderTeamPicker(); openTeams(t.id);
+  };
+  list.append(add);
+
+  const box = $("tmedit");
+  box.replaceChildren();
+  const team = draft || findTeam(editing);
+  if (!team) return;
+  const head = el("div", "head");
+  const close = el("button", "close", "×"); close.type = "button"; close.setAttribute("aria-label", "Close"); close.onclick = () => $("teams").close();
+  head.append(el("h3", null, draft ? "Edit team" : team.name), close);
+  box.append(head);
+  const actions = el("div", "tm-actions");
+  const button = (text, cls, fn) => { const b = el("button", "pill " + cls, text); b.type = "button"; b.onclick = fn; actions.append(b); return b; };
+
+  if (!draft) {
+    // A preset: read-only; duplicate it to change it.
+    if (team.description) box.append(el("p", "note", team.description));
+    const grid = el("div", "agents");
+    for (const a of team.agents) {
+      const card = el("div", "agent"), top = el("div", "top"), face = el("span", "face");
+      face.style.background = a.color;
+      top.append(face, el("b", null, a.name));
+      card.append(top, el("p", null, a.role));
+      if (a.skills) card.append(el("p", "note", a.skills));
+      grid.append(card);
+    }
+    box.append(grid, actions);
+    button("Use this team", "butter", () => useTeam(team.id));
+    button("Duplicate and edit", "ghost", () => {
+      const copy = normalized({ ...structuredClone(team), id: randomId(), name: Array.from(team.name + " (copy)").slice(0, 40).join("") });
+      custom.push(copy); saveCustom(); renderTeamPicker(); openTeams(copy.id);
+    });
+    return;
+  }
+
+  const fields = el("div", "fields");
+  const field = (label, key, wide, max) => {
+    const f = el("label", "field" + (wide ? " wide" : ""));
+    const input = el("input"); input.value = draft[key] || ""; input.maxLength = max;
+    input.oninput = () => { draft[key] = input.value; };
+    f.append(el("span", "label", label), input);
+    fields.append(f);
+  };
+  field("Team name", "name", false, 40);
+  field("Kind of work", "kind", false, 40);
+  field("Description", "description", true, 200);
+  box.append(fields);
+
+  const grid = el("div", "agents");
+  draft.agents.forEach((a, i) => {
+    const card = el("div", "agent"), top = el("div", "top");
+    const color = el("input"); color.type = "color"; color.value = a.color; color.setAttribute("aria-label", "Color");
+    color.oninput = () => { a.color = color.value; };
+    const name = el("input"); name.value = a.name; name.placeholder = "Name"; name.maxLength = 40;
+    name.oninput = () => { a.name = name.value; };
+    const x = el("button", "x", "×"); x.type = "button"; x.setAttribute("aria-label", `Remove ${a.name}`);
+    x.onclick = () => { draft.agents.splice(i, 1); renderTeams(); };
+    top.append(color, name, x);
+    const role = el("input"); role.value = a.role; role.placeholder = "Role, e.g. Writes the press release"; role.maxLength = 80;
+    role.oninput = () => { a.role = role.value; };
+    const skills = el("textarea"); skills.value = a.skills || ""; skills.placeholder = "How it works (optional): style, rules, what to avoid"; skills.maxLength = 600;
+    skills.oninput = () => { a.skills = skills.value; };
+    card.append(top, role, skills);
+    grid.append(card);
+  });
+  box.append(grid, actions);
+  const err = el("span", "err");
+  if (draft.agents.length < 6) button("+ Add agent", "ghost", () => {
+    draft.agents.push({ id: "", name: "", role: "", color: PALETTE[draft.agents.length % PALETTE.length], skills: "" });
+    renderTeams();
+  });
+  const save = () => {
+    const why = problem(draft);
+    err.textContent = why;
+    if (why) return false;
+    const team = normalized(draft);
+    const i = custom.findIndex((t) => t.id === draft.id);
+    if (i < 0) custom.push(team); else custom[i] = team; // gone meanwhile (another tab): keep it
+    draft = structuredClone(team);
+    saveCustom(); renderTeamPicker();
+    return true;
+  };
+  button("Save", "ink", () => { if (save()) renderTeams(); });
+  button("Save and use", "butter", () => { if (save()) useTeam(draft.id); });
+  button("Delete", "ghost", () => {
+    if (!confirm(`Delete ${draft.name || "this team"}?`)) return;
+    custom = custom.filter((t) => t.id !== draft.id); saveCustom();
+    if (selected === draft.id) selected = presets[0]?.id || "";
+    renderTeamPicker(); openTeams(selected);
+  });
+  actions.append(err);
+}
+
+$("teamsel").onchange = () => { selected = $("teamsel").value; store.set("agora-team", selected); renderTeamPicker(); };
+$("manage").onclick = () => openTeams();
+$("editteam").onclick = () => openTeams(selected);
+
+renderBoard(); renderFeed(); loadInfo(); loadTeams();
 // A link like /#run-123 opens that run (after the list, so its brief shows too).
 refreshRuns().finally(() => { if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1))); });
 </script>

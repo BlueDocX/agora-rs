@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use agora_core::Team;
 use agora_muse::{Effort, Message, MuseClient, MuseError, Request, Role};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -41,6 +42,9 @@ pub struct RunConfig {
     pub reviewer: Option<Remote>,
     /// Live progress for watchers. `None` = nobody is watching.
     pub events: Option<EventSender>,
+    /// Who does the work: each task goes to one member, who works in its role.
+    /// `None` = anonymous specialists. Check it with [`Team::validate`] first.
+    pub team: Option<Team>,
 }
 
 #[derive(Debug)]
@@ -198,6 +202,7 @@ struct Ctx {
     reviewer_model: String,
     brief: String,
     tasks: Vec<Task>,
+    team: Option<Team>,
     deps: Vec<Vec<usize>>,
     dependents: Vec<Vec<usize>>,
     /// Tasks already reported as skipped, so a task behind two failures is reported once.
@@ -333,9 +338,26 @@ impl Ctx {
         }
     }
 
+    /// Who is doing task `i`, in the words its instructions start with.
+    fn persona(&self, i: usize) -> Option<String> {
+        let team = self.team.as_ref()?;
+        let agent = team.agent(self.tasks[i].agent.as_deref()?)?;
+        let mut who = format!("You are {}, on the {} team. Your role: {}.", agent.name, team.name, agent.role);
+        if !agent.skills.trim().is_empty() {
+            let _ = write!(who, " How you work: {}", agent.skills.trim());
+        }
+        Some(who)
+    }
+
     async fn attempt(&self, i: usize) -> Result<Accepted, TaskError> {
         let task = &self.tasks[i].id;
-        let mut input = vec![Message::system(CHARTER), Message::system(WORKER_ROLE), Message::user(self.task_prompt(i))];
+        // The persona comes from the team, which a caller can write, so it travels in
+        // the user message with the brief, never with system authority.
+        let prompt = match self.persona(i) {
+            Some(who) => format!("{who}\n\n{}", self.task_prompt(i)),
+            None => self.task_prompt(i),
+        };
+        let mut input = vec![Message::system(CHARTER), Message::system(WORKER_ROLE), Message::user(prompt)];
         // A draft that only misses a code-checked limit doesn't use up the model
         // review's one retry; three drafts is the hard cap either way.
         let (mut drafts, mut reviews, mut model_rejections) = (0, 0, 0);
@@ -394,11 +416,14 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     let reviewer_model = config.reviewer.as_ref().map_or(config.model.clone(), |r| r.model.clone());
     let budget = Budget::new(&[&config.model, &reviewer_model], config.cap_usd).map_err(RunError::Budget)?;
     let caller = Caller { muse, reviewer: config.reviewer.as_ref().map(|r| r.client.clone()), budget, journal };
-    let planned = planner::plan(&caller, &config.model, brief).await.map_err(RunError::Plan)?;
+    if let Some(team) = &config.team {
+        emit(config.events.as_ref(), RunEvent::Staffed { team: team.clone() });
+    }
+    let planned = planner::plan(&caller, &config.model, brief, config.team.as_ref()).await.map_err(RunError::Plan)?;
     let views = planned
         .tasks
         .iter()
-        .map(|t| TaskView { id: t.id.clone(), title: t.title.clone(), deps: t.deps.clone() })
+        .map(|t| TaskView { id: t.id.clone(), title: t.title.clone(), deps: t.deps.clone(), agent: t.agent.clone() })
         .collect();
     emit(config.events.as_ref(), RunEvent::Planned { tasks: views, attempts: planned.attempts });
 
@@ -411,6 +436,7 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
         reviewer_model,
         brief: brief.to_string(),
         tasks: planned.tasks.clone(),
+        team: config.team.clone(),
         deps,
         dependents,
         skipped: Mutex::new(vec![false; plan.len()]),

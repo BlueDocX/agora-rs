@@ -28,11 +28,16 @@ async fn mock_model() -> String {
         "/v1/responses",
         post(|Json(body): Json<Value>| async move {
             match body["text"]["format"]["name"].as_str() {
-                Some("Plan") => reply(
-                    &json!({"tasks": [{"id": "note", "title": "Write the note", "instructions": "Write it.",
-                        "deps": [], "acceptance": ["is friendly"], "max_words": 0, "required_headings": []}]})
-                    .to_string(),
-                ),
+                Some("Plan") => {
+                    let mut task = json!({"id": "note", "title": "Write the note", "instructions": "Write it.",
+                        "deps": [], "acceptance": ["is friendly"], "max_words": 0, "required_headings": []});
+                    // With a team, the schema lists who may do it: pick the first.
+                    let who = &body["text"]["format"]["schema"]["properties"]["tasks"]["items"]["properties"]["agent"]["enum"][0];
+                    if !who.is_null() {
+                        task["agent"] = who.clone();
+                    }
+                    reply(&json!({"tasks": [task]}).to_string())
+                }
                 Some("Verdict") => reply(r#"{"pass": true, "failed_criteria": [], "confidence": "high"}"#),
                 _ => reply("Hello, regulars!"),
             }
@@ -158,4 +163,34 @@ async fn simultaneous_starts_cannot_both_take_the_last_slot() {
     let results = futures_util::future::join_all((0..8).map(|_| start())).await;
     let created = results.iter().filter(|r| r.as_ref().unwrap().status() == 201).count();
     assert_eq!(created, 1, "max_active = 1 lets exactly one of 8 simultaneous starts through");
+}
+
+#[tokio::test]
+async fn a_run_can_be_staffed_by_a_preset_or_a_team_of_ones_own() {
+    let base = hub(None).await;
+    let http = reqwest::Client::new();
+    let presets: Value = http.get(format!("{base}/api/teams")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(presets.as_array().unwrap().len(), 8);
+    let start = |team: Value| http.post(format!("{base}/api/runs")).json(&json!({"brief": "a note", "team": team})).send();
+
+    assert_eq!(start(json!("no-such-team")).await.unwrap().status(), 400);
+    // A team missing a field gets a JSON error the page can show, not plain text.
+    let broken = start(json!({"name": "half a team"})).await.unwrap();
+    assert_eq!(broken.status(), 400);
+    assert!(broken.json::<Value>().await.unwrap()["error"].as_str().unwrap().contains("valid run"));
+    let mut mine = presets[0].clone();
+    mine["agents"][1]["name"] = mine["agents"][0]["name"].clone(); // two agents with one name
+    assert_eq!(start(mine.clone()).await.unwrap().status(), 400);
+    mine["agents"][1]["name"] = json!("Second Pair of Eyes");
+    assert_eq!(start(mine).await.unwrap().status(), 201);
+
+    let started: Value = start(json!("creative-studio")).await.unwrap().json().await.unwrap();
+    let id = started["id"].as_str().unwrap();
+    let body = http.get(format!("{base}/api/runs/{id}/events")).send().await.unwrap().text().await.unwrap();
+    let events: Vec<Value> = body.lines().filter_map(|l| l.strip_prefix("data: ")).map(|d| serde_json::from_str(d).unwrap()).collect();
+    assert_eq!(events[0]["type"], "staffed");
+    assert_eq!(events[0]["team"]["name"], "Creative Studio");
+    assert_eq!(events[1]["tasks"][0]["agent"], "director");
+    let runs: Value = http.get(format!("{base}/api/runs")).send().await.unwrap().json().await.unwrap();
+    assert!(runs.as_array().unwrap().iter().any(|r| r["team"] == "Creative Studio"));
 }

@@ -16,6 +16,7 @@ name = "agora-core"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "serde",
 ]
 
 [[package]]
@@ -48,6 +49,7 @@ dependencies = [
 name = "agora-server"
 version = "0.1.0"
 dependencies = [
+ "agora-core",
  "agora-engine",
  "agora-muse",
  "axum",

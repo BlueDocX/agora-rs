@@ -5,8 +5,10 @@
 //!   are kept in memory; every run is also in the journal).
 //! - `GET /api/runs/{id}/events` streams the run as Server-Sent Events: everything
 //!   that already happened, then each new event live, ending when the run does.
-//! - `GET /api/info` names the models and the per-run cap (no token needed: nothing
-//!   secret, and the page shows it before anyone types a token).
+//! - `GET /api/info` names the models and the per-run cap, and `GET /api/teams` lists
+//!   the preset teams (no token needed: nothing secret, and the page shows them
+//!   before anyone types a token).
+//! - A run can name a team: `"team": "<preset id>"`, or a whole team of one's own.
 //! - `GET /` is the office board.
 //!
 //! When a token is set, every other `/api` call needs it: as `Authorization: Bearer`, or
@@ -18,8 +20,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use agora_core::Team;
 use agora_engine::{Journal, Remote, RunConfig, RunEvent, run};
 use agora_muse::MuseClient;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -65,6 +69,8 @@ pub struct HubConfig {
 struct Room {
     id: String,
     brief: String,
+    /// The team's name, if the run has one.
+    team: Option<String>,
     inner: Mutex<RoomInner>,
 }
 
@@ -134,6 +140,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/models/office-kit.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", OFFICE_KIT, OFFICE_KIT_GZ) }))
         .route("/models/chibi.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", CHIBI, CHIBI_GZ) }))
         .route("/api/info", get(info))
+        .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
         .with_state(hub)
@@ -194,6 +201,26 @@ fn unauthorized() -> Response {
 #[derive(Deserialize)]
 struct StartRun {
     brief: String,
+    #[serde(default)]
+    team: Option<TeamChoice>,
+}
+
+/// A preset by id, or a team someone made (checked before it runs).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TeamChoice {
+    Preset(String),
+    Custom(Team),
+}
+
+fn resolve(choice: Option<TeamChoice>) -> Result<Option<Team>, String> {
+    match choice {
+        None => Ok(None),
+        Some(TeamChoice::Preset(id)) => {
+            agora_core::preset(&id).map(Some).ok_or_else(|| format!("there is no preset team \"{id}\""))
+        }
+        Some(TeamChoice::Custom(team)) => team.validate().map(|()| Some(team)),
+    }
 }
 
 #[derive(Serialize)]
@@ -205,14 +232,24 @@ fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
-async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, Json(body): Json<StartRun>) -> Response {
+async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Json<StartRun>, JsonRejection>) -> Response {
     if !authorized(&hub, &headers, None) {
         return unauthorized();
     }
+    // A malformed body (e.g. a custom team missing a field) still gets a JSON error
+    // the page can show.
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that request isn't a valid run: {}", e.body_text())),
+    };
     let brief = body.brief.trim().to_string();
     if brief.is_empty() || brief.chars().count() > MAX_BRIEF_CHARS {
         return error(StatusCode::BAD_REQUEST, "the brief must be 1 to 4000 characters");
     }
+    let team = match resolve(body.team) {
+        Ok(team) => team,
+        Err(why) => return error(StatusCode::BAD_REQUEST, &why),
+    };
     let config = &hub.config;
     {
         let mut state = hub.state();
@@ -224,10 +261,10 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, Json(body): Json
     let release = || hub.state().starting -= 1;
     let journal = match &config.journal {
         Some(path) => {
-            let (path, b, model) = (path.clone(), brief.clone(), config.model.clone());
+            let (path, b, model, t) = (path.clone(), brief.clone(), config.model.clone(), team.clone());
             let reviewer = config.reviewer.as_ref().map(|r| r.model.clone());
             // SQLite is blocking I/O: keep it off the async workers.
-            match tokio::task::spawn_blocking(move || Journal::start(&path, &b, &model, reviewer.as_deref())).await {
+            match tokio::task::spawn_blocking(move || Journal::start(&path, &b, &model, reviewer.as_deref(), t.as_ref())).await {
                 Ok(Ok(j)) => Some(j),
                 Ok(Err(e)) => {
                     release();
@@ -250,6 +287,7 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, Json(body): Json
     let room = Arc::new(Room {
         id: id.clone(),
         brief: brief.clone(),
+        team: team.as_ref().map(|t| t.name.clone()),
         inner: Mutex::new(RoomInner { history: Vec::new(), live: Some(live) }),
     });
     {
@@ -276,6 +314,7 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, Json(body): Json
         cap_usd: config.cap_usd,
         reviewer: config.reviewer.clone(),
         events: Some(tx.clone()),
+        team,
     };
     let muse = config.muse.clone();
     let running = tokio::spawn(async move { run(muse, &run_config, &brief, journal).await });
@@ -308,6 +347,7 @@ async fn info(State(hub): State<Arc<Hub>>) -> Response {
 struct RunSummary {
     id: String,
     brief: String,
+    team: Option<String>,
     done: bool,
 }
 
@@ -317,7 +357,7 @@ async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     }
     let state = hub.state();
     let runs: Vec<RunSummary> =
-        state.rooms.iter().rev().map(|r| RunSummary { id: r.id.clone(), brief: r.brief.clone(), done: r.done() }).collect();
+        state.rooms.iter().rev().map(|r| RunSummary { id: r.id.clone(), brief: r.brief.clone(), team: r.team.clone(), done: r.done() }).collect();
     Json(runs).into_response()
 }
 

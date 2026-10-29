@@ -8,7 +8,8 @@
 //! call that never completed. Optional: `AGORA_MODEL` (default `muse-spark-1.3`),
 //! `AGORA_CAP_USD` (default 0.50), `AGORA_PARALLEL` (default 4), and
 //! `AGORA_REVIEWER=baseten` to review on Muse Spark Open (open weights) on Baseten
-//! with `BASETEN_API_KEY` (`AGORA_REVIEWER_MODEL` overrides the model id). The
+//! with `BASETEN_API_KEY` (`AGORA_REVIEWER_MODEL` overrides the model id), and
+//! `AGORA_TEAM=<preset id>` (e.g. `creative-studio`) to staff the run with a team. The
 //! deliverable goes to stdout, the report to stderr.
 
 use std::path::PathBuf;
@@ -45,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             other => return Err(format!("AGORA_REVIEWER={other:?}: use \"baseten\" or leave it unset").into()),
         },
         events: None,
+        team: None,
     };
     let muse = MuseClient::from_env()?; // before journaling a run that can't start
     let (journal, brief) = match args.as_slice() {
@@ -57,12 +59,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(model) => Some(Remote { client: MuseClient::baseten_from_env()?, model }),
                 None => None,
             };
+            if std::env::var_os("AGORA_TEAM").is_some() {
+                eprintln!("note: AGORA_TEAM is ignored on resume; the run keeps its own team");
+            }
+            config.team = record.team;
             (journal, record.brief)
         }
         _ if !args.is_empty() && !args[0].starts_with("--") && !args.join(" ").trim().is_empty() => {
             let brief = args.join(" ");
+            config.team = match env_or("AGORA_TEAM", String::new())?.as_str() {
+                "" => None,
+                id => Some(agora_core::preset(id).ok_or_else(|| {
+                    let ids: Vec<String> = agora_core::presets().into_iter().map(|t| t.id).collect();
+                    format!("AGORA_TEAM={id:?}: use one of {}", ids.join(", "))
+                })?),
+            };
             let reviewer = config.reviewer.as_ref().map(|r| r.model.as_str());
-            (Journal::start(&path, &brief, &config.model, reviewer)?, brief)
+            (Journal::start(&path, &brief, &config.model, reviewer, config.team.as_ref())?, brief)
         }
         _ => return Err("usage: agora-run \"<brief>\" | agora-run --resume <run-id>".into()),
     };

@@ -19,6 +19,7 @@ const LEAD = "#f2cc46", REVIEWER = "#6366c9";
 const STATE = {
   idle: ["#b3aa8f", "scheduled"], working: ["#4285f4", "working"], review: ["#d9af1b", "in review"],
   accepted: ["#1f9d55", "done"], failed: ["#e5483b", "needs a person"], skipped: ["#b3aa8f", "skipped"],
+  free: ["#b3aa8f", "available"], // an agent with no task on this run
 };
 const SEATED = new Set(["working", "review"]);
 const HOME = new Vector3(0, 0, 2.35); // where the reviewer waits, between two chairs at the planning table
@@ -178,7 +179,11 @@ async function start(host) {
   scene.add(lead, reviewer);
   let reviewerTarget = HOME.clone();
 
-  let desks = new Map(); // task id → { person, screen, cushion, label, title, state, deps, hop, seat, stand, out }
+  // One desk per agent when the run has a team, else one per task. Each task maps
+  // to a desk, and a desk shows the most pressing state among its tasks.
+  let desks = new Map(); // desk key → { person, screen, cushion, label, title, state, tasks, hop, seat, stand, out, look }
+  let owner = new Map(); // task id → desk key
+  let staffed = false;
   const deskLayer = new Group();
   scene.add(deskLayer);
 
@@ -202,19 +207,27 @@ async function start(host) {
     const { skin, color } = d.person.userData;
     skin.color.set(state === "skipped" ? "#d9d3c4" : color); // skipped: greyed out
     // The monitor glows in the state's color while there is something to show.
-    if (d.screen) d.screen.emissive.set(state === "idle" || state === "skipped" ? new Color("#191c28") : new Color(STATE[state][0]).multiplyScalar(0.55));
+    const dark = state === "idle" || state === "skipped" || state === "free";
+    if (d.screen) d.screen.emissive.set(dark ? new Color("#191c28") : new Color(STATE[state][0]).multiplyScalar(0.55));
   }
 
-  function plan(tasks) {
+  const RANK = ["review", "working", "failed", "idle", "accepted", "skipped"];
+  function refresh(d) {
+    const states = [...d.tasks.values()];
+    const state = states.length ? RANK.find((r) => states.includes(r)) : "free";
+    if (state !== d.state) setState(d, state);
+  }
+
+  // A ring of desks, one per entry ({ key, title, color }).
+  function build(entries) {
     clearDesks();
     hint.hidden = true;
-    const n = tasks.length;
-    const radius = Math.min(6.3, Math.max(4.4, n * 0.85)); // the planner caps plans at 8 tasks
-    tasks.forEach((t, i) => {
+    const n = entries.length;
+    const radius = Math.min(6.3, Math.max(4.4, n * 0.85)); // at most 8 desks (8 tasks or 6 agents)
+    entries.forEach((entry, i) => {
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
       const out = new Vector3(Math.cos(angle), 0, Math.sin(angle));
       const side = new Vector3(-out.z, 0, out.x);
-      const color = PALETTE[i % PALETTE.length];
       // The teammate sits on the inside of the ring, facing out over the desk.
       const desk = piece("Desk");
       desk.position.copy(out).multiplyScalar(radius);
@@ -222,50 +235,64 @@ async function start(host) {
       const chair = piece("Chair");
       chair.position.copy(out).multiplyScalar(radius - 0.78);
       chair.lookAt(out.clone().multiplyScalar(radius * 2));
-      const cushion = recolor(chair, "Accent", color);
+      const cushion = recolor(chair, "Accent", entry.color);
       const screen = recolor(desk, "Screen");
       deskLayer.add(desk, chair);
 
-      const person = teammate(color);
+      const person = teammate(entry.color);
       const seat = chair.position.clone().setY(0.22);
       const stand = chair.position.clone().addScaledVector(side, 0.95).addScaledVector(out, -0.15);
       person.position.copy(stand);
       deskLayer.add(person);
       const look = seat.clone().add(out); // where a seated teammate looks: the monitor
-      const d = { person, screen, cushion, label: new Sprite(), title: t.title, state: "idle", deps: t.deps, hop: 0, seat, stand, out, look };
-      setState(d, "idle");
-      desks.set(t.id, d);
+      const d = { person, screen, cushion, label: new Sprite(), title: entry.title, state: "", tasks: new Map(), hop: 0, seat, stand, out, look };
+      refresh(d);
+      desks.set(entry.key, d);
     });
-    // Faint blue lines on the floor for "this task needs that one's output".
-    const lineMat = new LineBasicMaterial({ color: 0x8fb3f5 });
-    for (const d of desks.values()) {
-      for (const dep of d.deps) {
-        const from = desks.get(dep);
-        if (!from) continue;
-        const pts = [from.seat.clone().setY(0.03), d.seat.clone().setY(0.03)];
-        deskLayer.add(new Line(new BufferGeometry().setFromPoints(pts), lineMat));
-      }
-    }
     orbit.distance = radius * 1.5 + 7;
     orbit.height = radius * 1.1 + 6.5;
   }
 
+  // Faint blue lines on the floor for "this desk needs that one's output".
+  function links(pairs) {
+    const lineMat = new LineBasicMaterial({ color: 0x8fb3f5 });
+    const drawn = new Set();
+    for (const [a, b] of pairs) {
+      const from = desks.get(a), to = desks.get(b);
+      if (!from || !to || from === to || drawn.has(a + ">" + b)) continue;
+      drawn.add(a + ">" + b);
+      const pts = [from.seat.clone().setY(0.03), to.seat.clone().setY(0.03)];
+      deskLayer.add(new Line(new BufferGeometry().setFromPoints(pts), lineMat));
+    }
+  }
+
   function onEvent(e) {
-    const d = e.task && desks.get(e.task);
+    const d = e.task && desks.get(owner.get(e.task));
+    const mark = (state) => { d.tasks.set(e.task, state); refresh(d); };
     switch (e.type) {
-      case "planned": plan(e.tasks); break;
-      case "task_started": if (d) setState(d, "working"); break;
+      case "staffed":
+        staffed = true;
+        build(e.team.agents.map((a) => ({ key: a.id, title: a.name, color: a.color })));
+        break;
+      case "planned":
+        if (!staffed) build(e.tasks.map((t, i) => ({ key: t.id, title: t.title, color: PALETTE[i % PALETTE.length] })));
+        owner = new Map(e.tasks.map((t) => [t.id, staffed && desks.has(t.agent) ? t.agent : t.id]));
+        for (const t of e.tasks) desks.get(owner.get(t.id))?.tasks.set(t.id, "idle");
+        for (const desk of desks.values()) refresh(desk);
+        links(e.tasks.flatMap((t) => t.deps.map((dep) => [owner.get(dep), owner.get(t.id)])));
+        break;
+      case "task_started": if (d) mark("working"); break;
       case "drafted":
         if (d) {
-          setState(d, "review");
+          mark("review");
           // The reviewer walks over and stands beside the teammate's chair.
           reviewerTarget = d.stand.clone().addScaledVector(d.out, -0.5);
         }
         break;
-      case "reviewed": if (d && e.unmet.length) setState(d, "working"); break;
-      case "task_accepted": if (d) { setState(d, "accepted"); d.hop = 1; } break;
-      case "task_failed": if (d) setState(d, "failed"); break;
-      case "task_skipped": if (d) setState(d, "skipped"); break;
+      case "reviewed": if (d && e.unmet.length) mark("working"); break;
+      case "task_accepted": if (d) { mark("accepted"); if (d.state === "accepted") d.hop = 1; } break;
+      case "task_failed": if (d) mark("failed"); break;
+      case "task_skipped": if (d) mark("skipped"); break;
       case "finished": case "run_failed": reviewerTarget = HOME.clone(); break;
     }
   }
@@ -279,7 +306,7 @@ async function start(host) {
     }
   });
 
-  addEventListener("agora:reset", () => { clearDesks(); reviewerTarget = HOME.clone(); });
+  addEventListener("agora:reset", () => { clearDesks(); owner = new Map(); staffed = false; reviewerTarget = HOME.clone(); });
   addEventListener("agora:event", (ev) => onEvent(ev.detail));
 
   // A slow orbit; drag to look around.
