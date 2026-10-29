@@ -38,6 +38,12 @@ const INDEX: &str = include_str!("../static/index.html");
 /// Both are committed, so the server builds without Node.
 const OFFICE_JS: &str = include_str!("../static/office.js");
 const OFFICE_JS_GZ: &[u8] = include_bytes!("../static/office.js.gz");
+/// The office furniture and the teammate, built in Blender by `assets/blender/build_assets.py`,
+/// which writes each model and its gzipped copy together.
+const OFFICE_KIT: &[u8] = include_bytes!("../static/models/office-kit.glb");
+const OFFICE_KIT_GZ: &[u8] = include_bytes!("../static/models/office-kit.glb.gz");
+const CHIBI: &[u8] = include_bytes!("../static/models/chibi.glb");
+const CHIBI_GZ: &[u8] = include_bytes!("../static/models/chibi.glb.gz");
 
 /// How the hub runs briefs.
 #[derive(Debug, Clone)]
@@ -124,7 +130,9 @@ pub fn app(config: HubConfig) -> Router {
     let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()) });
     Router::new()
         .route("/", get(index))
-        .route("/office.js", get(office_js))
+        .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), OFFICE_JS_GZ) }))
+        .route("/models/office-kit.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", OFFICE_KIT, OFFICE_KIT_GZ) }))
+        .route("/models/chibi.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", CHIBI, CHIBI_GZ) }))
         .route("/api/info", get(info))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
@@ -133,21 +141,24 @@ pub fn app(config: HubConfig) -> Router {
 
 /// The gzipped copy (about a quarter of the size) when the browser accepts it.
 /// Cached briefly: the file only changes with a new server build.
-async fn office_js(headers: HeaderMap) -> Response {
+fn asset(headers: &HeaderMap, content_type: &'static str, plain: &'static [u8], gzipped: &'static [u8]) -> Response {
     let gzip = headers
         .get(header::ACCEPT_ENCODING)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+        .is_some_and(|v| v.split(',').any(|e| {
+            let mut parts = e.split(';').map(str::trim);
+            parts.next() == Some("gzip") && !parts.any(|p| matches!(p, "q=0" | "q=0.0" | "q=0.00" | "q=0.000"))
+        }));
     let common = [
-        (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+        (header::CONTENT_TYPE, content_type),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::CACHE_CONTROL, "public, max-age=300"),
         (header::VARY, "Accept-Encoding"),
     ];
     if gzip {
-        (common, [(header::CONTENT_ENCODING, "gzip")], OFFICE_JS_GZ).into_response()
+        (common, [(header::CONTENT_ENCODING, "gzip")], gzipped).into_response()
     } else {
-        (common, OFFICE_JS).into_response()
+        (common, plain).into_response()
     }
 }
 

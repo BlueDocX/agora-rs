@@ -1,35 +1,55 @@
-// The 3D office: one desk per task, a round little teammate at each desk showing
-// what it is doing, and the purple reviewer walking to whichever desk has a draft.
+// The 3D office: a desk and chair per task, a teammate at each, a Lead at the planning
+// table, and the purple reviewer walking to whichever desk has a draft to check.
 //
 // It only listens: the board page dispatches `agora:event` (one run event) and
-// `agora:reset` (a run is about to replay from the start). Everything is procedural
-// (white blocky furniture on a grid floor, toy-like characters), so there are no
-// model files to load. Without WebGL2 the page keeps its kanban.
+// `agora:reset` (a run is about to replay from the start). The furniture and the
+// teammate are built in Blender (assets/blender/build_assets.py) and loaded as glTF;
+// the floor is drawn here. Without WebGL2 the page keeps its kanban.
 
 import {
-  BoxGeometry, CanvasTexture, CapsuleGeometry, CylinderGeometry, ConeGeometry, DirectionalLight, GridHelper,
-  Group, HemisphereLight, Line, LineBasicMaterial, BufferGeometry, Mesh, MeshLambertMaterial, PerspectiveCamera,
-  PlaneGeometry, Scene, SphereGeometry, SRGBColorSpace, Sprite, SpriteMaterial, TorusGeometry, Vector3, WebGLRenderer,
+  BoxGeometry, CanvasTexture, Color, DirectionalLight, GridHelper, Group, HemisphereLight, Line, LineBasicMaterial,
+  BufferGeometry, Mesh, MeshLambertMaterial, PerspectiveCamera, PlaneGeometry, Scene, SRGBColorSpace, Sprite,
+  SpriteMaterial, Vector3, WebGLRenderer,
 } from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRButton } from "three/addons/webxr/VRButton.js";
 
-const PALETTE = window.agoraPalette ?? ["#4285f4", "#34a853", "#f2b705", "#ea4335", "#14b8a6", "#f97316", "#ec4899", "#64748b"];
+const PALETTE = window.agoraPalette ?? ["#4285f4", "#34a853", "#ea4335", "#14b8a6", "#f97316", "#ec4899", "#64748b", "#a16207"];
+const LEAD = "#f2cc46", REVIEWER = "#6366c9";
 const STATE = {
   idle: ["#b3aa8f", "scheduled"], working: ["#4285f4", "working"], review: ["#d9af1b", "in review"],
   accepted: ["#1f9d55", "done"], failed: ["#e5483b", "needs a person"], skipped: ["#b3aa8f", "skipped"],
 };
-const HOME = new Vector3(0, 0, 2.2); // where the reviewer waits
+const SEATED = new Set(["working", "review"]);
+const HOME = new Vector3(0, 0, 2.35); // where the reviewer waits, between two chairs at the planning table
 
 // Started after the constants above exist (the bundle turns them into plain vars).
 const host = document.getElementById("office3d");
 const probe = document.createElement("canvas");
 if (host && probe.getContext("webgl2")) start(host);
 
-function start(host) {
+async function start(host) {
   host.hidden = false;
-  const badge = Object.assign(document.createElement("div"), { className: "badge", textContent: "WebGL2" });
+  const badge = Object.assign(document.createElement("div"), { className: "badge", textContent: "Loading office…" });
   const hint = Object.assign(document.createElement("div"), { className: "hint", textContent: "Run a brief to staff the office" });
   host.append(badge, hint);
+
+  let kit, chibi;
+  try {
+    const loader = new GLTFLoader();
+    [kit, chibi] = await Promise.all(["/models/office-kit.glb", "/models/chibi.glb"].map((u) => loader.loadAsync(u)));
+    // Everything below looks pieces and materials up by name: check them all now.
+    const names = new Set();
+    for (const g of [kit, chibi]) g.scene.traverse((o) => { names.add(o.name); if (o.material) names.add("mat:" + o.material.name); });
+    const missing = ["Desk", "Chair", "RoundTable", "Sofa", "CoffeeTable", "Lamp", "Whiteboard", "Shelf", "Cooler", "Plant", "Chibi",
+      "Head", "Body", "ArmL", "ArmR", "LegL", "LegR", "mat:Skin", "mat:Accent", "mat:Screen"].filter((n) => !names.has(n));
+    if (missing.length) throw new Error("the models are missing " + missing.join(", "));
+  } catch (err) {
+    badge.textContent = "3D office unavailable";
+    hint.textContent = String(err.message || err);
+    return;
+  }
+  badge.textContent = "WebGL2";
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -40,102 +60,91 @@ function start(host) {
   navigator.xr?.isSessionSupported("immersive-vr").then((ok) => ok && host.append(VRButton.createButton(renderer)), () => {});
 
   const scene = new Scene();
-  scene.add(new HemisphereLight(0xffffff, 0xd9d2bf, 2.3));
-  const sun = new DirectionalLight(0xffffff, 1.5);
+  scene.add(new HemisphereLight(0xffffff, 0xcfc6b0, 2.6));
+  const sun = new DirectionalLight(0xffffff, 2.2);
   sun.position.set(5, 11, 7);
   scene.add(sun);
   const camera = new PerspectiveCamera(36, 1, 0.1, 80);
 
-  const mat = (color) => new MeshLambertMaterial({ color });
-  const white = mat("#f4f1ea"), whiteShade = mat("#e7e2d6"), screenMat = mat("#2b2d31");
-
   // The floor: a white tiled slab on a blue rim.
   const SIZE = 17;
-  const rim = new Mesh(new BoxGeometry(SIZE + 0.35, 0.28, SIZE + 0.35), mat("#3b82f6"));
+  const rim = new Mesh(new BoxGeometry(SIZE + 0.35, 0.28, SIZE + 0.35), new MeshLambertMaterial({ color: "#3b82f6" }));
   rim.position.y = -0.17;
-  const slab = new Mesh(new BoxGeometry(SIZE, 0.3, SIZE), mat("#f7f5ef"));
+  const slab = new Mesh(new BoxGeometry(SIZE, 0.3, SIZE), new MeshLambertMaterial({ color: "#f7f5ef" }));
   slab.position.y = -0.15;
   const grid = new GridHelper(SIZE, 34, 0xe3ddcf, 0xe3ddcf);
   grid.position.y = 0.002;
   scene.add(rim, slab, grid);
 
-  // Furniture, all white and blocky. The ring of desks (radius ≤ 6.8) stays clear.
-  const box = (w, h, d, x, y, z, m = white) => { const b = new Mesh(new BoxGeometry(w, h, d), m); b.position.set(x, y, z); scene.add(b); return b; };
-  const table = new Mesh(new CylinderGeometry(1.1, 1.1, 0.12, 32), white);
-  table.position.y = 0.72;
-  const stem = new Mesh(new CylinderGeometry(0.16, 0.3, 0.7, 12), whiteShade);
-  stem.position.y = 0.35;
-  scene.add(table, stem);
-  // A sofa in one corner, a whiteboard in another, low partitions, plants.
-  box(2.6, 0.45, 0.9, -6.6, 0.23, 7.4); box(2.6, 0.8, 0.25, -6.6, 0.5, 7.95, whiteShade);
-  box(0.25, 0.6, 0.9, -7.9, 0.4, 7.4, whiteShade); box(0.25, 0.6, 0.9, -5.3, 0.4, 7.4, whiteShade);
-  const board = box(3, 1.7, 0.08, 6.4, 1.6, -8.05);
-  board.material = mat("#fbfaf6");
-  box(3.1, 0.1, 0.18, 6.4, 0.72, -7.98, whiteShade);
-  box(0.08, 1.6, 0.08, 4.9, 0.8, -8.05, whiteShade); box(0.08, 1.6, 0.08, 7.9, 0.8, -8.05, whiteShade);
-  box(0.25, 0.1, 0.05, 7.5, 0.82, -7.9, mat("#e5483b"));
-  box(4.2, 1.0, 0.3, -6.1, 0.5, -7.9); box(0.3, 1.0, 3.2, -8.05, 0.5, -6.1);
-  box(0.3, 0.9, 3.6, 8.05, 0.45, 5.6);
-  for (const [x, z] of [[-7.6, 3.4], [7.4, 7.6], [2.6, -7.8]]) {
-    const pot = new Mesh(new CylinderGeometry(0.3, 0.24, 0.5, 12), white);
-    pot.position.set(x, 0.25, z);
-    scene.add(pot);
-    for (let i = 0; i < 5; i++) {
-      const leaf = new Mesh(new ConeGeometry(0.1, 0.9, 4), mat("#4e9a52"));
-      const a = (i / 5) * Math.PI * 2;
-      leaf.position.set(x + Math.cos(a) * 0.12, 0.85, z + Math.sin(a) * 0.12);
-      leaf.rotation.set(Math.sin(a) * 0.45, 0, -Math.cos(a) * 0.45);
-      scene.add(leaf);
-    }
-  }
-
-  // Shared pieces: every desk and character reuses these.
-  const geo = {
-    top: new BoxGeometry(1.7, 0.08, 0.85), side: new BoxGeometry(0.08, 0.7, 0.8), monitor: new BoxGeometry(0.75, 0.48, 0.06),
-    screen: new PlaneGeometry(0.66, 0.39), stand: new BoxGeometry(0.06, 0.2, 0.06), keys: new BoxGeometry(0.5, 0.03, 0.16),
-    head: new SphereGeometry(0.42, 28, 20), torso: new CapsuleGeometry(0.2, 0.18, 6, 14), limb: new CapsuleGeometry(0.075, 0.2, 4, 8),
-    eye: new SphereGeometry(0.105, 16, 12), pupil: new SphereGeometry(0.058, 12, 10), smile: new TorusGeometry(0.06, 0.014, 6, 14, Math.PI),
-    shadow: new PlaneGeometry(1.1, 1.1),
+  // Pieces from the kit. A clone shares geometry and materials with the original.
+  const piece = (name) => {
+    const p = kit.scene.getObjectByName(name);
+    if (!p) throw new Error(`office kit has no ${name}`);
+    return p.clone();
   };
+  const place = (name, x, z, turn = 0) => {
+    const p = piece(name);
+    p.position.set(x, 0, z);
+    p.rotation.y = turn;
+    scene.add(p);
+    return p;
+  };
+  // Recolor one named material on a clone, giving the clone its own copy.
+  const recolor = (root, matName, color) => {
+    let copy = null;
+    root.traverse((m) => {
+      if (m.isMesh && m.material.name === matName) {
+        copy ??= m.material.clone();
+        if (color) copy.color.set(color);
+        m.material = copy;
+      }
+    });
+    return copy;
+  };
+
+  // The planning table with its chairs, and the room's corners.
+  place("RoundTable", 0, 0);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2; // the first is the Lead's, at z = -1.55
+    place("Chair", Math.cos(a) * 1.55, Math.sin(a) * 1.55).lookAt(0, 0, 0);
+  }
+  place("Sofa", -6.4, 7.6, Math.PI);
+  place("CoffeeTable", -6.3, 5.9);
+  place("Lamp", -8.0, 7.9);
+  place("Whiteboard", 5.9, -7.7);
+  place("Shelf", -6.2, -8.0);
+  place("Cooler", 7.9, 6.2, -Math.PI / 2);
+  for (const [x, z] of [[-8, 4.6], [7.7, 7.8], [3.5, -8], [-8, -8], [8, -4.6]]) place("Plant", x, z);
+
   const shadowTex = (() => {
     const c = Object.assign(document.createElement("canvas"), { width: 64, height: 64 });
     const g = c.getContext("2d");
     const r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    r.addColorStop(0, "rgba(23,21,15,0.28)"); r.addColorStop(1, "rgba(23,21,15,0)");
+    r.addColorStop(0, "rgba(23,21,15,0.3)"); r.addColorStop(1, "rgba(23,21,15,0)");
     g.fillStyle = r; g.fillRect(0, 0, 64, 64);
     return new CanvasTexture(c);
   })();
-  const eyeMat = mat("#ffffff"), pupilMat = mat("#1d1b16");
+  const shadowGeo = new PlaneGeometry(1.1, 1.1);
   const shadowMat = new MeshLambertMaterial({ map: shadowTex, transparent: true, depthWrite: false });
-  const shared = new Set([...Object.values(geo), eyeMat, pupilMat, shadowMat, white, whiteShade, screenMat]);
 
-  // A round toy-like teammate: big head, small body, big eyes, looking at the camera.
-  function character(color) {
-    const c = new Group();
-    const skin = mat(color);
-    const head = new Mesh(geo.head, skin); head.position.y = 1.12;
-    const torso = new Mesh(geo.torso, skin); torso.position.y = 0.52;
-    const legs = [-0.1, 0.1].map((x) => { const l = new Mesh(geo.limb, skin); l.position.set(x, 0.17, 0); return l; });
-    const arms = [-1, 1].map((s) => { const a = new Mesh(geo.limb, skin); a.position.set(s * 0.25, 0.56, 0); a.rotation.z = s * 0.45; return a; });
-    const face = new Group();
-    for (const s of [-1, 1]) {
-      const eye = new Mesh(geo.eye, eyeMat); eye.position.set(s * 0.15, 0, 0); eye.scale.z = 0.55;
-      const pupil = new Mesh(geo.pupil, pupilMat); pupil.position.set(s * 0.15, -0.01, 0.045);
-      face.add(eye, pupil);
-    }
-    const smile = new Mesh(geo.smile, pupilMat); smile.position.set(0, -0.16, -0.01); smile.rotation.z = Math.PI;
-    face.add(smile);
-    face.position.set(0, 1.18, 0.36);
-    const shadow = new Mesh(geo.shadow, shadowMat); shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.01;
-    const body = new Group();
-    body.add(head, torso, ...legs, ...arms, face);
-    c.add(shadow, body);
-    Object.assign(c.userData, { body, arms, skin, color });
+  // A teammate: the Blender character in its own color, its parts ready to animate.
+  function teammate(color) {
+    const c = chibi.scene.getObjectByName("Chibi").clone();
+    const skin = recolor(c, "Skin", color);
+    const part = (n) => c.getObjectByName(n);
+    const shadow = new Mesh(shadowGeo, shadowMat);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.01; // just above the floor, so it never flickers against it
+    c.add(shadow);
+    Object.assign(c.userData, {
+      skin, color, shadow, head: part("Head"), body: part("Body"),
+      arms: [part("ArmL"), part("ArmR")], legs: [part("LegL"), part("LegR")], pose: 0,
+    });
     return c;
   }
 
-  // Name tag: the task's title, and a colored dot with what the teammate is doing.
-  function tag(title, state) {
+  // Name tag: a title, and a colored dot with what the teammate is doing.
+  function tag(title, state, words = STATE[state][1], color = STATE[state][0]) {
     const c = Object.assign(document.createElement("canvas"), { width: 512, height: 132 });
     const g = c.getContext("2d");
     g.fillStyle = "rgba(252,250,244,0.96)"; g.strokeStyle = "rgba(23,21,15,0.12)"; g.lineWidth = 3;
@@ -143,7 +152,6 @@ function start(host) {
     const chars = Array.from(title); // code points, so an emoji is never cut in half
     g.fillStyle = "#17150f"; g.font = "700 36px 'Schibsted Grotesk', system-ui, sans-serif"; g.textAlign = "center";
     g.fillText(chars.length > 24 ? chars.slice(0, 23).join("") + "…" : title, 256, 56);
-    const [color, words] = STATE[state];
     g.font = "600 24px 'Spline Sans Mono', ui-monospace, monospace";
     const w = g.measureText(words.toUpperCase()).width;
     g.fillStyle = color; g.beginPath(); g.arc(256 - w / 2 - 14, 92, 8, 0, Math.PI * 2); g.fill();
@@ -151,27 +159,36 @@ function start(host) {
     const map = new CanvasTexture(c);
     map.colorSpace = SRGBColorSpace;
     const sprite = new Sprite(new SpriteMaterial({ map, depthWrite: false }));
-    sprite.scale.set(3.4, 0.88, 1);
+    sprite.scale.set(3.2, 0.82, 1);
+    sprite.position.y = 2.3;
     return sprite;
   }
+  const dropTag = (s) => { s.parent?.remove(s); s.material.map?.dispose(); s.material.dispose(); };
 
-  let desks = new Map(); // task id → { group, person, label, title, state, deps, hop }
-  const deskLayer = new Group();
-  scene.add(deskLayer);
-  const reviewer = character("#6366c9");
+  // The Lead plans at the round table; the reviewer waits beside it.
+  const lead = teammate(LEAD);
+  lead.position.set(0, 0.22, -1.55);
+  lead.lookAt(0, 0.22, 0);
+  const leadTag = () => tag("Lead", "idle", "plans the work", LEAD);
+  const reviewerTag = () => tag("Reviewer", "idle", "checks drafts", REVIEWER);
+  lead.add(leadTag());
+  const reviewer = teammate(REVIEWER);
   reviewer.position.copy(HOME);
-  scene.add(reviewer);
+  reviewer.add(reviewerTag());
+  scene.add(lead, reviewer);
   let reviewerTarget = HOME.clone();
 
-  function dispose(root) {
-    root.traverse((m) => {
-      if (m.geometry && !m.isSprite && !shared.has(m.geometry)) m.geometry.dispose(); // sprites share three's own quad
-      if (m.material && !shared.has(m.material)) { m.material.map?.dispose(); m.material.dispose(); }
-    });
-  }
+  let desks = new Map(); // task id → { person, screen, cushion, label, title, state, deps, hop, seat, stand, out }
+  const deskLayer = new Group();
+  scene.add(deskLayer);
 
   function clearDesks() {
-    dispose(deskLayer);
+    deskLayer.traverse((m) => {
+      if (m.isSprite) { m.material.map?.dispose(); m.material.dispose(); }
+      if (m.isLine) { m.geometry.dispose(); m.material.dispose(); }
+    });
+    // Each desk's own material copies; the kit's shared ones stay.
+    for (const d of desks.values()) { d.person.userData.skin.dispose(); d.screen?.dispose(); d.cushion?.dispose(); }
     deskLayer.clear();
     desks = new Map();
     hint.hidden = false;
@@ -179,57 +196,58 @@ function start(host) {
 
   function setState(d, state) {
     d.state = state;
-    d.label.parent.remove(d.label);
-    dispose(d.label);
+    dropTag(d.label);
     d.label = tag(d.title, state);
-    d.label.position.y = 2.4;
     d.person.add(d.label);
     const { skin, color } = d.person.userData;
     skin.color.set(state === "skipped" ? "#d9d3c4" : color); // skipped: greyed out
+    // The monitor glows in the state's color while there is something to show.
+    if (d.screen) d.screen.emissive.set(state === "idle" || state === "skipped" ? new Color("#191c28") : new Color(STATE[state][0]).multiplyScalar(0.55));
   }
 
   function plan(tasks) {
     clearDesks();
     hint.hidden = true;
     const n = tasks.length;
-    const radius = Math.max(3.8, n * 0.85); // the planner caps plans at 8 tasks: at most 6.8, inside the room
+    const radius = Math.min(6.3, Math.max(4.4, n * 0.85)); // the planner caps plans at 8 tasks
     tasks.forEach((t, i) => {
       const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const at = new Vector3(Math.cos(angle), 0, Math.sin(angle));
-      // The desk faces the planning table; its teammate stands on the outside of it.
-      const desk = new Group();
-      const top = new Mesh(geo.top, white); top.position.y = 0.74;
-      const sides = [-0.78, 0.78].map((x) => { const s = new Mesh(geo.side, whiteShade); s.position.set(x, 0.35, 0); return s; });
-      const monitor = new Mesh(geo.monitor, white); monitor.position.set(0, 1.12, 0.12);
-      const screen = new Mesh(geo.screen, screenMat); screen.position.set(0, 1.12, 0.084);
-      screen.rotation.y = Math.PI;
-      const stand = new Mesh(geo.stand, whiteShade); stand.position.set(0, 0.86, 0.12);
-      const keys = new Mesh(geo.keys, whiteShade); keys.position.set(0, 0.795, -0.18);
-      desk.add(top, ...sides, monitor, screen, stand, keys);
-      desk.position.copy(at).multiplyScalar(radius);
-      desk.lookAt(0, 0, 0);
-      deskLayer.add(desk);
+      const out = new Vector3(Math.cos(angle), 0, Math.sin(angle));
+      const side = new Vector3(-out.z, 0, out.x);
+      const color = PALETTE[i % PALETTE.length];
+      // The teammate sits on the inside of the ring, facing out over the desk.
+      const desk = piece("Desk");
+      desk.position.copy(out).multiplyScalar(radius);
+      desk.lookAt(0, 0, 0); // the sitter's side (+Z) toward the middle
+      const chair = piece("Chair");
+      chair.position.copy(out).multiplyScalar(radius - 0.78);
+      chair.lookAt(out.clone().multiplyScalar(radius * 2));
+      const cushion = recolor(chair, "Accent", color);
+      const screen = recolor(desk, "Screen");
+      deskLayer.add(desk, chair);
 
-      const person = character(PALETTE[i % PALETTE.length]);
-      person.position.copy(at).multiplyScalar(radius + 0.85);
+      const person = teammate(color);
+      const seat = chair.position.clone().setY(0.22);
+      const stand = chair.position.clone().addScaledVector(side, 0.95).addScaledVector(out, -0.15);
+      person.position.copy(stand);
       deskLayer.add(person);
-      const d = { desk, person, label: new Group(), title: t.title, state: "idle", deps: t.deps, hop: 0 };
-      person.add(d.label);
+      const look = seat.clone().add(out); // where a seated teammate looks: the monitor
+      const d = { person, screen, cushion, label: new Sprite(), title: t.title, state: "idle", deps: t.deps, hop: 0, seat, stand, out, look };
       setState(d, "idle");
       desks.set(t.id, d);
     });
-    // Faint blue lines for "this task needs that one's output".
+    // Faint blue lines on the floor for "this task needs that one's output".
     const lineMat = new LineBasicMaterial({ color: 0x8fb3f5 });
     for (const d of desks.values()) {
       for (const dep of d.deps) {
         const from = desks.get(dep);
         if (!from) continue;
-        const pts = [from.desk.position.clone().setY(0.03), d.desk.position.clone().setY(0.03)];
+        const pts = [from.seat.clone().setY(0.03), d.seat.clone().setY(0.03)];
         deskLayer.add(new Line(new BufferGeometry().setFromPoints(pts), lineMat));
       }
     }
-    orbit.distance = radius * 1.55 + 6;
-    orbit.height = radius * 1.15 + 6;
+    orbit.distance = radius * 1.5 + 7;
+    orbit.height = radius * 1.1 + 6.5;
   }
 
   function onEvent(e) {
@@ -240,8 +258,8 @@ function start(host) {
       case "drafted":
         if (d) {
           setState(d, "review");
-          // The reviewer walks over and stands beside the desk.
-          reviewerTarget = d.desk.position.clone().multiplyScalar(0.7);
+          // The reviewer walks over and stands beside the teammate's chair.
+          reviewerTarget = d.stand.clone().addScaledVector(d.out, -0.5);
         }
         break;
       case "reviewed": if (d && e.unmet.length) setState(d, "working"); break;
@@ -253,13 +271,19 @@ function start(host) {
   }
 
   // Tags drawn before the web fonts arrived used a fallback font: redraw them once.
-  document.fonts?.ready.then(() => { for (const d of desks.values()) setState(d, d.state); });
+  document.fonts?.ready.then(() => {
+    for (const d of desks.values()) setState(d, d.state);
+    for (const [who, make] of [[lead, leadTag], [reviewer, reviewerTag]]) {
+      dropTag(who.children.find((c) => c.isSprite));
+      who.add(make());
+    }
+  });
 
   addEventListener("agora:reset", () => { clearDesks(); reviewerTarget = HOME.clone(); });
   addEventListener("agora:event", (ev) => onEvent(ev.detail));
 
   // A slow orbit; drag to look around.
-  const orbit = { angle: 0.75, distance: 14, height: 11, dragging: false, lastX: 0 };
+  const orbit = { angle: 0.75, distance: 17, height: 13, dragging: false, lastX: 0 };
   renderer.domElement.addEventListener("pointerdown", (e) => {
     orbit.dragging = true;
     orbit.lastX = e.clientX;
@@ -286,6 +310,16 @@ function start(host) {
   resize();
 
   const faceCamera = (c) => { c.rotation.y = Math.atan2(camera.position.x - c.position.x, camera.position.z - c.position.z); };
+
+  // Sitting is a blend: 0 standing, 1 seated (legs forward).
+  function pose(c, k) {
+    c.userData.legs.forEach((l) => { l.rotation.x = -k * Math.PI / 2; });
+    c.userData.shadow.position.y = 0.01 - c.position.y; // the shadow stays on the floor
+  }
+  pose(lead, 1);
+  lead.userData.arms.forEach((a) => { a.rotation.x = -0.9; });
+
+  const scratch = new Vector3();
   let last = performance.now();
   const loop = (now) => {
     const dt = Math.min((now - last) / 1000, 0.1);
@@ -297,24 +331,37 @@ function start(host) {
       camera.lookAt(0, 0.6, 0);
     }
     for (const d of desks.values()) {
-      const p = d.person, { body, arms } = p.userData;
-      faceCamera(p);
-      const busy = d.state === "working";
-      body.position.y = busy ? Math.abs(Math.sin(t * 6)) * 0.05 : Math.sin(t * 1.6 + p.position.x) * 0.012; // typing, or breathing
-      arms.forEach((a, k) => { a.rotation.x = busy ? Math.sin(t * 12 + k * Math.PI) * 0.5 : 0; });
-      body.rotation.z = d.state === "failed" ? 0.22 : 0; // a puzzled tilt
-      if (d.hop > 0) { d.hop = Math.max(0, d.hop - dt * 1.4); body.position.y = Math.sin(d.hop * Math.PI) * 0.5; }
+      const p = d.person, u = p.userData;
+      u.pose += ((SEATED.has(d.state) ? 1 : 0) - u.pose) * Math.min(1, dt * 6);
+      // Slide between the spot beside the desk and the chair.
+      p.position.lerpVectors(d.stand, d.seat, u.pose);
+      if (d.hop > 0) { d.hop = Math.max(0, d.hop - dt * 1.4); p.position.y += Math.sin(d.hop * Math.PI) * 0.5; }
+      if (u.pose > 0.5) p.lookAt(d.look.x, p.position.y, d.look.z); // at the desk, facing the monitor
+      else faceCamera(p);
+      pose(p, u.pose);
+      const typing = d.state === "working";
+      u.arms.forEach((a, k) => { a.rotation.x = typing ? -1.1 + Math.sin(t * 14 + k * Math.PI) * 0.25 : u.pose * -0.9; });
+      u.body.position.y = Math.sin(t * 1.6 + p.position.x) * 0.012; // breathing
+      u.head.rotation.z = d.state === "failed" ? 0.25 : 0; // a puzzled tilt
+      u.head.rotation.x = typing ? Math.sin(t * 3) * 0.05 : 0;
     }
-    const step = reviewerTarget.clone().sub(reviewer.position).setY(0);
+    lead.userData.head.rotation.x = Math.sin(t * 1.2) * 0.06; // the Lead nods over the plan
+
+    const step = scratch.subVectors(reviewerTarget, reviewer.position).setY(0);
     const dist = step.length();
-    const rb = reviewer.userData.body;
+    const ru = reviewer.userData;
     if (dist > 0.05) {
       reviewer.position.addScaledVector(step.divideScalar(dist), Math.min(dist, dt * 4.5));
       reviewer.rotation.y = Math.atan2(step.x, step.z);
-      rb.position.y = Math.abs(Math.sin(t * 10)) * 0.07; // walking bob
+      const swing = Math.sin(t * 10) * 0.5;
+      ru.legs[0].rotation.x = swing; ru.legs[1].rotation.x = -swing;
+      ru.arms[0].rotation.x = -swing; ru.arms[1].rotation.x = swing;
+      ru.body.position.y = Math.abs(Math.sin(t * 10)) * 0.04; // walking bob
     } else {
       faceCamera(reviewer);
-      rb.position.y = 0;
+      ru.legs.forEach((l) => { l.rotation.x = 0; });
+      ru.arms.forEach((a) => { a.rotation.x = 0; });
+      ru.body.position.y = 0;
     }
     renderer.render(scene, camera);
   };

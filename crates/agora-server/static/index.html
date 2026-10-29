@@ -215,7 +215,8 @@ const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { r
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
 // One color per teammate, in plan order; the 3D office uses the same list.
-const PALETTE = ["#4285f4", "#34a853", "#f2b705", "#ea4335", "#14b8a6", "#f97316", "#ec4899", "#64748b"];
+// Butter yellow is the Lead and purple the reviewer, so neither is a teammate color.
+const PALETTE = ["#4285f4", "#34a853", "#ea4335", "#14b8a6", "#f97316", "#ec4899", "#64748b", "#a16207"];
 window.agoraPalette = PALETTE;
 const COLUMNS = [["scheduled", "Scheduled"], ["hold", "On hold"], ["progress", "In progress"], ["done", "Done"]];
 

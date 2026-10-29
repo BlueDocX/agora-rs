@@ -126,6 +126,18 @@ async fn the_page_is_served_with_a_strict_content_policy() {
     assert_eq!(gz.headers()["content-encoding"], "gzip");
     let bytes = gz.bytes().await.unwrap();
     assert_eq!(&bytes[..2], &[0x1f, 0x8b], "a gzip stream");
+    // `gzip;q=0` refuses gzip.
+    let refused = reqwest::Client::new().get(format!("{base}/office.js")).header("Accept-Encoding", "gzip;q=0, identity").send().await.unwrap();
+    assert!(refused.headers().get("content-encoding").is_none());
+    // The Blender models, plain and gzipped.
+    for name in ["office-kit", "chibi"] {
+        let url = format!("{base}/models/{name}.glb");
+        let plain = reqwest::Client::new().get(&url).header("Accept-Encoding", "identity").send().await.unwrap();
+        assert_eq!(plain.headers()["content-type"], "model/gltf-binary");
+        assert_eq!(&plain.bytes().await.unwrap()[..4], b"glTF", "{name}");
+        let gz = reqwest::Client::new().get(&url).header("Accept-Encoding", "gzip").send().await.unwrap();
+        assert_eq!(gz.headers()["content-encoding"], "gzip");
+    }
 }
 
 #[tokio::test]
