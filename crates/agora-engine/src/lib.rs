@@ -2,6 +2,7 @@
 
 pub mod budget;
 pub mod call;
+pub mod chat;
 pub mod events;
 pub mod journal;
 pub mod planner;

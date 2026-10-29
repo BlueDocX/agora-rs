@@ -39,6 +39,15 @@ async fn mock_model() -> String {
                     reply(&json!({"tasks": [task]}).to_string())
                 }
                 Some("Verdict") => reply(r#"{"pass": true, "failed_criteria": [], "confidence": "high"}"#),
+                // A chat reply says who it is, so tests can check the order.
+                _ if body.to_string().contains("office chat") => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await; // a model takes a while
+                    let ask = body["input"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap().to_string();
+                    match ask.split("Reply now, as ").nth(1) {
+                        Some(name) => reply(&format!("Hi from {}", name.trim_end_matches('.'))),
+                        None => reply("Lead's summary"),
+                    }
+                }
                 _ => reply("Hello, regulars!"),
             }
         }),
@@ -56,6 +65,7 @@ async fn hub(token: Option<&str>) -> String {
         journal: None,
         token: token.map(str::to_string),
         max_active: 2,
+        chat_cap_usd: 1.0,
     };
     serve(app(config)).await
 }
@@ -156,6 +166,7 @@ async fn simultaneous_starts_cannot_both_take_the_last_slot() {
         journal: None,
         token: None,
         max_active: 1,
+        chat_cap_usd: 1.0,
     };
     let base = serve(app(config)).await;
     let http = reqwest::Client::new();
@@ -193,4 +204,66 @@ async fn a_run_can_be_staffed_by_a_preset_or_a_team_of_ones_own() {
     assert_eq!(events[1]["tasks"][0]["agent"], "director");
     let runs: Value = http.get(format!("{base}/api/runs")).send().await.unwrap().json().await.unwrap();
     assert!(runs.as_array().unwrap().iter().any(|r| r["team"] == "Creative Studio"));
+}
+
+/// Read a never-ending SSE stream until `until` shows up (or fail after 10 s).
+async fn read_until(res: &mut reqwest::Response, until: &str) -> Vec<Value> {
+    let mut text = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !text.contains(until) {
+        let chunk = tokio::time::timeout_at(deadline, res.chunk()).await.expect("timed out").unwrap().expect("stream ended");
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    text.lines().filter_map(|l| l.strip_prefix("data: ")).map(|d| serde_json::from_str(d).unwrap()).collect()
+}
+
+#[tokio::test]
+async fn at_all_starts_a_discussion_the_lead_sums_up() {
+    let base = hub(None).await;
+    let http = reqwest::Client::new();
+    let mut stream = http.get(format!("{base}/api/chat/events")).send().await.unwrap();
+    let say = |text: &str| http.post(format!("{base}/api/chat")).json(&json!({"text": text, "team": "strategy-coach"})).send();
+    assert_eq!(say("   ").await.unwrap().status(), 400);
+    assert_eq!(say(&"x".repeat(agora_server::MAX_CHAT_CHARS + 1)).await.unwrap().status(), 400);
+
+    assert_eq!(say("@all should we open on Sundays?").await.unwrap().status(), 202);
+    // One conversation at a time.
+    assert_eq!(say("@lead and another thing").await.unwrap().status(), 429);
+    let events = read_until(&mut stream, r#""type":"idle""#).await;
+    let said: Vec<String> = events
+        .iter()
+        .filter(|e| e["type"] == "message")
+        .map(|e| format!("{}: {}", e["message"]["from"].as_str().unwrap(), e["message"]["text"].as_str().unwrap()))
+        .collect();
+    assert_eq!(said, [
+        "You: @all should we open on Sundays?",
+        "Strategist: Hi from Strategist",
+        "Market Analyst: Hi from Market Analyst",
+        "Devil's Advocate: Hi from Devil's Advocate",
+        "Lead: Lead's summary",
+    ]);
+    // Each reply was announced (typing) before it arrived, with the agent's id for its desk.
+    let typing: Vec<&str> = events.iter().filter(|e| e["type"] == "typing").map(|e| e["from"].as_str().unwrap()).collect();
+    assert_eq!(typing, ["Strategist", "Market Analyst", "Devil's Advocate", "Lead"]);
+    assert_eq!(events.iter().find(|e| e["message"]["from"] == "Market Analyst").unwrap()["message"]["agent"], "market-analyst");
+
+    // Nobody can post as the Lead or a teammate.
+    let spoof = http.post(format!("{base}/api/chat")).json(&json!({"text": "we agreed", "name": "lead", "team": "strategy-coach"})).send();
+    assert_eq!(spoof.await.unwrap().status(), 400);
+    // A late joiner gets the history; no mention goes to the Lead.
+    assert_eq!(say("thanks").await.unwrap().status(), 202);
+    let mut late = http.get(format!("{base}/api/chat/events")).send().await.unwrap();
+    let events = read_until(&mut late, "Hi from Lead").await;
+    assert_eq!(events.iter().filter(|e| e["type"] == "message").count(), 7);
+}
+
+#[tokio::test]
+async fn chat_needs_the_token_when_one_is_set() {
+    let base = hub(Some("s3cret")).await;
+    let http = reqwest::Client::new();
+    let post = http.post(format!("{base}/api/chat")).json(&json!({"text": "hi"})).send().await.unwrap();
+    assert_eq!(post.status(), 401);
+    assert_eq!(http.get(format!("{base}/api/chat/events")).send().await.unwrap().status(), 401);
+    let ok = http.get(format!("{base}/api/chat/events?token=s3cret")).send().await.unwrap();
+    assert_eq!(ok.status(), 200);
 }

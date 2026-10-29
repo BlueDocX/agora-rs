@@ -11,6 +11,8 @@
 //! - A run can name a team: `"team": "<preset id>"`, or a whole team of one's own.
 //! - `GET /` is the office board.
 //!
+//! - `/api/chat` is the office chat: see [`chat`](crate::chat).
+//!
 //! When a token is set, every other `/api` call needs it: as `Authorization: Bearer`, or
 //! as `?token=` on the event stream (a browser `EventSource` can't send headers).
 
@@ -20,8 +22,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod chat;
+
+pub use chat::MAX_CHAT_CHARS;
+
 use agora_core::Team;
-use agora_engine::{Journal, Remote, RunConfig, RunEvent, run};
+use agora_engine::{Budget, Journal, Remote, RunConfig, RunEvent, run};
 use agora_muse::MuseClient;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
@@ -64,6 +70,8 @@ pub struct HubConfig {
     pub token: Option<String>,
     /// Runs allowed at the same time; more get 429.
     pub max_active: usize,
+    /// What the chat may spend on replies over the server's life (USD).
+    pub chat_cap_usd: f64,
 }
 
 struct Room {
@@ -107,11 +115,18 @@ impl Room {
     fn done(&self) -> bool {
         self.lock().live.is_none()
     }
+
+    fn history(&self) -> Vec<RunEvent> {
+        self.lock().history.clone()
+    }
 }
 
 struct Hub {
     config: HubConfig,
     state: Mutex<HubState>,
+    chat: Mutex<chat::ChatState>,
+    /// `None` when the chat can't be budgeted (an unpriced model or a bad cap).
+    chat_budget: Option<Arc<Budget>>,
 }
 
 #[derive(Default)]
@@ -133,7 +148,14 @@ impl Hub {
 }
 
 pub fn app(config: HubConfig) -> Router {
-    let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()) });
+    let chat_budget = match Budget::new(&[&config.model], config.chat_cap_usd) {
+        Ok(budget) => Some(Arc::new(budget)),
+        Err(e) => {
+            eprintln!("chat is off: {e}");
+            None
+        }
+    };
+    let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()), chat: Mutex::default(), chat_budget });
     Router::new()
         .route("/", get(index))
         .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), OFFICE_JS_GZ) }))
@@ -143,6 +165,8 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
+        .route("/api/chat", post(chat::post))
+        .route("/api/chat/events", get(chat::events))
         .with_state(hub)
 }
 
@@ -363,7 +387,7 @@ async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
 
 /// `None` (and a note on stderr) for an event that can't be serialized, rather than
 /// sending the browser something it can't parse.
-fn to_sse(event: &RunEvent) -> Option<Result<Event, Infallible>> {
+fn to_sse<T: Serialize>(event: &T) -> Option<Result<Event, Infallible>> {
     match serde_json::to_string(event) {
         Ok(json) => Some(Ok(Event::default().data(json))),
         Err(e) => {

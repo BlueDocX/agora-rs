@@ -53,11 +53,30 @@
   /* Logs */
   .logs { padding: 20px 14px 14px; }
   .logs > .label { padding: 0 8px 14px; }
-  .tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; }
+  .tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; }
   .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 800 10.5px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--zinc, #55503f); }
   .tabs button.on { background: var(--ink); color: var(--paper); }
   .feed { flex: 1; overflow: auto; margin: 12px 0 0; padding: 0 6px; list-style: none; }
   .feed li { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .tabs button { position: relative; letter-spacing: .04em !important; font-size: 10px !important; }
+  .tabs button.unread::after { content: ""; position: absolute; top: 5px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
+  /* Chat */
+  .feed.chat li { border: 0; padding: 6px 2px; align-items: flex-start; }
+  .feed.chat .face { width: 26px; height: 26px; border-radius: 50%; flex: none; margin-top: 2px; position: relative; }
+  .feed.chat .face::before, .feed.chat .face::after { content: ""; position: absolute; top: 9px; width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: inset 1.5px 0 0 2px var(--ink); }
+  .feed.chat .face::before { left: 5px; } .feed.chat .face::after { right: 5px; }
+  .feed.chat .bubble { background: var(--stone); border: 1px solid var(--line); border-radius: 4px 16px 16px 16px; padding: 7px 11px; min-width: 0; }
+  .feed.chat .mine .bubble { background: #fbf4d5; border-color: #f2e09b; }
+  .feed.chat .notice .bubble { background: transparent; border-style: dashed; color: var(--muted); }
+  .feed.chat .bubble b { display: block; font-size: 11.5px; margin-bottom: 2px; }
+  .feed.chat .bubble span { white-space: pre-wrap; word-break: break-word; }
+  .feed.chat .typing { color: var(--muted); font-style: italic; font-size: 12.5px; padding-left: 36px; }
+  .composer { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 4px 10px; font: 600 11.5px var(--sans); color: var(--ink); }
+  .chips button i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+  .composer textarea { min-height: 64px; font-style: normal; border-radius: 16px; font-size: 13.5px; }
+  .composer .row { margin-top: 0; justify-content: space-between; }
   .feed li .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }
   .feed li .t { color: var(--soft); font: 500 11px var(--mono); margin-left: auto; padding-left: 6px; white-space: nowrap; }
   .feed.tech li { font: 11.5px/1.5 var(--mono); color: #55503f; word-break: break-word; }
@@ -198,11 +217,17 @@
   <section class="panel logs">
     <div class="label">Logs</div>
     <div class="tabs" role="tablist">
-      <button type="button" data-tab="activity" class="on">Activity</button>
+      <button type="button" data-tab="chat" class="on">Chat</button>
+      <button type="button" data-tab="activity">Activity</button>
       <button type="button" data-tab="technical">Technical</button>
       <button type="button" data-tab="runs">Runs</button>
     </div>
     <ul class="feed" id="feed"></ul>
+    <form class="composer" id="chatform">
+      <div class="chips" id="chips"></div>
+      <textarea id="chattext" maxlength="1000" placeholder="Message the team. @Name asks one agent, @all starts a discussion." aria-label="Chat message"></textarea>
+      <div class="row"><span class="note" id="chatnote"></span><button class="pill butter" id="send" type="submit">Send</button></div>
+    </form>
   </section>
 
   <section class="panel office">
@@ -265,7 +290,8 @@ const PALETTE = ["#4285f4", "#34a853", "#ea4335", "#14b8a6", "#f97316", "#ec4899
 window.agoraPalette = PALETTE;
 const COLUMNS = [["scheduled", "Scheduled"], ["hold", "On hold"], ["progress", "In progress"], ["done", "Done"]];
 
-let source = null, current = null, tasks = new Map(), tab = "activity", runsCache = [];
+let source = null, current = null, tasks = new Map(), tab = "chat", runsCache = [];
+const chatLog = []; let typing = null;
 let staffed = null; // the team on the run being watched
 const named = (t) => (t.owner ? `${t.owner} · ${t.title}` : t.title);
 const activity = [], technical = [];
@@ -273,14 +299,50 @@ const activity = [], technical = [];
 const runEvents = [];
 window.agoraHistory = () => runEvents.slice();
 
+function chatItem(m) {
+  const li = el("li", m.kind === "person" ? "mine" : m.kind === "notice" ? "notice" : "");
+  const face = el("span", "face"); face.style.background = m.color;
+  const bubble = el("div", "bubble");
+  bubble.append(el("b", null, m.from), el("span", null, m.text));
+  li.append(face, bubble);
+  return li;
+}
+function typingLine() {
+  const li = el("li", "typing", typing ? `${typing} is typing…` : "");
+  li.id = "typingline"; li.hidden = !typing;
+  return li;
+}
+// One new message (or none, for typing/idle): append it, refresh the typing line,
+// and follow the conversation only if the reader was already at the bottom.
+function updateChat(message) {
+  const feed = $("feed");
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  if (message) {
+    feed.querySelector(".empty-note")?.remove();
+    if (feed.children.length > 200) feed.firstElementChild.remove();
+    feed.insertBefore(chatItem(message), $("typingline"));
+  }
+  $("typingline").replaceWith(typingLine());
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+}
+
 function clock() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 
 function note(text, color) { activity.push({ text, color, t: clock() }); if (tab === "activity") renderFeed(); }
 
 function renderFeed() {
   const feed = $("feed");
-  feed.className = "feed" + (tab === "technical" ? " tech" : "");
+  feed.className = "feed" + (tab === "technical" ? " tech" : tab === "chat" ? " chat" : "");
   feed.replaceChildren();
+  $("chatform").hidden = tab !== "chat";
+  if (tab === "chat") {
+    document.querySelector('.tabs [data-tab="chat"]').classList.remove("unread");
+    if (!chatLog.length) feed.append(el("li", "empty-note", "Say hello to the team"));
+    for (const m of chatLog) feed.append(chatItem(m));
+    feed.append(typingLine());
+    feed.scrollTop = feed.scrollHeight;
+    return;
+  }
   if (tab === "runs") {
     if (!runsCache.length) { feed.append(el("li", "empty-note", runsCache.locked ? "Enter the access token to see runs" : "No runs yet")); return; }
     for (const r of runsCache) {
@@ -313,7 +375,11 @@ function column(t) {
 }
 
 function renderBoard() {
-  $("teamsize").textContent = staffed ? staffed.agents.length : tasks.size; // agents, or one per task without a team
+  // The run's team, or (with no run open) the team picked for the next one.
+  const team = staffed || (current ? null : findTeam(selected));
+  $("teamsize").textContent = team ? team.agents.length : tasks.size; // agents, or one per task without a team
+  $("teamname").textContent = team ? team.name : "Agora Office";
+  $("teamkind").textContent = team ? team.kind || "Team" : "Muse team";
   const box = $("kanban");
   box.replaceChildren();
   for (const [key, name] of COLUMNS) {
@@ -361,6 +427,7 @@ function onEvent(e) {
     case "staffed":
       staffed = e.team;
       $("teamname").textContent = e.team.name; $("teamkind").textContent = e.team.kind || "Team";
+      renderChips();
       note(`${e.team.name} is on it: ${e.team.agents.map((a) => a.name).join(", ")}`, "var(--ink)");
       break;
     case "planned":
@@ -414,7 +481,7 @@ function watch(id) {
   source.onopen = () => {
     runEvents.length = 0; activity.length = 0; technical.length = 0;
     dispatchEvent(new Event("agora:reset"));
-    tasks = new Map(); staffed = null; setStatus("Planning…", "live");
+    tasks = new Map(); staffed = null; setStatus("Planning…", "live"); renderChips();
     $("teamname").textContent = "Agora Office"; $("teamkind").textContent = "Muse team";
     $("deliverable").className = "empty"; $("deliverable").textContent = "Appears when the run finishes.";
     spend(0); renderBoard(); renderFeed();
@@ -451,7 +518,7 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
 });
 $("newbrief").onclick = () => { $("brief").focus(); $("brief").select(); };
 $("token").value = store.get("agora-token");
-$("token").onchange = () => { store.set("agora-token", $("token").value.trim()); refreshRuns(); };
+$("token").onchange = () => { store.set("agora-token", $("token").value.trim()); refreshRuns(); connectChat(); };
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
   store.set("agora-token", $("token").value.trim());
@@ -501,6 +568,9 @@ function renderTeamPicker() {
   sel.value = selected;
   const t = findTeam(selected);
   $("teamdesc").textContent = t ? t.agents.map((a) => `${a.name} (${a.role})`).join(", ") : "";
+  renderChips();
+  showIdleTeam();
+  renderBoard();
 }
 
 // The same rules the server applies, so a team is fixed here, not rejected later.
@@ -658,11 +728,84 @@ function renderTeams() {
   actions.append(err);
 }
 
+// ---- Chat: the whole office talks here; the team answers in character ----
+let chatSource = null;
+// While watching a run, the chat talks to that run's team; otherwise to the picked one.
+const chatTeamObject = () => staffed || findTeam(selected) || null;
+const chatTeam = () => {
+  if (!staffed) return teamForRun();
+  return presets.some((t) => t.id === staffed.id) ? staffed.id : staffed;
+};
+
+function renderChips() {
+  const box = $("chips");
+  box.replaceChildren();
+  const team = chatTeamObject();
+  const chip = (label, color, insert) => {
+    const b = el("button");
+    b.type = "button";
+    const dot = el("i"); dot.style.background = color;
+    b.append(dot, label);
+    b.onclick = () => {
+      const t = $("chattext"), at = t.selectionStart ?? t.value.length;
+      t.value = t.value.slice(0, at) + insert + " " + t.value.slice(at);
+      t.focus();
+    };
+    box.append(b);
+  };
+  chip("@all", "var(--ink)", "@all");
+  chip("@Lead", "#f2cc46", "@Lead");
+  for (const a of team?.agents ?? []) chip("@" + a.name, a.color, "@" + a.name);
+}
+
+function connectChat() {
+  chatSource?.close();
+  const token = $("token").value.trim();
+  chatSource = new EventSource("/api/chat/events" + (token ? `?token=${encodeURIComponent(token)}` : ""));
+  // Every (re)connection replays the kept history.
+  chatSource.onopen = () => { chatLog.length = 0; typing = null; if (tab === "chat") renderFeed(); };
+  chatSource.onmessage = (m) => {
+    let e;
+    try { e = JSON.parse(m.data); } catch { return; }
+    if (e.type === "message") {
+      chatLog.push(e.message);
+      if (chatLog.length > 200) chatLog.shift();
+      if (typing === e.message.from) typing = null;
+      if (tab !== "chat") document.querySelector('.tabs [data-tab="chat"]').classList.add("unread");
+    } else if (e.type === "typing") typing = e.from;
+    else if (e.type === "idle") typing = null;
+    dispatchEvent(new CustomEvent("agora:chat", { detail: e })); // speech bubbles in the office
+    if (tab === "chat") updateChat(e.type === "message" ? e.message : null);
+  };
+}
+
+$("chatform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const text = $("chattext").value.trim();
+  if (!text) return;
+  $("send").disabled = true; $("chatnote").textContent = "";
+  try {
+    if (!presets.length) await loadTeams();
+    if (!staffed && selected && !teamForRun()) throw new Error("The teams couldn't be loaded; try again in a moment.");
+    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ text, team: chatTeam(), run: current || undefined }) });
+    if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || res.statusText); }
+    $("chattext").value = "";
+  } catch (err) { $("chatnote").textContent = err.message; }
+  finally { $("send").disabled = false; }
+};
+// Enter sends; Shift+Enter is a new line.
+$("chattext").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("chatform").requestSubmit(); } };
+
+// Before any run is watched, the office shows the picked team at their desks.
+window.agoraIdleTeam = () => (current ? null : findTeam(selected) || null);
+const showIdleTeam = () => { if (!current) dispatchEvent(new CustomEvent("agora:team", { detail: findTeam(selected) || null })); };
+
 $("teamsel").onchange = () => { selected = $("teamsel").value; store.set("agora-team", selected); renderTeamPicker(); };
 $("manage").onclick = () => openTeams();
 $("editteam").onclick = () => openTeams(selected);
 
-renderBoard(); renderFeed(); loadInfo(); loadTeams();
+renderBoard(); renderFeed(); loadInfo(); loadTeams(); connectChat();
 // A link like /#run-123 opens that run (after the list, so its brief shows too).
 refreshRuns().finally(() => { if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1))); });
 </script>

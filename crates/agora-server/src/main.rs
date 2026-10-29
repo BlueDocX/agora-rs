@@ -4,7 +4,8 @@
 //! (required to listen on anything but loopback), `AGORA_MODEL`, `AGORA_CAP_USD`
 //! (per run, default 0.50), `AGORA_PARALLEL` (default 4), `AGORA_MAX_ACTIVE` (default
 //! 2), `AGORA_JOURNAL` (default `agora-journal.db`), and `AGORA_REVIEWER=baseten`
-//! with `BASETEN_API_KEY` to review on Muse Spark Open.
+//! with `BASETEN_API_KEY` to review on Muse Spark Open. `AGORA_CHAT_CAP_USD` (default
+//! 0.50) caps what the office chat spends while the server runs.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -47,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         journal: Some(env_or("AGORA_JOURNAL", PathBuf::from("agora-journal.db"))?),
         token,
         max_active: env_or("AGORA_MAX_ACTIVE", 2)?,
+        chat_cap_usd: env_or("AGORA_CHAT_CAP_USD", 0.50)?,
     };
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("Agora on http://{addr}");

@@ -194,6 +194,7 @@ async function start(host) {
     });
     // Each desk's own material copies; the kit's shared ones stay.
     for (const d of desks.values()) { d.person.userData.skin.dispose(); d.screen?.dispose(); d.cushion?.dispose(); }
+    for (const [who] of speaking) if (who.parent === deskLayer) speaking.delete(who); // their sprites are disposed above
     deskLayer.clear();
     desks = new Map();
     hint.hidden = false;
@@ -306,8 +307,61 @@ async function start(host) {
     }
   });
 
-  addEventListener("agora:reset", () => { clearDesks(); owner = new Map(); staffed = false; reviewerTarget = HOME.clone(); });
-  addEventListener("agora:event", (ev) => onEvent(ev.detail));
+  // Once a run is being watched, its events decide who is in the office; before
+  // that, the team picked on the page sits at the desks.
+  let watching = false;
+  function showTeam(team) {
+    if (watching) return;
+    if (team) onEvent({ type: "staffed", team });
+    else clearDesks();
+  }
+  addEventListener("agora:reset", () => { watching = true; clearDesks(); owner = new Map(); staffed = false; reviewerTarget = HOME.clone(); });
+  addEventListener("agora:event", (ev) => { watching = true; onEvent(ev.detail); });
+  addEventListener("agora:team", (ev) => showTeam(ev.detail));
+
+  // Speech bubbles: whoever is talking in the chat says it over their head.
+  function bubble(text) {
+    const c = Object.assign(document.createElement("canvas"), { width: 512, height: 190 });
+    const g = c.getContext("2d");
+    g.font = "500 27px 'Schibsted Grotesk', system-ui, sans-serif";
+    const lines = [];
+    let line = "";
+    for (const word of text.replace(/\s+/g, " ").trim().split(" ")) {
+      const next = line ? line + " " + word : word;
+      if (g.measureText(next).width > 460 && line) { lines.push(line); line = word; } else line = next;
+      if (lines.length === 3) break;
+    }
+    if (lines.length < 3 && line) lines.push(line);
+    if (lines.length === 3 && g.measureText(lines.join(" ")).width < g.measureText(text).width - 1) lines[2] = lines[2].replace(/\s*\S*$/, "") + " …";
+    const h = 34 + lines.length * 36;
+    g.fillStyle = "#fffdf6"; g.strokeStyle = "rgba(23,21,15,0.16)"; g.lineWidth = 3;
+    g.beginPath(); g.roundRect(4, 4, 504, h, 26); g.fill(); g.stroke();
+    g.beginPath(); g.moveTo(236, h + 2); g.lineTo(256, h + 26); g.lineTo(276, h + 2); g.fill(); // the tail
+    g.fillStyle = "#17150f"; g.textAlign = "center";
+    lines.forEach((l, i) => g.fillText(l, 256, 46 + i * 36));
+    const map = new CanvasTexture(c);
+    map.colorSpace = SRGBColorSpace;
+    const sprite = new Sprite(new SpriteMaterial({ map, depthWrite: false }));
+    sprite.scale.set(3.0, 1.11, 1);
+    sprite.position.y = 3.2;
+    sprite.renderOrder = 2;
+    return sprite;
+  }
+  const speaking = new Map(); // character → { sprite, until }
+  function say(who, text, seconds) {
+    if (!who) return;
+    const old = speaking.get(who);
+    if (old) dropTag(old.sprite);
+    const sprite = bubble(text);
+    who.add(sprite);
+    speaking.set(who, { sprite, until: performance.now() + seconds * 1000, typing: text === "…" });
+  }
+  const speaker = (e) => (e.agent ? desks.get(e.agent)?.person : e.from === "Lead" || e.message?.kind === "lead" ? lead : null);
+  addEventListener("agora:chat", ({ detail: e }) => {
+    if (e.type === "typing") say(speaker(e), "…", 30);
+    else if (e.type === "idle") for (const b of speaking.values()) { if (b.typing) b.until = 0; } // nobody is typing now
+    else if (e.type === "message" && Date.now() - e.message.at_ms < 20000) say(speaker({ agent: e.message.agent, message: e.message }), e.message.text, 9);
+  });
 
   // A slow orbit; drag to look around.
   const orbit = { angle: 0.75, distance: 17, height: 13, dragging: false, lastX: 0 };
@@ -390,6 +444,9 @@ async function start(host) {
       ru.arms.forEach((a) => { a.rotation.x = 0; });
       ru.body.position.y = 0;
     }
+    for (const [who, b] of speaking) {
+      if (now > b.until) { dropTag(b.sprite); speaking.delete(who); }
+    }
     renderer.render(scene, camera);
   };
   // Draw only while the office is on screen (or in VR); scrolled away, the GPU rests.
@@ -400,5 +457,8 @@ async function start(host) {
 
   // This script can load after the run's history has already streamed in: catch up
   // (last, once everything the handlers touch exists).
-  for (const e of window.agoraHistory?.() ?? []) onEvent(e);
+  const history = window.agoraHistory?.() ?? [];
+  if (history.length) watching = true;
+  for (const e of history) onEvent(e);
+  showTeam(window.agoraIdleTeam?.() ?? null);
 }
