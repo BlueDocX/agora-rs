@@ -35,6 +35,9 @@
   #runs li:hover, #runs li.on { background: var(--bg); }
   #runs .brief { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .stack > section + section { margin-top: 20px; }
+  #office3d { position: relative; margin-bottom: 14px; border-radius: 8px; overflow: hidden; background: var(--bg); }
+  #office3d canvas { display: block; touch-action: none; cursor: grab; }
+  #office3d button { position: absolute !important; bottom: 10px !important; }
   #tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
   .task { border: 1px solid var(--line); border-left: 4px solid var(--idle); border-radius: 8px; padding: 10px 12px; }
   .task .title { font-weight: 600; }
@@ -72,6 +75,7 @@
   <div class="stack">
     <section>
       <h2>Team</h2>
+      <div id="office3d" hidden></div>
       <div id="tasks"><p class="empty">Start a brief or pick a run.</p></div>
     </section>
     <section>
@@ -92,6 +96,9 @@ const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { r
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
 let source = null, current = null, tasks = new Map();
+// Every event of the run being watched, so the 3D office can catch up if it loads late.
+const runEvents = [];
+window.agoraHistory = () => runEvents.slice();
 
 function render() {
   const box = $("tasks");
@@ -116,6 +123,8 @@ function log(line) {
 }
 
 function onEvent(e) {
+  runEvents.push(e);
+  dispatchEvent(new CustomEvent("agora:event", { detail: e })); // the 3D office
   const t = e.task && tasks.get(e.task);
   switch (e.type) {
     case "planned":
@@ -154,7 +163,7 @@ function watch(id) {
   const token = $("token").value.trim();
   source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events` + (token ? `?token=${encodeURIComponent(token)}` : ""));
   // Every (re)connection replays the whole run, so start from a clean slate.
-  source.onopen = () => { tasks = new Map(); $("log").textContent = ""; $("deliverable").className = "empty";
+  source.onopen = () => { runEvents.length = 0; dispatchEvent(new Event("agora:reset")); tasks = new Map(); $("log").textContent = ""; $("deliverable").className = "empty";
                           $("deliverable").textContent = "Appears when the run finishes."; $("spend").textContent = ""; render(); };
   source.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (err) { log("bad event: " + err); } };
 }
@@ -201,5 +210,6 @@ refreshRuns();
 // A link like /#run-123 opens that run.
 if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1)));
 </script>
+<script type="module" src="/office.js"></script>
 </body>
 </html>

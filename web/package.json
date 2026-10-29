@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "name": "agora-office",
+  "description": "The 3D office view. Built into crates/agora-server/static/office.js, which the server embeds.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

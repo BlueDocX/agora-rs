@@ -114,6 +114,14 @@ async fn the_page_is_served_with_a_strict_content_policy() {
     let csp = res.headers()["content-security-policy"].to_str().unwrap().to_string();
     assert!(csp.contains("frame-ancestors 'none'") && csp.contains("connect-src 'self'"));
     assert!(res.text().await.unwrap().contains("<title>Agora office</title>"));
+    let office = reqwest::get(format!("{base}/office.js")).await.unwrap();
+    assert_eq!(office.headers()["content-type"], "text/javascript; charset=utf-8");
+    assert!(office.text().await.unwrap().contains("agora:event"));
+    // Browsers that accept gzip get the small copy.
+    let gz = reqwest::Client::new().get(format!("{base}/office.js")).header("Accept-Encoding", "gzip, br").send().await.unwrap();
+    assert_eq!(gz.headers()["content-encoding"], "gzip");
+    let bytes = gz.bytes().await.unwrap();
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b], "a gzip stream");
 }
 
 #[tokio::test]

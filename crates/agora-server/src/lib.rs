@@ -32,6 +32,10 @@ pub const MAX_BRIEF_CHARS: usize = 4000;
 /// Finished runs kept in memory for the board; older ones are dropped first.
 pub const KEEP_RUNS: usize = 50;
 const INDEX: &str = include_str!("../static/index.html");
+/// The 3D office, built from `web/` with `npm run build`, which writes both files.
+/// Both are committed, so the server builds without Node.
+const OFFICE_JS: &str = include_str!("../static/office.js");
+const OFFICE_JS_GZ: &[u8] = include_bytes!("../static/office.js.gz");
 
 /// How the hub runs briefs.
 #[derive(Debug, Clone)]
@@ -118,9 +122,30 @@ pub fn app(config: HubConfig) -> Router {
     let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()) });
     Router::new()
         .route("/", get(index))
+        .route("/office.js", get(office_js))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
         .with_state(hub)
+}
+
+/// The gzipped copy (about a quarter of the size) when the browser accepts it.
+/// Cached briefly: the file only changes with a new server build.
+async fn office_js(headers: HeaderMap) -> Response {
+    let gzip = headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+    let common = [
+        (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::CACHE_CONTROL, "public, max-age=300"),
+        (header::VARY, "Accept-Encoding"),
+    ];
+    if gzip {
+        (common, [(header::CONTENT_ENCODING, "gzip")], OFFICE_JS_GZ).into_response()
+    } else {
+        (common, OFFICE_JS).into_response()
+    }
 }
 
 async fn index() -> Response {
