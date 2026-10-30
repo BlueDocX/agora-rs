@@ -133,10 +133,8 @@ pub fn request(model: &str, team: &Team, voice: Voice<'_>, history: &[ChatMessag
         Voice::Agent(a) => format!("You are {}, on the {} team. Your role: {}.", a.name.trim(), team.name, a.role),
         Voice::Lead { .. } => format!("You are the Lead of the {} team: you plan the work and keep everyone aligned.", team.name),
     };
-    if let Voice::Agent(a) = voice
-        && !a.skills.trim().is_empty()
-    {
-        let _ = write!(ask, " How you work: {}", a.skills.trim());
+    if let Voice::Agent(a) = voice {
+        ask.push_str(&a.briefing());
     }
     ask.push_str("\n\nThe team:\n");
     for a in &team.agents {

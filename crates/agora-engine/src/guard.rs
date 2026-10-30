@@ -24,6 +24,8 @@ use crate::call::{CallError, Caller};
 use crate::ledger::Entry;
 
 pub const MAX_REVISIONS: usize = 2;
+/// How much of each call's result the log shows (enough for an email body).
+const LOG_RESULT_CHARS: usize = 400;
 
 /// The models that parse messages into claims: one, or two that check each other.
 #[derive(Debug, Clone, Copy)]
@@ -124,7 +126,14 @@ pub async fn check(caller: &Caller, checkers: Checkers<'_>, message: &str, entri
 pub fn log(entries: &[Entry]) -> String {
     entries.iter().fold(String::new(), |mut s, e| {
         let o = &e.outcome;
-        let what = if e.forgotten_at_ms.is_some() { "(content forgotten at the person's request)".to_string() } else { o.result.lines().next().unwrap_or_default().to_string() };
+        // The whole result (lines joined, capped): a rewrite must be able to cite what
+        // a read returned, not just its first line.
+        let what = if e.forgotten_at_ms.is_some() {
+            "(content forgotten at the person's request)".to_string()
+        } else {
+            let flat = o.result.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" / ");
+            if flat.chars().count() > LOG_RESULT_CHARS { format!("{}…", flat.chars().take(LOG_RESULT_CHARS).collect::<String>()) } else { flat }
+        };
         let _ = writeln!(s, "#{} {} · {} → {}: {what}", e.seq, e.action.tool.name(), o.subject, if o.ok { "ok" } else { "FAILED" });
         s
     })
@@ -359,6 +368,8 @@ mod tests {
         let entries = errand();
         let text = log(&entries);
         assert!(text.contains("#3 email.send · Arjun Shah <arjun.shah@oldmail.in> → FAILED: Bounced"), "{text}");
+        // A read's whole result is there, lines joined.
+        assert!(text.contains("Neha: How did the Kestrel first round go?? / Asha: Good I think!"), "{text}");
         assert_eq!(text.lines().count(), 4);
     }
 }

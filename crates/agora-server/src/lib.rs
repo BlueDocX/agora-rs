@@ -221,6 +221,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/info", get(info))
         .route("/api/leaderboard", get(|| async { ([(header::CONTENT_TYPE, "application/json")], LEADERBOARD) }))
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
+        .route("/api/skills", get(|| async { Json(agora_core::SKILLS) }))
         .route("/api/models", get(models))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))

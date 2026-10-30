@@ -353,11 +353,7 @@ impl Ctx {
     fn persona(&self, i: usize) -> Option<String> {
         let team = self.team.as_ref()?;
         let agent = team.agent(self.tasks[i].agent.as_deref()?)?;
-        let mut who = format!("You are {}, on the {} team. Your role: {}.", agent.name, team.name, agent.role);
-        if !agent.skills.trim().is_empty() {
-            let _ = write!(who, " How you work: {}", agent.skills.trim());
-        }
-        Some(who)
+        Some(format!("You are {}, on the {} team. Your role: {}.{}", agent.name, team.name, agent.role, agent.briefing()))
     }
 
     async fn attempt(&self, i: usize) -> Result<Accepted, TaskError> {

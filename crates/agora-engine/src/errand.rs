@@ -33,6 +33,9 @@ pub struct Errand<'a> {
     pub agent: &'a str,
     pub model: &'a str,
     pub brief: &'a str,
+    /// Who the bot is beyond its name: a preset role and its skills (from
+    /// `Agent::briefing`), or "" for a plain assistant. User content, never system.
+    pub persona: &'a str,
 }
 
 #[derive(Debug, Clone)]
@@ -96,9 +99,10 @@ fn opening(world: &World, errand: &Errand<'_>) -> Vec<Message> {
         Message::system(CHARTER),
         Message::system(ERRAND_ROLE),
         Message::user(format!(
-            "You are {}, working for {}. It is Monday morning; days are Monday to Sunday of this week.\n\nTools:\n{}\n\nErrand from {}: {}",
+            "You are {}, working for {}.{} It is Monday morning; days are Monday to Sunday of this week.\n\nTools:\n{}\n\nErrand from {}: {}",
             errand.agent,
             world.owner,
+            errand.persona,
             tool_guide(),
             world.owner,
             errand.brief

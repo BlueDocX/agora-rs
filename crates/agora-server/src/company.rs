@@ -56,11 +56,40 @@ pub(crate) struct Member {
     pub color: String,
     /// Their bot's name: it runs their errands, and errands sent to their area.
     pub bot: String,
+    /// The preset role their bot plays ("<team>/<agent>", e.g. "research-lab/fact-checker"),
+    /// which brings that agent's role and skills to its errands. `None` = a plain assistant.
+    pub bot_role: Option<BotRole>,
     pub online: bool,
     #[serde(skip)]
     key: String,
     #[serde(skip)]
     streams: usize,
+}
+
+/// A preset agent a bot plays, as people see it.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct BotRole {
+    pub preset: String,
+    pub name: String,
+    pub role: String,
+    pub kit: Vec<String>,
+    #[serde(skip)]
+    pub agent: Box<agora_core::Agent>,
+}
+
+/// The preset agent `"<team>/<agent>"`, if there is one.
+fn bot_role(preset: &str) -> Option<BotRole> {
+    let (team, agent) = preset.split_once('/')?;
+    let agent = agora_core::preset(team)?.agents.into_iter().find(|a| a.id == agent)?;
+    Some(BotRole { preset: preset.to_string(), name: agent.name.clone(), role: agent.role.clone(), kit: agent.kit.clone(), agent: Box::new(agent) })
+}
+
+impl Member {
+    /// What the bot's instructions say about who it is: its preset role and skills.
+    #[must_use]
+    pub(crate) fn persona(&self) -> String {
+        self.bot_role.as_ref().map_or_else(String::new, |r| format!(" You work as their {}: {}.{}", r.name, r.role, r.agent.briefing()))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,7 +181,11 @@ impl Company {
         }
     }
 
-    fn join(&mut self, name: &str, area: &str) -> Result<Member, String> {
+    fn join(&mut self, name: &str, area: &str, preset: Option<&str>) -> Result<Member, String> {
+        let bot_role = match preset.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(p) => Some(bot_role(p).ok_or_else(|| format!("there is no preset agent \"{p}\""))?),
+            None => None,
+        };
         let name = clean(name, "your name", 40)?;
         if name.is_empty() {
             return Err("say your name to join".into());
@@ -175,6 +208,7 @@ impl Company {
             area,
             color: color.to_string(),
             bot: bot.to_string(),
+            bot_role,
             online: false,
             key: secret(),
             streams: 0,
@@ -216,6 +250,9 @@ pub(crate) struct Join {
     name: String,
     #[serde(default)]
     area: String,
+    /// The preset agent their bot plays, "<team>/<agent>".
+    #[serde(default)]
+    bot_role: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -233,7 +270,7 @@ pub(crate) async fn join(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: 
         Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that isn't a valid join: {}", e.body_text())),
     };
     let mut company = hub.company();
-    match company.join(&body.name, &body.area) {
+    match company.join(&body.name, &body.area, body.bot_role.as_deref()) {
         Ok(member) => {
             let key = member.key.clone();
             (StatusCode::CREATED, Json(Joined { member, key })).into_response()
@@ -248,6 +285,9 @@ pub(crate) struct Change {
     role: Option<Role>,
     #[serde(default)]
     area: Option<String>,
+    /// A preset agent for their bot ("<team>/<agent>"), or "" for a plain assistant.
+    #[serde(default)]
+    bot_role: Option<String>,
 }
 
 pub(crate) async fn change(State(hub): State<Arc<Hub>>, Path(id): Path<String>, headers: HeaderMap, body: Result<Json<Change>, JsonRejection>) -> Response {
@@ -292,8 +332,25 @@ pub(crate) async fn change(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
     if let Some(area) = area {
         target.area = area;
     }
+    if let Some(preset) = body.bot_role.as_deref().map(str::trim) {
+        if !owner && me.id != id {
+            return error(StatusCode::FORBIDDEN, "only they (or the owner) can change their bot");
+        }
+        target.bot_role = if preset.is_empty() {
+            None
+        } else {
+            match bot_role(preset) {
+                Some(r) => Some(r),
+                None => return error(StatusCode::BAD_REQUEST, &format!("there is no preset agent \"{preset}\"")),
+            }
+        };
+    }
     let member = target.clone();
     company.send(CompanyEvent::Member { member: member.clone() });
+    if let Some(r) = member.bot_role.as_ref().filter(|_| body.bot_role.is_some()) {
+        let text = format!("{}'s bot {} now works as a {} ({} skills)", member.name, member.bot, r.name, r.kit.len());
+        company.note(&member.id, text, None);
+    }
     if member.role == Role::Lead && !member.area.is_empty() {
         let text = format!("{} now leads {}: errands for {} go to their bot {}", member.name, member.area, member.area, member.bot);
         company.note(&member.id, text, None);
@@ -377,13 +434,13 @@ mod tests {
     #[test]
     fn the_first_in_owns_the_office_and_names_stay_unique() {
         let mut c = Company::default();
-        let asha = c.join("Asha", "").unwrap();
-        let priya = c.join("Priya", "Finance").unwrap();
+        let asha = c.join("Asha", "", None).unwrap();
+        let priya = c.join("Priya", "Finance", None).unwrap();
         assert_eq!((asha.role, priya.role), (Role::Owner, Role::Member));
         assert_eq!((asha.bot.as_str(), priya.bot.as_str()), ("Scout", "Atlas"));
         assert_ne!(asha.key, priya.key);
-        assert!(c.join("priya", "").is_err(), "names are unique, ignoring case");
-        assert!(c.join("Bad@name", "").is_err());
+        assert!(c.join("priya", "", None).is_err(), "names are unique, ignoring case");
+        assert!(c.join("Bad@name", "", None).is_err());
         assert!(c.by_key(&priya.key).is_some_and(|m| m.id == priya.id));
         assert!(c.by_key("").is_none());
     }
@@ -391,19 +448,30 @@ mod tests {
     #[test]
     fn errands_for_an_area_go_to_its_lead() {
         let mut c = Company::default();
-        c.join("Asha", "").unwrap();
-        let priya = c.join("Priya", "Finance").unwrap();
+        c.join("Asha", "", None).unwrap();
+        let priya = c.join("Priya", "Finance", None).unwrap();
         assert!(c.lead_of("finance").is_none(), "working in an area isn't leading it");
         c.members.iter_mut().find(|m| m.id == priya.id).unwrap().role = Role::Lead;
         assert_eq!(c.lead_of(" Finance ").map(|m| m.bot.as_str()), Some("Atlas"));
     }
 
     #[test]
+    fn a_bot_can_play_a_preset_agent_with_its_skills() {
+        let mut c = Company::default();
+        let m = c.join("Asha", "", Some("research-lab/fact-checker")).unwrap();
+        let role = m.bot_role.as_ref().unwrap();
+        assert_eq!(role.name, "Fact-Checker");
+        assert_ne!(role.kit.len(), 0);
+        assert!(m.persona().contains("Fact-Checker") && m.persona().contains("Your skills"));
+        assert!(c.join("Priya", "", Some("research-lab/nobody")).is_err());
+    }
+
+    #[test]
     fn the_office_holds_at_most_eight() {
         let mut c = Company::default();
         for i in 0..MAX_MEMBERS {
-            c.join(&format!("P{i}"), "").unwrap();
+            c.join(&format!("P{i}"), "", None).unwrap();
         }
-        assert!(c.join("One more", "").unwrap_err().contains("full"));
+        assert!(c.join("One more", "", None).unwrap_err().contains("full"));
     }
 }

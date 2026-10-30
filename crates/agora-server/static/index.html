@@ -153,6 +153,10 @@
   dialog#joinbox input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 14px var(--sans); background: var(--stone); }
   dialog#joinbox .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   #errandto { border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font: 600 11.5px var(--sans); background: var(--paper); max-width: 190px; }
+  .kit { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .kit span, .kit button { font: 700 10.5px var(--sans); border-radius: 999px; padding: 3px 9px; border: 1px solid var(--line); background: var(--paper); color: #55503f; }
+  .kit button { cursor: pointer; } .kit button.on, .kit span { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; }
+  .person select { grid-column: 2 / 4; border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; font: 600 11px var(--sans); background: var(--paper); }
   .empty-note { color: var(--muted); font: 800 10.5px var(--sans); letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 70px 10px; border: 0 !important; display: block !important; }
 
   /* Office */
@@ -419,6 +423,7 @@
   <p>You get your own bot that works under you. The first person in owns the office and can make others leads of an area; errands sent to an area go to its lead's bot.</p>
   <label for="joinname">Your name</label><input id="joinname" maxlength="40" required autocomplete="name">
   <label for="joinarea">Your area (optional)</label><input id="joinarea" maxlength="40" placeholder="e.g. Finance, Marketing, Hiring">
+  <label for="joinrole">Your bot works as</label><select id="joinrole" style="width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:14px var(--sans);background:var(--stone)"></select>
   <p class="note" id="joinnote"></p>
   <div class="row"><button class="pill ghost" type="button" id="joincancel">Cancel</button><button class="pill butter" id="joingo">Join</button></div>
 </form></dialog>
@@ -780,6 +785,7 @@ function normalized(t) {
     while (used.has(id)) id = `${slug(a.name) || "agent"}-${n++}`;
     used.add(id);
     const out = { id, name: a.name.trim(), role: a.role.trim(), color: a.color, skills: (a.skills || "").trim() };
+    if (a.kit?.length) out.kit = a.kit.filter((k) => skillLib.some((s) => s.id === k)).slice(0, 4);
     if (a.model) out.model = a.model;
     if (a.character) out.character = a.character;
     return out;
@@ -874,6 +880,7 @@ function renderTeams() {
     if (!editable) {
       txt.append(el("div", "nm", a.name), el("div", "rl", a.role));
       if (a.skills) card.append(el("p", "skill", a.skills));
+      if (a.kit?.length) card.append(kitChips(a.kit));
       const opt = el("div", "opt");
       opt.append(el("span", "label", "Model"), el("span", "chip2", a.model ? modelLabel(a.model) : "Team default"));
       card.append(opt);
@@ -906,6 +913,17 @@ function renderTeams() {
     modelOptions(pick, a.model || "", { teamDefault: true });
     pick.onchange = () => { a.model = pick.value || undefined; };
     row("Model", pick);
+    // Skills: up to four playbooks from the library; click to add or remove.
+    const kit = el("div", "kit edit");
+    for (const sk of skillLib) {
+      const on = a.kit?.includes(sk.id);
+      const b = button(sk.name, on ? "on" : "", () => {
+        a.kit = on ? a.kit.filter((k) => k !== sk.id) : [...(a.kit || []), sk.id].slice(-4);
+        renderTeams();
+      }, kit);
+      b.title = `${sk.summary}\n- ${sk.playbook.join("\n- ")}`;
+    }
+    row("Skills (up to 4)", kit);
     const how = el("textarea", "how"); how.value = a.skills || ""; how.maxLength = 600;
     how.placeholder = "How they work (optional): style, rules, what to avoid";
     how.oninput = () => { a.skills = how.value; };
@@ -1339,6 +1357,32 @@ $("errandnew").onclick = () => { errandSource?.close(); errand = null; renderFee
 $("errandtext").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("errandform").requestSubmit(); } };
 
 
+
+// ---- Skills: playbooks agents work by (the server's library) ----
+let skillLib = [];
+fetch("/api/skills").then((r) => r.json()).then((list) => { skillLib = list; }).catch(() => {});
+function kitChips(kit) {
+  const box = el("div", "kit");
+  for (const id of kit) {
+    const sk = skillLib.find((s) => s.id === id);
+    const chip = el("span", null, sk ? sk.name : id);
+    if (sk) chip.title = `${sk.summary}\n- ${sk.playbook.join("\n- ")}`;
+    box.append(chip);
+  }
+  return box;
+}
+// Every preset agent, as a role a person's bot can play ("<team>/<agent>").
+function botRoleOptions(select, value) {
+  select.replaceChildren(new Option("Plain assistant", ""));
+  for (const t of presets) {
+    const group = document.createElement("optgroup");
+    group.label = t.name;
+    for (const a of t.agents) group.append(new Option(`${a.name}${a.kit?.length ? ` · ${a.kit.length} skills` : ""}`, `${t.id}/${a.id}`));
+    select.append(group);
+  }
+  select.value = value || "";
+}
+
 // ---- The company: who is in the office, their bots, and who leads which area ----
 let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })(); // { key, member }
 const company = { members: [], source: null };
@@ -1358,8 +1402,17 @@ function renderPeople() {
     const row = el("div", "person" + (m.online ? "" : " off") + (m.id === mine?.id ? " me" : ""));
     const dot = el("span", "dot"); dot.style.background = m.color;
     const who = el("span", "who");
-    who.append(el("b", null, m.name + (m.id === mine?.id ? " (you)" : "")), el("small", null, `bot ${m.bot}${m.online ? " · online" : ""}`));
+    const plays = m.bot_role ? ` as ${m.bot_role.name}` : "";
+    who.append(el("b", null, m.name + (m.id === mine?.id ? " (you)" : "")), el("small", null, `bot ${m.bot}${plays}${m.online ? " · online" : ""}`));
     row.append(dot, who, el("span", "role " + m.role, memberLabel(m)));
+    if (m.bot_role?.kit?.length) { const k = kitChips(m.bot_role.kit); k.style.gridColumn = "2 / 4"; row.append(k); }
+    if (m.id === mine?.id || mine?.role === "owner") {
+      const pick = el("select");
+      pick.setAttribute("aria-label", `${m.name}'s bot role`);
+      botRoleOptions(pick, m.bot_role?.preset);
+      pick.onchange = () => changeMember(m.id, { bot_role: pick.value });
+      row.append(pick);
+    }
     const acts = el("div", "acts");
     if (mine?.role === "owner" && m.role !== "owner") {
       if (m.role === "lead") button("Make member", null, () => changeMember(m.id, { role: "member" }), acts);
@@ -1426,14 +1479,14 @@ function companyNote(a, live) {
   note(a.text, m?.color);
   if (live) dispatchEvent(new CustomEvent("agora:company", { detail: { members: company.members, activity: a } }));
 }
-$("joinbtn").onclick = () => { if (!me) { $("joinbox").showModal(); $("joinname").focus(); } };
+$("joinbtn").onclick = () => { if (!me) { botRoleOptions($("joinrole"), ""); $("joinbox").showModal(); $("joinname").focus(); } };
 $("joincancel").onclick = () => $("joinbox").close();
 $("joinform").onsubmit = async (ev) => {
   ev.preventDefault();
   $("joinnote").textContent = "";
   try {
     const res = await fetch("/api/company/join", { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ name: $("joinname").value, area: $("joinarea").value }) });
+      body: JSON.stringify({ name: $("joinname").value, area: $("joinarea").value, bot_role: $("joinrole").value || undefined }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || res.statusText);
     me = body; store.set("agora-member", JSON.stringify(me));

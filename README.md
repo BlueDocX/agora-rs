@@ -62,6 +62,20 @@ The page shows each stopped draft struck through with its reason, so the correct
 
 The Wearables Device Access Toolkit (camera, mic and sensors from the glasses) is native iOS/Android only, so this web project uses Web Apps and WebMCP instead.
 
+## Skills: every agent works by playbooks
+
+- **The library.** `agora-core::skills` holds 18 short playbooks, for example:
+  - Sourced Research, Evidence First, Plain Writing, Tight Editing
+  - Honest Numbers, Pressure Test, Decision Memo, Task Planning
+  - Threat Modeling, Incident Response, UX Copy, Specs and Acceptance
+  - User Research, Experiments, Narrative and Concept, Hooks and Social, Brand Voice, Simple Engineering
+
+  Each has 4 or 5 concrete rules, distilled in our own words from open agent-skill collections; its `sources` field credits them.
+- **Every preset agent carries 2–3 skills** that fit its role. The Fact-Checker has Evidence First and Sourced Research; the Copywriter has Hooks and Social, Brand Voice and Tight Editing.
+- **Editing skills.** The team editor lets you give any agent up to 4.
+- **Where they apply.** Skills enter the agent's instructions on every task, chat reply and errand, as user content and never with system authority.
+- **Company bots.** Each person's bot can play any preset agent, picked when joining or in the People panel, and takes on its role and skills. Example: Asha's bot as a Fact-Checker answered "Deposit refund … ₹56,000: CONFIRMED", quoting the email, with every claim backed by the ledger.
+
 ## Built during the hackathon
 
 All code in this repository was written during the hackathon, starting after kickoff on 26 Oct 2026. The git history is the record.

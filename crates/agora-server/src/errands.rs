@@ -45,7 +45,7 @@ use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use crate::{Hub, authorized, error, to_sse, unauthorized};
+use crate::{Hub, authorized, company, error, to_sse, unauthorized};
 
 pub const MAX_ACTIVE: usize = 2;
 /// What one errand (its work, its checks and every question about it) may spend.
@@ -118,6 +118,8 @@ pub(crate) struct People {
 pub(crate) struct ErrandRoom {
     id: String,
     people: People,
+    /// The bot's preset role and skills, as its instructions carry them.
+    persona: String,
     /// Whether messages go through the guard before delivery.
     guard: bool,
     brief: String,
@@ -340,9 +342,11 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
     let guard = body.guard.unwrap_or(true);
+    let persona = owner.as_ref().map(company::Member::persona).unwrap_or_default();
     let room = Arc::new(ErrandRoom {
         id: id.clone(),
         people: people.clone(),
+        persona,
         guard,
         brief: brief.clone(),
         model: model.clone(),
@@ -382,7 +386,7 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
 
 /// Run the errand, streaming each ledger entry as it is written, then check the report.
 async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
-    let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief };
+    let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona };
     let done = {
         let mut world = room.world.lock().await;
         let on_step = |entry: &Entry| room.push(ErrandEvent::Step { entry: entry.clone() });
@@ -438,7 +442,7 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
     };
     room.push(ErrandEvent::Busy { turn, question: Some(question.clone()) });
     tokio::spawn(async move {
-        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief };
+        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona };
         // With the guard on, the agent answers from its ledger, not from memory.
         let log = room.guard.then(|| guard::log(&room.ledger.entries().unwrap_or_default()));
         let answer = {
