@@ -137,14 +137,14 @@
   .ab-err { color: var(--bad); font-size: 12.5px; }
   .composer[hidden], .pill[hidden], .guard-pick[hidden] { display: none !important; }
   /* ---- The company: people in the office and their bots ---- */
-  .people { display: flex; flex-direction: column; gap: 6px; }
+  .folks { display: flex; flex-direction: column; gap: 6px; }
   .person { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 10px; align-items: center; background: var(--stone); border: 1px solid var(--line); border-radius: 14px; padding: 8px 11px; font-size: 12.5px; }
   .person .dot { width: 10px; height: 10px; border-radius: 50%; }
   .person .who b { font-size: 13px; } .person .who small { display: block; color: var(--muted); font-size: 11px; }
   .person .role { font: 800 9.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; border-radius: 999px; padding: 4px 8px; background: var(--paper); border: 1px solid var(--line); }
   .person .role.owner { background: #fbf4d5; border-color: #f2e09b; } .person .role.lead { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; }
-  .person .acts { grid-column: 2 / 4; display: flex; gap: 6px; }
-  .person .acts button { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 9px; font: 700 10.5px var(--sans); cursor: pointer; }
+  .person .acts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; }
+  .person .acts button { white-space: nowrap; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 9px; font: 700 10.5px var(--sans); cursor: pointer; }
   .person.off { opacity: .55; }
   .person.me { outline: 2px solid var(--butter); }
   dialog#joinbox { border: 0; border-radius: 24px; padding: 22px 24px; width: min(420px, calc(100vw - 32px)); background: var(--paper); color: var(--ink); }
@@ -382,7 +382,7 @@
   <section class="panel info">
     <div class="info-head"><h2>Project Info</h2><span class="status" id="status">Ready to start</span></div>
     <div class="sect"><span class="label">People in the office</span><span class="tag" id="peopletag">0 here</span></div>
-    <div class="people" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
+    <div class="folks" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
     <div class="sect"><span class="label">Team</span></div>
     <div class="team-pick">
       <select id="teamsel" aria-label="Team for the next run"></select>
@@ -523,8 +523,9 @@ function column(t) {
 }
 
 function renderBoard() {
-  // The run's team, or (with no run open) the team picked for the next one.
-  const team = staffed || (current ? null : findTeam(selected));
+  // The run's team, or (with no run open) the company in the office, or the team
+  // picked for the next run.
+  const team = staffed || (current ? null : companyTeam() || findTeam(selected));
   $("teamsize").textContent = team ? team.agents.length : tasks.size; // agents, or one per task without a team
   $("teamname").textContent = team ? team.name : "Agora Office";
   $("teamkind").textContent = team ? team.kind || "Team" : "Muse team";
@@ -1372,6 +1373,7 @@ function renderPeople() {
   $("joinbtn").textContent = mine ? `You: ${mine.name}` : "Join office";
   renderErrandTo();
   showIdleTeam();
+  renderBoard();
 }
 function renderErrandTo() {
   const sel = $("errandto"), was = sel.value;
@@ -1436,7 +1438,7 @@ $("joinform").onsubmit = async (ev) => {
 // The office shows the company's bots at their desks (each labelled with its owner).
 function companyTeam() {
   if (!company.members.length) return null;
-  return { id: "company", name: "The office", kind: "Company", agents: company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color })) };
+  return { id: "company", name: "The office", kind: `${company.members.length} people · a bot each`, agents: company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color })) };
 }
 
 // Before any run is watched, the office shows the picked team at their desks.

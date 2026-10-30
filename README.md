@@ -41,6 +41,27 @@ The page shows each stopped draft struck through with its reason, so the correct
 - The errand's records are scanned for any copy left.
 - The hash chain still verifies, because it covers a hash of the content. So the ledger still proves *that* the agent read something, without keeping *what* it read.
 
+## A company in one office, on your glasses, and reachable by Meta AI
+
+- **Company rooms.**
+  - Up to 8 people join one office, and each gets a bot that works under them.
+  - The first person in is the owner, who can make others **leads of an area** (Finance, Marketing…).
+  - An errand sent to an area runs on that lead's bot, and everyone sees who asked whose bot to do what, and how its receipts came out.
+  - In 3D, every person's bot has a desk labelled with its owner.
+- **Ray-Ban Display web app** (`/glasses`), built to Meta's Web Apps docs:
+  - `mrbd-web-app-capable`, a black background (black is transparent on the display), arrow and Enter navigation on native controls
+  - the system composer for dictation, and `speechSynthesis` to read results aloud
+  - the wearables manifest and a monochrome icon
+
+  Install it on glasses in Developer Mode via Meta AI app → Web Apps → Connect Web App, using its HTTPS URL. To test without hardware, use Meta's Chrome simulator extension.
+- **Meta AI on the glasses can drive Agora.** The glasses app registers **WebMCP** tools with `document.modelContext.registerTool`: `agora_run_errand`, `agora_errand_result`, `agora_ask_errand` and `agora_office_status`. "Hey Meta, have my bot remind Arjun about the money" then runs through the guard, and Meta AI reads back the checked result.
+- **Agora as an MCP server** (`POST /mcp`, JSON-RPC over Streamable HTTP):
+  - tools: `office_status`, `run_errand`, `errand_result`, `ask_errand`, `verify_ledger`
+  - It's ready for **Meta AI Connectors**, which is in a developer preview with a waitlist, so it is not live for us yet. Any MCP client can use it today.
+  - The hub token, if set, is required; `X-Agora-Member` says whose bot acts.
+
+The Wearables Device Access Toolkit (camera, mic and sensors from the glasses) is native iOS/Android only, so this web project uses Web Apps and WebMCP instead.
+
 ## Built during the hackathon
 
 All code in this repository was written during the hackathon, starting after kickoff on 26 Oct 2026. The git history is the record.
