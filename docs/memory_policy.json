@@ -1,0 +1,37 @@
+{
+  "name": "Agora office memory (ledger-grounded)",
+  "forgetting": {
+    "rule": "ttl",
+    "ttl_days": 30,
+    "max_records": 500,
+    "decay": "none"
+  },
+  "dedup_on_write": true,
+  "consolidation": {
+    "enabled": true,
+    "cadence": "daily"
+  },
+  "contradiction_policy": "surface",
+  "scope": {
+    "read": [
+      "office bots",
+      "office members"
+    ],
+    "write": [
+      "memory::learn (code-verified)",
+      "office owner (resolve/delete)"
+    ]
+  },
+  "audit_trail": {
+    "timestamp": true,
+    "source_attribution": true
+  },
+  "rollback": {
+    "supported": true,
+    "delete_path": "api"
+  },
+  "growth_monitoring": {
+    "tracks_slope": true,
+    "baseline_only": false
+  }
+}

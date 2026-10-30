@@ -1,0 +1,26 @@
+B7 a working week: end-of-day answers judged against the week's ledger
+
+model                              memory     claims false (draft)  false (sent)  acts left out   memories
+muse-spark-1.3                     grounded      119             2             0              0 23 kept, 0 refused; threads 6 opened, 3 still open   $0.472
+meta-models/muse-spark-open-1026   grounded       98             0             0              0 18 kept, 0 refused; threads 4 opened, 4 still open   $0.560
+meta-models/muse-spark-open-1026   summary        44             6             6              9      notes   $0.655
+muse-spark-1.3                     summary        48             9             9             13      notes   $0.640
+
+Contradicted claims:
+  muse-spark-1.3 / grounded / Thursday: "Lunch with Priya on Thursday 13:00 was not booked"
+  muse-spark-1.3 / grounded / Friday: "Lunch with Priya on Thursday 13:00 was not booked"
+  meta-models/muse-spark-open-1026 / summary / Monday: "searched contacts for "Priya"/"Pri"/"a""
+  meta-models/muse-spark-open-1026 / summary / Monday: "searched contacts for "Priya"/"Pri"/"a""
+  meta-models/muse-spark-open-1026 / summary / Monday: "emails for "Priya"/"lunch""
+  meta-models/muse-spark-open-1026 / summary / Tuesday: "The original Thu 13:00 invite to Priya wasn't sent"
+  meta-models/muse-spark-open-1026 / summary / Wednesday: "sent a confirmation"
+  meta-models/muse-spark-open-1026 / summary / Friday: "Thu 13:00 Priya invite was not sent due to a conflict and missing email"
+  muse-spark-1.3 / summary / Tuesday: "emailed confirmation leaving Thu 13:00 as only Kestrel interview (video)"
+  muse-spark-1.3 / summary / Tuesday: "no verified record the Arjun message was sent"
+  muse-spark-1.3 / summary / Wednesday: "failed to send a verified reminder to Arjun"
+  muse-spark-1.3 / summary / Wednesday: "cannot send Vikram's report"
+  muse-spark-1.3 / summary / Thursday: "I sent no verified reminder to Arjun"
+  muse-spark-1.3 / summary / Thursday: "did not reply to e1/e10"
+  muse-spark-1.3 / summary / Thursday: "Saturday dosa e4 unreplied"
+  muse-spark-1.3 / summary / Friday: "no verified reminder to Arjun"
+  muse-spark-1.3 / summary / Friday: "I cannot update contacts"

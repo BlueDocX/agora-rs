@@ -19,6 +19,10 @@ path = "src/bin/alibi_spike.rs"
 name = "red-team"
 path = "src/bin/red_team.rs"
 
+[[bin]]
+name = "week"
+path = "src/bin/week.rs"
+
 [dependencies]
 agora-core.workspace = true
 agora-engine.workspace = true

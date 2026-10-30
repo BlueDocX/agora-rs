@@ -9,6 +9,7 @@ pub mod events;
 pub mod guard;
 pub mod journal;
 pub mod ledger;
+pub mod memory;
 pub mod planner;
 pub mod run;
 pub mod scheduler;
@@ -25,7 +26,7 @@ pub use scheduler::{Outcome, run_ready_queue, run_waves};
 pub use signing::{SignedHead, Signer, random_hex};
 
 /// The first message of every call, identical across roles so its tokens are cached.
-pub(crate) const CHARTER: &str = "You work in Agora, a virtual office where AI \
+pub const CHARTER: &str = "You work in Agora, a virtual office where AI \
 specialists and people deliver work together. Every result is checked against \
 written acceptance criteria before anyone builds on it, so be specific, complete \
 and honest about what you could not do. Never invent facts, figures, names or \

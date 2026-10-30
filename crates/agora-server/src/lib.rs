@@ -20,6 +20,7 @@
 //!   [`company`](crate::company).
 //! - `/api/errands` runs errands whose every claim is checked against a ledger: see
 //!   [`errands`](crate::errands).
+//! - `/api/office` is the office's day and memory: see [`office`](crate::office).
 //! - `/api/transcribe` turns a spoken errand into text with Muse Voice Transcribe:
 //!   see [`voice`](crate::voice).
 //!
@@ -43,6 +44,7 @@ mod chat;
 mod company;
 mod errands;
 mod mcp;
+mod office;
 mod store;
 mod voice;
 
@@ -227,6 +229,29 @@ struct Hub {
     store: Option<store::Store>,
     /// Seconds of audio transcribed while the server runs.
     transcribed_s: std::sync::atomic::AtomicU64,
+    /// Asha's world as the office's bots have changed it, day by day.
+    office: Arc<tokio::sync::Mutex<agora_core::World>>,
+    /// A copy of it as of the last finished errand, for reading without waiting.
+    office_view: Mutex<agora_core::World>,
+    /// Today in the office (an index into `agora_core::world::DAYS`).
+    today: std::sync::atomic::AtomicUsize,
+    /// What the office remembers across days: see `agora_engine::memory`.
+    memory: Arc<agora_engine::memory::Memory>,
+}
+
+impl Hub {
+    pub(crate) fn day(&self) -> usize {
+        self.today.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The office's world as of the last change, without waiting for a bot at work.
+    pub(crate) fn office_view(&self) -> agora_core::World {
+        self.office_view.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    pub(crate) fn set_office_view(&self, world: &agora_core::World) {
+        world.clone_into(&mut self.office_view.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    }
 }
 
 #[derive(Default)]
@@ -247,6 +272,10 @@ impl Hub {
     }
 }
 
+/// The office's routes, with its state loaded (or started fresh).
+///
+/// # Panics
+/// If SQLite can't open even an in-memory database for the office's memory.
 pub fn app(config: HubConfig) -> Router {
     // Agents may chat on any model in the catalog, so the chat budget prices them all.
     let priced: Vec<&str> = agora_muse::MODELS.iter().map(|m| m.id).chain([config.model.as_str()]).collect();
@@ -275,6 +304,16 @@ pub fn app(config: HubConfig) -> Router {
         None => Signer::ephemeral(),
     };
     let company = company::Company::new(store.clone(), &loaded);
+    let memory = match &config.journal {
+        Some(path) => agora_engine::memory::Memory::open(path),
+        None => agora_engine::memory::Memory::in_memory(),
+    };
+    let memory = memory.or_else(|e| {
+        eprintln!("the office's memory can't use the journal ({e}): it lives in memory only");
+        agora_engine::memory::Memory::in_memory()
+    });
+    let Ok(memory) = memory else { panic!("SQLite can't open even an in-memory database") };
+    let today = loaded.kv.iter().find(|(k, _)| k == "day").and_then(|(_, v)| v.parse().ok()).unwrap_or(0usize);
     let hub = Arc::new(Hub {
         config,
         state: Mutex::new(HubState::default()),
@@ -285,8 +324,12 @@ pub fn app(config: HubConfig) -> Router {
         signer: Arc::new(signer),
         store,
         transcribed_s: std::sync::atomic::AtomicU64::new(0),
+        office: Arc::new(tokio::sync::Mutex::new(agora_core::World::demo())),
+        office_view: Mutex::new(agora_core::World::demo()),
+        today: std::sync::atomic::AtomicUsize::new(today),
+        memory: Arc::new(memory),
     });
-    let restored = errands::restore(&hub, loaded.errands, &loaded.pruned);
+    let restored = errands::restore(&hub, loaded.errands, &loaded.pruned, today);
     if restored > 0 {
         eprintln!("brought back {restored} errands");
     }
@@ -324,6 +367,12 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/errands/{id}/ledger", get(errands::ledger))
         .route("/api/errands/{id}/forget", post(errands::forget))
         .route("/api/errands/{id}/receipt", get(errands::receipt))
+        .route("/api/office", get(office::view))
+        .route("/api/office/day", post(office::next_day))
+        .route("/api/memory/ask", post(office::ask))
+        .route("/api/memory/facts/{id}", axum::routing::delete(office::delete_fact))
+        .route("/api/memory/facts/{id}/keep", post(office::keep_fact))
+        .route("/api/memory/facts/{id}/restore", post(office::restore_fact))
         .route("/api/transcribe", post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(voice::MAX_BYTES)))
         .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard_host))
         .layer(middleware::from_fn(access_log))

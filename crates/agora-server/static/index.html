@@ -55,12 +55,14 @@
   /* Logs */
   .logs { padding: 20px 14px 14px; }
   .logs > .label { padding: 0 8px 14px; }
-  .tabs { display: grid; grid-template-columns: repeat(6, 1fr); background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; }
+  .tabs { display: flex; background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: 1 0 auto; padding-left: 6px !important; padding-right: 6px !important; }
   .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 800 10.5px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--zinc, #55503f); }
   .tabs button.on { background: var(--ink); color: var(--paper); }
   .feed { flex: 1; overflow: auto; margin: 12px 0 0; padding: 0 6px; list-style: none; }
   .feed li { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
-  .tabs button { position: relative; letter-spacing: .04em !important; font-size: 10px !important; }
+  .tabs button { position: relative; letter-spacing: .03em !important; font-size: 9.5px !important; }
   .tabs button.unread::after { content: ""; position: absolute; top: 5px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
   /* Chat */
   .feed.chat li { border: 0; padding: 6px 2px; align-items: flex-start; }
@@ -239,6 +241,61 @@
   .person .lead-form { display: inline-flex; gap: 4px; align-items: center; }
   .person .lead-form input { width: 96px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font: 600 11px var(--sans); background: var(--paper); }
   .person .err { grid-column: 2 / 4; color: var(--bad); font-size: 11.5px; }
+  /* ---- Memory: the office across days ---- */
+  .bar .day { font: 800 11px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; background: var(--ink); color: var(--butter); border-radius: 999px; padding: 7px 11px; }
+  .feed.mem li { display: block; border: 0; padding: 5px 2px; }
+  .feed.mem .verdict { position: static; }
+  .daycard { background: var(--ink); color: var(--paper); border-radius: 16px; padding: 12px 14px !important; margin-bottom: 6px; }
+  .daycard .dayhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .daycard .dayhead b { font: 800 22px/1.1 var(--sans); color: var(--butter); }
+  .daycard .label { color: #b9b29c; }
+  .counts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .counts span { font: 700 10.5px var(--sans); border-radius: 999px; padding: 3px 9px; background: rgba(252,250,244,.12); color: var(--paper); }
+  .counts span.warn { background: #f2a81d; color: var(--ink); }
+  .growth { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; align-items: end; height: 58px; margin-top: 10px; }
+  .growth div { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font: 600 9.5px var(--mono); color: #b9b29c; gap: 2px; }
+  .growth i { display: block; width: 100%; max-width: 26px; border-radius: 4px 4px 0 0; background: #5fd38d; min-height: 2px; }
+  .growth i.c { background: #f2a81d; border-radius: 0; }
+  .growth div.today { color: var(--butter); font-weight: 800; }
+  .growth div.later i { background: rgba(252,250,244,.12); }
+  .daycard .row { margin-top: 10px; flex-wrap: wrap; }
+  .daycard .note { color: #b9b29c; }
+  .daycard .err, .mem-err { color: #ff8a7d; font-size: 12px; }
+  .arrived { background: #fbf4d5; border: 1px solid #f2e09b; border-radius: 14px; padding: 9px 12px !important; font-size: 12.5px; position: relative; }
+  .arrived b { display: block; font-size: 12px; margin-bottom: 3px; }
+  .arrived ul { margin: 0; padding-left: 16px; }
+  .arrived .x { position: absolute; top: 6px; right: 6px; border: 0; background: none; color: var(--muted); font-size: 15px; }
+  .mem-head { font: 800 10.5px var(--sans) !important; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 12px 4px 2px !important; }
+  .fact { border-bottom: 1px dashed var(--line) !important; padding: 7px 4px !important; font-size: 12.5px; }
+  .fact .what b { font-weight: 700; }
+  .fact .q { display: block; color: var(--muted); font-size: 11.5px; font-style: italic; margin: 2px 0 4px; word-break: break-word; }
+  .fact .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font: 500 10.5px var(--mono); color: var(--soft); }
+  .fact.retired { opacity: .6; }
+  .src { border: 1px solid #d9cdf3; background: #f6f2fd; color: #4b3a8a; border-radius: 999px; padding: 1px 8px; font: 700 10.5px var(--mono); cursor: pointer; white-space: nowrap; }
+  .src:hover { background: #e6ddf7; }
+  span.src { cursor: default; }
+  .mini { border: 0; background: none; color: var(--bad); font: 700 10.5px var(--sans); padding: 0 2px; }
+  .mini:hover { text-decoration: underline; }
+  .conflict { background: #fff4e0; border: 2px solid #f2a81d !important; border-radius: 16px; padding: 10px 12px !important; margin: 6px 0; }
+  .conflict > b { display: block; font-size: 13.5px; }
+  .conflict > small { display: block; color: #7a5d07; font-size: 11.5px; margin: 2px 0 6px; }
+  .conflict .side { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; background: var(--paper); border: 1px solid #f2d79a; border-radius: 12px; padding: 7px 10px; margin-top: 6px; font-size: 12.5px; }
+  .conflict .side .q { grid-column: 1 / 2; color: var(--muted); font-style: italic; font-size: 11.5px; word-break: break-word; }
+  .conflict .side .meta { grid-column: 1 / 3; display: flex; gap: 6px; align-items: center; font: 500 10.5px var(--mono); color: var(--soft); }
+  .conflict .keep { grid-row: 1 / 3; grid-column: 2; border: 1px solid var(--ink); background: var(--ink); color: var(--paper); border-radius: 999px; padding: 4px 11px; font: 800 10.5px var(--sans); }
+  .thread { border-bottom: 1px dashed var(--line) !important; padding: 7px 4px !important; font-size: 12.5px; }
+  .thread .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font: 500 10.5px var(--mono); color: var(--soft); margin-top: 3px; }
+  .thread.open::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-right: 7px; }
+  .recall { font: 11px/1.55 var(--mono); color: #55503f; background: var(--stone); border-radius: 10px; padding: 8px 10px; }
+  .recall .rh { font: 700 11px var(--sans); color: var(--ink); margin-top: 4px; }
+  .recall .rl { padding-left: 4px; word-break: break-word; }
+  .recall .rl.warn { color: #7a5d07; background: #fbf1cf; border-radius: 6px; }
+  .recall .src { font-size: 10px; padding: 0 6px; }
+  .ab-mem { font: 600 11.5px var(--sans); color: #4b3a8a; background: #f6f2fd; border-radius: 10px; padding: 7px 10px !important; margin: 4px 0; }
+  .ab-mem ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
+  .ab-step.focus { background: #fbf4d5; border-radius: 8px; box-shadow: inset 3px 0 var(--butter-deep); }
+  #toast { position: fixed; left: 16px; bottom: 16px; z-index: 30; max-width: min(420px, calc(100vw - 32px)); background: var(--ink); color: var(--paper); border-radius: 14px; padding: 10px 14px; font-size: 13px; box-shadow: 0 20px 40px -16px rgba(23,21,15,.5); }
+  #toast[hidden] { display: none; }
   .kanban[hidden], .handle[hidden], #briefbox[hidden], #runbox[hidden], .key[hidden] { display: none !important; }
 
   /* Office */
@@ -429,6 +486,7 @@
     <div class="label">Logs</div>
     <div class="tabs" role="tablist">
       <button type="button" data-tab="alibi" class="on" title="Errands whose every claim is checked against a ledger">Alibi</button>
+      <button type="button" data-tab="memory" title="The office across days: what it remembers, and only what a source backs">Memory</button>
       <button type="button" data-tab="messages" title="Channels and direct messages; @Bot gives a bot an errand">Messages</button>
       <button type="button" data-tab="chat" title="Talk with the run's agent team">Chat</button>
       <button type="button" data-tab="activity">Activity</button>
@@ -438,6 +496,11 @@
     <div class="filterbar" id="filterbar" hidden></div>
     <div class="convs" id="convs" hidden></div>
     <ul class="feed" id="feed"></ul>
+    <form class="composer" id="askform" hidden>
+      <div class="chips" id="askchips"></div>
+      <textarea id="asktext" maxlength="300" placeholder="Ask about the week. The answer is checked against every errand's ledger." aria-label="Ask about the week"></textarea>
+      <div class="row"><span class="note" id="asknote"></span><button class="pill butter" id="askgo" type="submit">Ask</button></div>
+    </form>
     <form class="composer" id="msgform" hidden>
       <textarea id="msgtext" maxlength="1000" placeholder="Message #general" aria-label="Message"></textarea>
       <div class="row"><span class="note" id="msgnote">Type @Atlas … to give a bot an errand</span><button class="pill butter" id="msgsend" type="submit">Send</button></div>
@@ -466,6 +529,7 @@
         <span id="teamsize">0</span>
       </span>
       <span class="title"><b id="teamname">Agora Office</b><span class="label" id="teamkind">Muse team</span></span>
+      <span class="day" id="daybadge" title="The office's day" hidden>Mon</span>
       <span class="spacer"></span>
       <div class="chip">
         <div><div class="k">Writer</div><div class="v" id="model">…</div></div>
@@ -528,6 +592,7 @@
   <p class="note" id="joinnote"></p>
   <div class="row"><button class="pill ghost" type="button" id="joincancel">Cancel</button><button class="pill butter" id="joingo">Join</button></div>
 </form></dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 <div id="call" hidden role="dialog" aria-label="Call">
   <div class="head"><span id="calltitle">Call</span><a id="callopen" href="#" target="_blank" rel="noopener">Open in a new tab</a><button class="close" id="callclose" type="button" aria-label="Close the call">×</button></div>
 </div>
@@ -621,11 +686,13 @@ function renderFeed() {
   feed.replaceChildren();
   $("chatform").hidden = tab !== "chat";
   $("errandform").hidden = tab !== "alibi";
+  $("askform").hidden = tab !== "memory";
   $("msgform").hidden = tab !== "messages" || !me;
   $("convs").hidden = tab !== "messages" || !me;
   renderFilter();
   if (tab === "alibi") { feed.className = "feed alibi"; renderAlibi(feed); return; }
   if (tab === "messages") { feed.className = "feed msgs"; renderMessages(feed); return; }
+  if (tab === "memory") { feed.className = "feed mem"; renderMemory(feed); return; }
   if (tab === "chat") {
     document.querySelector('.tabs [data-tab="chat"]').classList.remove("unread");
     if (!chatLog.length) feed.append(el("li", "empty-note", "Say hello to the team"));
@@ -833,11 +900,12 @@ async function loadInfo() {
 function selectTab(name) {
   tab = name;
   // Receipts and conversations need room: those tabs widen the log column.
-  document.querySelector("main").classList.toggle("wide", tab === "alibi" || tab === "messages");
+  document.querySelector("main").classList.toggle("wide", tab === "alibi" || tab === "messages" || tab === "memory");
   document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x.dataset.tab === tab));
   if (tab === "runs") refreshRuns();
   if (tab === "chat") ensureChat();
   if (tab === "alibi" && !errand) refreshErrands();
+  if (tab === "memory") refreshOffice();
   renderFeed();
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => selectTab(b.dataset.tab));
@@ -1242,6 +1310,13 @@ function boardItem(b) {
       el("span", "note", `${r.errands} errands: a bot told to lie, a poisoned inbox, held-out errands. Scripted lies: ${r.scripted_liar.delivered} of ${r.scripted_liar.planted_lies} got through.`));
     li.append(red);
   }
+  const w = b.memory_week;
+  if (w) {
+    const week = el("div", "lb-row");
+    week.append(el("b", null, "A working week (B7)"), el("span", "num", `${w.grounded.contradicted_delivered}/${w.grounded.claims} delivered`),
+      el("span", "note", `Ledger-grounded memory, Monday to Friday. Agents keeping their own notes: ${w.summary.contradicted}/${w.summary.claims} contradicted (${w.summary.real_on_reading} real on reading), ${w.summary.acts_left_out} acts left out.`));
+    li.append(week);
+  }
   return li;
 }
 let errand = null, errandSource = null;
@@ -1251,7 +1326,7 @@ const refetched = new Set(); // forgettings already re-fetched
 const short = (h) => (h ? h.slice(0, 10) : "");
 function stepLine(entry, flagged) {
   const a = entry.action, o = entry.outcome;
-  const li = el("li", "ab-step" + (o.ok ? "" : " fail") + (flagged ? " flag" : ""));
+  const li = el("li", "ab-step" + (o.ok ? "" : " fail") + (flagged ? " flag" : "") + (errand?.focus === entry.seq ? " focus" : ""));
   li.id = "step-" + entry.seq;
   li.append(el("span", "n", "#" + entry.seq), el("span", "tool", `${a.tool} · ${o.subject || a.target}`), el("span", "ok", o.ok ? "ok" : "failed"));
   if (entry.forgotten_at_ms) {
@@ -1289,6 +1364,11 @@ function forgottenItem(e) {
     `${e.withdrawn.length} message${e.withdrawn.length === 1 ? "" : "s"} written after it withdrawn`, document.createElement("br"),
     `Searched this errand's records (${(e.scan.bytes / 1024).toFixed(1)} KB) for ${plural(e.scan.needles, "piece")} of it: `
       + (e.scan.found_in.length ? `still in ${e.scan.found_in.join(", ")}. Forget that too to remove it.` : "no copy left."));
+  // What the office's memory had learned from it goes too (facts, threads).
+  const [facts, threads] = e.memories || [0, 0];
+  box.append(document.createElement("br"), facts || threads
+    ? `Memory: deleted ${plural(facts, "fact")} and ${plural(threads, "thread")} learned from it.`
+    : "Memory: nothing had been learned from it.");
   // The office store's saved copy of this errand (null: the office keeps no store).
   if (e.scan.store_cleared != null) box.append(document.createElement("br"), e.scan.store_cleared
     ? "The office's saved copy was rewritten, with no old copy left on disk."
@@ -1314,7 +1394,8 @@ function ranges(message, checked) {
   for (const r of found) if (!kept.length || r[0] >= kept[kept.length - 1][1]) kept.push(r);
   return kept;
 }
-function receipt(c, agreed, steps) {
+// `ctx.refs` (a week answer): entry n is refs[n - 1] = [errand, seq] across errands.
+function receipt(c, agreed, steps, ctx = errand) {
   const box = el("div", "ab-receipt");
   const word = c.verdict === "supported" ? "Backed by the ledger" : agreed === false ? "Disputed: only one checker reads it this way" : "Contradicted by the ledger";
   box.append(el("b", null, word), document.createElement("br"));
@@ -1322,6 +1403,7 @@ function receipt(c, agreed, steps) {
   const seqs = c.seqs || [];
   if (!seqs.length && c.verdict !== "supported") box.append("No ledger entry: this call was never made.");
   for (const n of seqs) {
+    if (ctx.refs) { box.append(refRow(ctx.refs[n - 1])); continue; }
     const e = steps.get(n);
     if (!e) continue;
     const row = el("div", null, `#${n} ${e.action.tool} · ${e.outcome.subject} → ${e.outcome.ok ? "ok" : "failed"} · ${short(e.hash)}`);
@@ -1336,7 +1418,7 @@ function receipt(c, agreed, steps) {
   return box;
 }
 // The agent's words with each claim marked; `key` keeps a receipt open across redraws.
-function markedText(message, check, key, steps, strike) {
+function markedText(message, check, key, steps, strike, ctx = errand) {
   const body = el("span");
   let at = 0;
   for (const [from, to, i] of ranges(message, check.audit.checked)) {
@@ -1345,13 +1427,13 @@ function markedText(message, check, key, steps, strike) {
     const m = el(strike && c.verdict === "contradicted" ? "s" : "mark", claimClass(c, agreed), message.slice(from, to));
     const k = `${key}:${i}`;
     m.title = c.verdict === "supported" ? "Backed by the ledger: click for the receipt" : "Click for the receipt";
-    m.onclick = () => { errand.open.has(k) ? errand.open.delete(k) : errand.open.add(k); renderFeed(); };
+    m.onclick = () => { ctx.open.has(k) ? ctx.open.delete(k) : ctx.open.add(k); renderFeed(); };
     body.append(m);
     at = to;
   }
   body.append(message.slice(at));
   const receipts = [];
-  check.audit.checked.forEach((c, i) => { if (errand.open.has(`${key}:${i}`)) receipts.push(receipt(c, check.agreed[i], steps)); });
+  check.audit.checked.forEach((c, i) => { if (ctx.open.has(`${key}:${i}`)) receipts.push(receipt(c, check.agreed[i], steps, ctx)); });
   return [body, receipts];
 }
 // A draft the guard stopped: struck through, with why, so nothing is hidden.
@@ -1373,10 +1455,11 @@ function draftItem(e, last, steps, agent) {
 }
 // A <details> that stays open or shut across redraws (the feed is redrawn per event).
 function fold(key, title, open, ...content) {
+  const det = tab === "memory" ? office.det : errand.det;
   const d = el("details");
   d.dataset.key = key;
-  d.open = errand.det.has(key) ? errand.det.get(key) : open;
-  d.ontoggle = () => errand.det.set(key, d.open);
+  d.open = det.has(key) ? det.get(key) : open;
+  d.ontoggle = () => det.set(key, d.open);
   d.append(el("summary", null, title), ...content);
   return d;
 }
@@ -1562,6 +1645,8 @@ function renderAlibi(feed) {
     const { list, first, last, flagged } = group;
     const title = `Ledger: ${plural(list.childElementCount, "entry", "entries")} (#${first}–#${last})${flagged ? ` · ${flagged} not mentioned` : ""}`;
     const li = el("li");
+    // A source chip asked for one of these steps: open its group (once; then it's yours).
+    if (errand.focus >= first && errand.focus <= last && !errand.focusOpened) { errand.det.set("steps" + first, true); errand.focusOpened = true; }
     li.append(fold("steps" + first, title, list.childElementCount <= 6 || errandBusy(), list));
     feed.append(li);
     group = null;
@@ -1594,6 +1679,14 @@ function renderAlibi(feed) {
     } else if (e.type === "said") { feed.append(saidItem(e, steps, agent)); for (const li of summaryItems(e, steps)) feed.append(li); }
     else if (e.type === "failed") feed.append(el("li", "ab-err", e.reason));
     else if (e.type === "forgotten") feed.append(forgottenItem(e));
+    else if (e.type === "recalled") {
+      const li = el("li");
+      li.append(e.text.trim() ? fold("recalled", `What ${agent} remembered from earlier days`, false, recallLines(e.text))
+        : el("span", "note", `${agent} had nothing from earlier days to recall.`));
+      feed.append(li);
+    } else if (e.type === "learned") feed.append(learnedItem(e.learned));
+    else if (e.type === "not_learned") feed.append(el("li", "note", `Memory not updated this time (${e.reason}). The errand itself is done.`));
+    else if (e.type === "waiting") feed.append(el("li", "note", "Waiting for the office: another bot is working in it. This errand starts when it's done."));
     else if (e.type === "idle") busy = null;
   }
   endGroup();
@@ -1604,7 +1697,26 @@ function renderAlibi(feed) {
     feed.append(el("li", "ab-busy", what));
   }
   renderErrandChips();
-  feed.scrollTop = feed.scrollHeight;
+  const focus = errand.focus && document.getElementById("step-" + errand.focus);
+  if (focus) feed.scrollTop += focus.getBoundingClientRect().top - feed.getBoundingClientRect().top - feed.clientHeight / 2;
+  else feed.scrollTop = feed.scrollHeight;
+}
+// What the office's memory kept from this errand, and what it refused to write.
+function learnedItem(l) {
+  const li = el("li", "ab-mem");
+  const kept = l.new + l.confirmed + l.conflicts, refused = l.rejected.length;
+  const parts = [`${plural(kept, "fact")} kept`];
+  if (l.confirmed) parts.push(`${l.confirmed} confirmed again`);
+  if (l.conflicts) parts.push(`${plural(l.conflicts, "conflict")} to settle`);
+  parts.push(`${refused} refused`);
+  if (l.opened) parts.push(`${plural(l.opened, "thread")} opened`);
+  if (l.closed) parts.push(`${plural(l.closed, "thread")} closed`);
+  const line = "Memory: " + parts.join(", ");
+  if (!refused) { li.textContent = line; return li; }
+  const list = el("ul");
+  for (const why of l.rejected) list.append(el("li", null, "refused: " + why));
+  li.append(fold("learned", line, false, list));
+  return li;
 }
 const errandIdle = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "idle";
 const errandBusy = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "busy";
@@ -1666,6 +1778,7 @@ function watchErrand(id, skip = 0) {
     if (errand.skip > 0) errand.skip--; // a replay of what the office already acted out
     else dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
     if (["busy", "said", "failed", "idle"].includes(e.type)) refreshErrandsSoon(); // the history and the desk monitors
+    if (e.type === "learned" || e.type === "forgotten") refreshOfficeSoon(); // the memory changed
     // Idle, it needs no open stream (connections per host are few): it reopens to ask,
     // to forget, or when the history shows it busy again.
     if (e.type === "idle") setTimeout(() => { if (source === errandSource && errandIdle()) { source.close(); errand.closed = true; } }, 1500);
@@ -1694,7 +1807,7 @@ $("errandform").onsubmit = async (ev) => {
     const reply = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(reply.error || res.statusText);
     $("errandtext").value = "";
-    if (asking) reopenErrand();
+    if (asking) { errand.focus = null; reopenErrand(); }
     else watchErrand(reply.id);
     refreshErrandsSoon();
     if (tab !== "alibi") selectTab("alibi");
@@ -1786,6 +1899,310 @@ async function toWav(buffer) {
 $("mic").onclick = () => (voice.rec ? stopVoice() : startVoice());
 
 
+
+// ---- Memory: the office across days. It keeps only what a source backs: facts quote
+// a ledger entry (or the person), threads open and close on one, conflicts wait for
+// the owner. Week questions are answered from that record and checked like errands.
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const WEEK_QUESTIONS = ["What did you do this week?", "What's still pending?", "Did anything fail?"];
+// view: GET /api/office; answer: the last week answer; open/det: receipts and folds kept open.
+const office = { view: null, answer: null, asking: "", arrived: null, err: "", busy: false, showRetired: false,
+  open: new Set(), det: new Map(), ledgers: new Map(), timer: 0, armed: 0 };
+window.agoraDay = () => office.view?.day ?? 0;
+// Once someone owns the office, only the owner runs its days and settles its memory.
+const runsOffice = () => (company.members.length ? me?.member?.role === "owner" : true);
+
+let toastTimer = 0;
+function toast(text) {
+  const t = $("toast");
+  t.textContent = text; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 7000);
+}
+async function refreshOffice() {
+  const res = await fetch("/api/office").catch(() => null);
+  if (!res?.ok) return;
+  const v = await res.json().catch(() => null);
+  if (!v) return;
+  const changed = !!office.view && office.view.day !== v.day;
+  office.view = v;
+  $("daybadge").hidden = false;
+  $("daybadge").textContent = DAY_SHORT[v.day] || v.day_name;
+  $("daybadge").title = `The office's day: ${v.day_name} (day ${v.day + 1} of 7)`;
+  dispatchEvent(new CustomEvent("agora:day", { detail: { day: v.day, name: v.day_name, changed } })); // the 3D office
+  if (tab === "memory") renderFeed();
+}
+const refreshOfficeSoon = () => { clearTimeout(office.timer); office.timer = setTimeout(refreshOffice, 500); };
+
+// A memory's source: a ledger entry opens its errand at that step.
+const shortId = (id) => id.replace(/^errand-/, "").slice(0, 8);
+function sourceChip(origin) {
+  if (origin.kind !== "ledger") return el("span", "src", `told by ${origin.who}`);
+  const b = button(`${shortId(origin.errand)} #${origin.seq}`, "src", () => openErrandAt(origin.errand, origin.seq));
+  b.title = "Open the errand at the ledger entry this comes from";
+  return b;
+}
+// `id` is a full errand id or the 8-hex prefix recall lines use.
+function openErrandAt(id, seq) {
+  const full = id.startsWith("errand-") ? id : errandList.find((s) => s.id.startsWith("errand-" + id))?.id;
+  if (!full) { toast("That errand isn't kept any more (the office keeps the last 30)."); return; }
+  openErrand(full);
+  errand.focus = seq;
+  renderFeed();
+}
+// One receipt row of a week answer: the errand and step it maps to (with the call, once fetched).
+function refRow(ref) {
+  if (!ref) return el("div", null, "an entry outside the record");
+  const [id, seq] = ref, e = office.ledgers.get(id)?.find((x) => x.seq === seq);
+  const row = el("div", null, `${shortId(id)} #${seq}` + (e ? ` ${e.action.tool} · ${e.outcome.subject} → ${e.outcome.ok ? "ok" : "failed"}` : ""));
+  row.style.cursor = "pointer";
+  row.title = "Open that errand at this step";
+  row.onclick = () => openErrandAt(id, seq);
+  return row;
+}
+// Recall text, line by line, with each [a1b2c3d4#3, Mon] as a chip.
+const REF = /\[([0-9a-f]{8})#(\d+)(?:, (Mon|Tue|Wed|Thu|Fri|Sat|Sun))?\]/g;
+function recallLines(text) {
+  const box = el("div", "recall");
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const row = el("div", line.startsWith("- ") ? "rl" + (line.includes("UNRESOLVED") ? " warn" : "") : "rh");
+    let at = 0;
+    for (const m of line.matchAll(REF)) {
+      row.append(line.slice(at, m.index));
+      button(`${m[1]} #${m[2]}${m[3] ? " · " + m[3] : ""}`, "src", () => openErrandAt(m[1], Number(m[2])), row);
+      at = m.index + m[0].length;
+    }
+    row.append(line.slice(at));
+    box.append(row);
+  }
+  return box;
+}
+
+function dayItem(v) {
+  const li = el("li", "daycard");
+  const head = el("div", "dayhead");
+  head.append(el("b", null, v.day_name), el("span", "label", `Office day ${v.day + 1} of 7`));
+  const s = v.stats, counts = el("div", "counts");
+  const count = (n, one, many, cls) => counts.append(el("span", cls || "", plural(n, one, many)));
+  count(s.active, "fact", "facts");
+  count(s.conflicts, "conflict", "conflicts", s.conflicts ? "warn" : "");
+  count(s.open_threads, "open thread", "open threads");
+  count(s.done_threads, "thread done", "threads done");
+  count(s.retired, "retired", "retired");
+  li.append(head, counts);
+  li.append(growthBars(v));
+  const row = el("div", "row");
+  if (runsOffice()) {
+    const last = v.day >= 6;
+    const go = button(last ? "The week is over" : office.busy ? "Starting…" : `Start ${DAY_NAMES[v.day + 1]}`, "pill butter", startDay, row);
+    go.disabled = last || office.busy;
+    go.title = "End today: replies and new mail arrive, and facts nobody confirmed for long are retired";
+  } else row.append(el("span", "note", "The owner starts each new day."));
+  li.append(row);
+  if (office.err) li.append(el("div", "err", office.err));
+  return li;
+}
+// The memory's size by day, so its growth (and its forgetting) shows.
+function growthBars(v) {
+  const box = el("div", "growth");
+  const byDay = new Map((v.growth || []).map((g) => [g[0], g]));
+  const s = v.stats; // today so far (the history records days that ended)
+  byDay.set(v.day, [v.day, s.active, s.conflicts, s.retired, s.open_threads]);
+  const most = Math.max(1, ...[...byDay.values()].map((g) => g[1] + g[2])); // today included, so no bar overflows
+  DAY_SHORT.forEach((name, d) => {
+    const g = byDay.get(d), col = el("div", d === v.day ? "today" : d > v.day ? "later" : "");
+    const active = g?.[1] ?? 0, conflicts = g?.[2] ?? 0;
+    if (g) col.title = `${DAY_NAMES[d]}: ${plural(active, "fact")}, ${plural(conflicts, "conflict")}, ${g[3]} retired, ${plural(g[4], "open thread")}`;
+    if (g) col.append(el("span", null, String(active + conflicts)));
+    const c = el("i", "c"); c.style.height = `${(conflicts / most) * 34}px`;
+    const a = el("i"); a.style.height = `${(active / most) * 34}px`;
+    if (conflicts) col.append(c);
+    col.append(a, el("span", null, name));
+    box.append(col);
+  });
+  return box;
+}
+async function startDay() {
+  office.err = ""; office.busy = true; renderFeed();
+  const res = await fetch("/api/office/day", { method: "POST" }).catch(() => null);
+  const body = await res?.json().catch(() => ({}));
+  office.busy = false;
+  if (!res?.ok) { office.err = body?.error || "Couldn't reach the office"; renderFeed(); return; }
+  office.arrived = body;
+  await refreshOffice();
+  renderFeed();
+}
+function arrivedItem(a) {
+  const li = el("li", "arrived");
+  li.append(el("b", null, a.arrived.length ? `${a.day_name} began. Arrived:` : `${a.day_name} began. Nothing new arrived.`));
+  if (a.arrived.length) { const ul = el("ul"); for (const x of a.arrived) ul.append(el("li", null, x)); li.append(ul); }
+  if (a.retired_facts) li.append(el("div", "note", `${plural(a.retired_facts, "fact")} retired (not confirmed for too long, or past the limit).`));
+  const x = button("×", "x", () => { office.arrived = null; renderFeed(); }, li);
+  x.setAttribute("aria-label", "Dismiss");
+  return li;
+}
+// Two sources disagree: both stay, side by side, until the owner keeps one.
+function conflictItems(facts) {
+  const groups = new Map();
+  for (const f of facts.filter((f) => f.status === "conflict")) {
+    const k = `${f.subject.trim().toLowerCase()}|${f.attribute.trim().toLowerCase()}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(f);
+  }
+  const out = [];
+  for (const sides of groups.values()) {
+    const li = el("li", "conflict");
+    li.append(el("b", null, `⚠ Sources disagree about ${sides[0].subject} · ${sides[0].attribute}`),
+      el("small", null, runsOffice() ? "Not settled. The bots are told to ask before relying on either. Keep the one that stands."
+        : "Not settled. The bots are told to ask before relying on either; the owner decides."));
+    for (const f of sides) {
+      const side = el("div", "side");
+      side.append(el("b", null, f.value));
+      if (runsOffice()) button("Keep this", "keep", () => keepFact(f.id), side);
+      side.append(el("span", "q", `“${f.quote}”`));
+      const meta = el("span", "meta");
+      meta.append(sourceChip(f.origin), `learned ${DAY_SHORT[f.learned_day]}`);
+      side.append(meta);
+      li.append(side);
+    }
+    out.push(li);
+  }
+  return out;
+}
+function factItem(f) {
+  const li = el("li", "fact" + (f.status === "retired" ? " retired" : ""));
+  const what = el("span", "what", `${f.subject} · ${f.attribute}: `);
+  what.append(el("b", null, f.value));
+  li.append(what, el("span", "q", `“${f.quote}”`));
+  const meta = el("span", "meta");
+  meta.append(sourceChip(f.origin), `learned ${DAY_SHORT[f.learned_day]}` + (f.confirmed_day !== f.learned_day ? ` · confirmed ${DAY_SHORT[f.confirmed_day]}` : ""));
+  if (f.note) meta.append(` · ${f.note}`);
+  // Forgetting takes two clicks: the first only arms the button.
+  if (runsOffice() && f.status !== "retired") {
+    const b = button(office.armed === f.id ? "Sure? Forget it" : "Forget", "mini", () => {
+      if (office.armed !== f.id) { office.armed = f.id; renderFeed(); setTimeout(() => { if (office.armed === f.id) { office.armed = 0; renderFeed(); } }, 4000); return; }
+      office.armed = 0; forgetFact(f.id);
+    }, meta);
+    b.title = "Delete this fact from the office's memory";
+  }
+  li.append(meta);
+  return li;
+}
+function threadItem(t) {
+  const li = el("li", "thread" + (t.status === "open" ? " open" : ""));
+  li.append(t.text);
+  const meta = el("div", "meta"), days = (office.view?.day ?? 0) - t.opened_day;
+  meta.append(t.status === "open" ? `since ${DAY_SHORT[t.opened_day]}` + (days > 0 ? ` (${plural(days, "day")})` : " (today)") : `opened ${DAY_SHORT[t.opened_day]} · done ${DAY_SHORT[t.closed_day] ?? "?"}`, sourceChip(t.opened));
+  if (t.closed) meta.append("→", sourceChip(t.closed));
+  li.append(meta);
+  return li;
+}
+async function keepFact(id) {
+  office.err = "";
+  const res = await fetch(`/api/memory/facts/${id}/keep`, { method: "POST" }).catch(() => null);
+  if (!res?.ok) office.err = (await res?.json().catch(() => ({})))?.error || "Couldn't reach the office";
+  refreshOffice();
+}
+async function forgetFact(id) {
+  office.err = "";
+  const res = await fetch(`/api/memory/facts/${id}`, { method: "DELETE" }).catch(() => null);
+  if (!res?.ok) office.err = (await res?.json().catch(() => ({})))?.error || "Couldn't reach the office";
+  refreshOffice();
+}
+
+// A week answer, styled like an errand's: the verdict, the words with receipts, what it recalled.
+function answerItems() {
+  const out = [], a = office.answer;
+  const q = el("li", "ab-q"); q.append(el("span", null, a ? a.question : office.asking)); out.push(q);
+  if (!a) { out.push(el("li", "ab-busy", `${me?.member?.bot || "The bot"} is reading its record of the week, and the guard is checking the answer (10–40 s)…`)); return out; }
+  if (a.error) { out.push(el("li", "ab-err", a.error)); return out; }
+  const c = a.check, backed = c.audit.checked.filter((x) => x.verdict === "supported").length, falseN = c.false_claims.length;
+  const corrected = !!a.correction, kind = falseN || corrected ? "bad" : c.unverified ? "warn" : "ok";
+  const v = el("li", "verdict " + kind);
+  const big = falseN ? `✗ ${plural(falseN, "false claim")} delivered`
+    : corrected && !a.message ? "✗ Withheld: you get the ledger's own account instead"
+    : corrected ? `✗ Corrected from the ledger · ${plural(backed, "claim")} backed`
+    : c.unverified ? `! Not fully checked · ${plural(backed, "claim")} backed` : `✓ ${plural(backed, "claim")} backed by the ledgers`;
+  const facts = [`${falseN} false delivered`];
+  if (a.rewrites) facts.push(plural(a.rewrites, "rewrite"));
+  if (c.parsers) facts.push(`checked by ${plural(c.parsers, "parser")}`);
+  facts.push(`against ${plural(a.refs.length, "ledger entry", "ledger entries")}`, `cost $${a.spent_usd.toFixed(4)}`);
+  v.append(el("span", "big", big), el("span", "facts", facts.join(" · ")));
+  if (c.unverified) v.append(el("span", "why", "Why not fully checked: " + c.unverified));
+  out.push(v);
+  const said = el("li", "ab-said"), bubble = el("div", "bubble");
+  bubble.append(el("b", null, `${a.agent} · about the week · ${corrected ? "corrected from the ledger" : a.rewrites ? `delivered after ${plural(a.rewrites, "rewrite")}` : "passed the guard first time"}`));
+  if (a.message) { const [body, receipts] = markedText(a.message, c, "week", null, false, { open: office.open, refs: a.refs }); bubble.append(body, ...receipts); }
+  if (a.correction) bubble.append(el("div", "ab-correction", a.correction));
+  said.append(bubble);
+  out.push(said);
+  const rec = el("li");
+  rec.append(a.recalled.trim() ? fold("week-recalled", `What ${a.agent} recalled`, false, recallLines(a.recalled)) : el("span", "note", "It had nothing on record to recall."));
+  out.push(rec);
+  return out;
+}
+// The calls a week answer's receipts point at, so each receipt names its call.
+async function fetchLedgers(a) {
+  const ids = new Set();
+  for (const c of a.check.audit.checked) for (const n of c.seqs || []) if (a.refs[n - 1]) ids.add(a.refs[n - 1][0]);
+  await Promise.all([...ids].filter((id) => !office.ledgers.has(id)).map(async (id) => {
+    const res = await fetch(`/api/errands/${encodeURIComponent(id)}/ledger`).catch(() => null);
+    if (res?.ok) office.ledgers.set(id, (await res.json().catch(() => ({}))).entries || []);
+  }));
+  if (tab === "memory") renderFeed();
+}
+
+function renderMemory(feed) {
+  renderAskChips();
+  const v = office.view;
+  if (!v) { feed.append(el("li", "empty-note", needToken ? "Enter the access token to see the office's memory" : "Loading the office's memory…")); return; }
+  feed.append(dayItem(v));
+  if (office.arrived) feed.append(arrivedItem(office.arrived));
+  if (office.asking || office.answer) feed.append(...answerItems());
+  const conflicts = conflictItems(v.facts);
+  if (conflicts.length) feed.append(el("li", "mem-head", plural(conflicts.length, "conflict") + " to settle"), ...conflicts);
+  const open = v.threads.filter((t) => t.status === "open"), done = v.threads.filter((t) => t.status === "done");
+  feed.append(el("li", "mem-head", `Open threads · ${open.length}`));
+  if (!open.length) feed.append(el("li", "note", "Nothing pending."));
+  for (const t of open) feed.append(threadItem(t));
+  if (done.length) { const li = el("li"), ul = el("ul"); for (const t of done) ul.append(threadItem(t)); li.append(fold("done-threads", `${plural(done.length, "thread")} done`, false, ul)); feed.append(li); }
+  const active = v.facts.filter((f) => f.status === "active").sort((x, y) => x.subject.localeCompare(y.subject) || x.attribute.localeCompare(y.attribute));
+  const retired = v.facts.filter((f) => f.status === "retired");
+  feed.append(el("li", "mem-head", `Facts · ${active.length}`));
+  if (!active.length) feed.append(el("li", "note", "No facts yet. Errands teach the office facts, each quoting the ledger entry it came from."));
+  for (const f of active) feed.append(factItem(f));
+  if (retired.length) {
+    const li = el("li");
+    button(office.showRetired ? `Hide ${plural(retired.length, "retired fact")}` : `Show ${plural(retired.length, "retired fact")}`, "backlink", () => { office.showRetired = !office.showRetired; renderFeed(); }, li);
+    feed.append(li);
+    if (office.showRetired) for (const f of retired) feed.append(factItem(f));
+  }
+}
+function renderAskChips() {
+  const box = $("askchips");
+  if (box.childElementCount) return;
+  for (const q of WEEK_QUESTIONS) button(q, null, () => { $("asktext").value = q; $("askform").requestSubmit(); }, box);
+}
+$("askform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const question = $("asktext").value.trim();
+  if (!question || office.asking) return;
+  office.asking = question; office.answer = null; office.open = new Set(); office.det.delete("week-recalled");
+  $("askgo").disabled = true; $("asknote").textContent = "";
+  renderFeed();
+  $("feed").scrollTop = 0;
+  try {
+    const res = await fetch("/api/memory/ask", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ question }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    office.answer = { question, ...body };
+    $("asktext").value = "";
+    fetchLedgers(office.answer);
+  } catch (err) { office.answer = { question, error: err.message }; }
+  finally { office.asking = ""; $("askgo").disabled = false; if (tab === "memory") renderFeed(); refreshErrandsSoon(); }
+};
+$("asktext").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("askform").requestSubmit(); } };
 
 // ---- Skills: playbooks agents work by (the server's library) ----
 let skillLib = [];
@@ -1987,7 +2404,9 @@ function companyNote(a, live) {
   seenActivity.add(key);
   if (a.errand && !errandTimes.has(a.errand)) errandTimes.set(a.errand, a.at_ms);
   const m = company.members.find((x) => x.id === a.member);
-  note(a.text, m?.color, a.member, a.at_ms);
+  note(a.text, m?.color || (a.member === "office" ? "var(--butter-deep)" : undefined), a.member, a.at_ms);
+  // A new day ("It's Tuesday: …"): everyone sees it arrive.
+  if (live && a.member === "office") { toast(a.text); refreshOfficeSoon(); }
   if (live) dispatchEvent(new CustomEvent("agora:company", { detail: { members: company.members, activity: a } }));
 }
 function openJoin() {
@@ -2176,8 +2595,8 @@ if (args.get("invite")) {
 }
 renderBoard(); renderFeed(); loadInfo(); loadTeams();
 whoAmI().then(() => { connectCompany(); if (pendingInvite && !me && !needToken) openJoin(); });
-refreshErrands();
-setInterval(() => { if (!document.hidden) refreshErrands(); }, 8000);
+refreshErrands(); refreshOffice();
+setInterval(() => { if (!document.hidden) { refreshErrands(); if (tab === "memory") refreshOffice(); } }, 8000);
 setInterval(() => { if (tab === "alibi" && !errand && !document.hidden) renderFeed(); }, 60000); // "3 min ago"
 if (args.get("errand")) openErrand(args.get("errand"));
 const runLink = args.get("run") || (location.hash.length > 1 && !location.hash.includes("=") ? decodeURIComponent(location.hash.slice(1)) : "");

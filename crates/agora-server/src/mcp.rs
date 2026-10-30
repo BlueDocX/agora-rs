@@ -52,6 +52,12 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false }
         },
         {
+            "name": "ask_about_week",
+            "description": "Ask the bot about anything from this week (what it did, what failed, what's pending). It answers from its ledgers and the office's memory, every line cited, and the answer is checked against every errand's ledger before it is returned.",
+            "inputSchema": { "type": "object", "properties": { "question": { "type": "string" } }, "required": ["question"] },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "verify_ledger",
             "description": "Recompute an errand's hash chain: its entries, whether it is intact, and its head hash.",
             "inputSchema": { "type": "object", "properties": { "errand_id": { "type": "string" } }, "required": ["errand_id"] },
@@ -99,6 +105,11 @@ async fn call_tool(hub: &Arc<Hub>, headers: &HeaderMap, name: &str, args: &Value
             let question = arg(args, "question").ok_or("question is required")?;
             let body = serde_json::from_value(json!({ "question": question })).map_err(|e| e.to_string())?;
             call_handler(errands::ask(State(Arc::clone(hub)), axum::extract::Path(id), headers.clone(), Ok(Json(body))).await).await.map(|_| json!({ "ok": true, "next": "read the answer with errand_result" }))
+        }
+        "ask_about_week" => {
+            let question = arg(args, "question").ok_or("question is required")?;
+            let body = serde_json::from_value(json!({ "question": question })).map_err(|e| e.to_string())?;
+            call_handler(crate::office::ask(State(Arc::clone(hub)), headers.clone(), Ok(Json(body))).await).await
         }
         "verify_ledger" => {
             let id = arg(args, "errand_id").ok_or("errand_id is required")?;

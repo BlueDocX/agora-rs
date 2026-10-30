@@ -83,7 +83,7 @@ const SECOND_CHECKER: &str = "meta-models/muse-spark-open-1026";
 async fn one(caller: Arc<Caller>, model: String, extractor: String, id: &'static str, brief: &'static str, guarded: bool, caller_has_baseten: bool) -> Result<serde_json::Value, String> {
     let mut world = World::demo();
     let ledger = Ledger::in_memory(&format!("{model}/{id}")).map_err(|e| e.to_string())?;
-    let errand = Errand { agent: "Scout", model: &model, brief, persona: "" };
+    let errand = Errand { agent: "Scout", model: &model, brief, persona: "", memory: "" };
     let done = errand::run(&caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| e.to_string())?;
     let chain = ledger.verify().map_err(|b| format!("ledger broken at {}: {}", b.seq, b.reason))?;
     let mut row = json!({

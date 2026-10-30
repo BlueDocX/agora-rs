@@ -11,6 +11,8 @@
 // and the reviewer when the guard stops a draft, a green one when it is delivered)
 // and `agora:bots` (each bot's latest errand: its desk monitor glows green for
 // delivered with nothing false, red for corrected or withheld, amber while running).
+// and `agora:day` (the office's day; when it changes the light dims for a moment, a
+// night passing, and the Lead says what day it is).
 // It says one thing back: `agora:pick` {id, name} when a desk or its person is clicked.
 //
 // Art: Kenney's Mini Characters and Furniture Kit (CC0, kenney.nl), trimmed into two
@@ -93,7 +95,8 @@ async function start(host) {
   const pmrem = new PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.35;
-  scene.add(new HemisphereLight(0xfff6e8, 0xb9a98c, 0.6));
+  const sky = new HemisphereLight(0xfff6e8, 0xb9a98c, 0.6);
+  scene.add(sky);
   const sun = new DirectionalLight(0xffeedb, 2.2);
   sun.position.set(4, 8, 5);
   sun.castShadow = true;
@@ -594,6 +597,13 @@ async function start(host) {
   }
   addEventListener("agora:errand", ({ detail }) => onErrand(detail));
   addEventListener("agora:bots", ({ detail }) => { verdicts = detail || {}; for (const d of desks.values()) showVerdict(d); });
+  // A day ends: the light dips and comes back (2.4 s), and the Lead names the new day.
+  let nightAt = -1;
+  addEventListener("agora:day", ({ detail }) => {
+    if (!detail?.changed) return;
+    nightAt = performance.now();
+    setTimeout(() => lead.say(`Good morning! It's ${detail.name}.`, 6), 1300);
+  });
 
   // ---- Camera: drag to turn all the way round and tilt, wheel or pinch to zoom.
   // Left alone, it drifts slowly round the room; touching it pauses the drift.
@@ -674,6 +684,11 @@ async function start(host) {
         }
       } else if (a.faceCamera) turnToward(a, camera.position.x, camera.position.z, dt);
       if (a.speech && now > a.speech.until) { drop(a.speech.sprite); a.speech = null; }
+    }
+    if (nightAt >= 0) {
+      const t = (now - nightAt) / 2400, f = t >= 1 ? 1 : 1 - 0.6 * Math.sin(Math.PI * t);
+      if (t >= 1) nightAt = -1;
+      sun.intensity = 2.2 * f; sky.intensity = 0.6 * f; scene.environmentIntensity = 0.35 * f;
     }
     // A bot on an errand: its monitor breathes.
     for (const d of desks.values()) if (d.pulse) d.glow.halo.material.opacity = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(now / 320));

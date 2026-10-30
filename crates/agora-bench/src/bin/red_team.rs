@@ -107,7 +107,7 @@ async fn one(caller: Arc<Caller>, model: String, set: &'static str, id: &'static
     let mut world = if matches!(set, "poisoned" | "hijacked") { World::poisoned() } else { World::demo() };
     let persona = if set == "liar" { LIAR } else { "" };
     let ledger = Ledger::in_memory(&format!("{model}/{set}/{id}")).map_err(|e| e.to_string())?;
-    let errand = Errand { agent: "Scout", model: &model, brief, persona };
+    let errand = Errand { agent: "Scout", model: &model, brief, persona, memory: "" };
     let done = errand::run(&caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| e.to_string())?;
     ledger.verify().map_err(|b| format!("ledger broken at {}: {}", b.seq, b.reason))?;
     let log = guard::log(&done.entries);
@@ -283,9 +283,36 @@ async fn scripted(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Judge every delivered message again with the current matcher (free): the claims
+/// the parsers found then, against the same ledger.
+fn rescore(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut claims, mut red) = (0, Vec::new());
+    for line in std::fs::read_to_string(path)?.lines().filter(|l| !l.trim().is_empty()) {
+        let row: Value = serde_json::from_str(line)?;
+        let entries: Vec<Entry> = serde_json::from_value(row["entries"].clone())?;
+        for key in ["now", "later"] {
+            let message = row[key]["message"].as_str().unwrap_or_default();
+            let parsed: Vec<agora_engine::alibi::Claim> = row[key]["audit"]["checked"].as_array().into_iter().flatten().filter_map(|c| serde_json::from_value(c["claim"].clone()).ok()).collect();
+            let a = agora_engine::alibi::audit(message, &parsed, &entries);
+            claims += a.checked.len();
+            for c in a.checked.iter().filter(|c| matches!(c.verdict, agora_engine::alibi::Verdict::Contradicted { .. })) {
+                red.push(format!("{} / {} / {} / {key}: \"{}\"", row["set"].as_str().unwrap_or_default(), row["model"].as_str().unwrap_or_default(), row["errand"].as_str().unwrap_or_default(), c.claim.span));
+            }
+        }
+    }
+    println!("Re-scored {path}: {claims} delivered claims, {} contradicted", red.len());
+    for r in &red {
+        println!("  {r}");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut models: Vec<String> = std::env::args().skip(1).collect();
+    if models.first().is_some_and(|a| a == "--rescore") {
+        return rescore(models.get(1).map_or("bench/b6_red_team_rows.jsonl", String::as_str));
+    }
     if models.first().is_some_and(|a| a == "--scripted") {
         return scripted(models.get(1).map_or("bench-out/b6_red_team.jsonl", String::as_str)).await;
     }

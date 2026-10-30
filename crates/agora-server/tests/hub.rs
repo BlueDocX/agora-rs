@@ -48,6 +48,16 @@ async fn mock_model() -> String {
                         reply(r#"{"tool": "finish", "target": "", "when": "", "text": "I texted Priya about lunch."}"#)
                     }
                 }
+                // The office's memory: one fact its source backs, one it doesn't, a thread.
+                Some("memory") => reply(&json!({
+                    "facts": [
+                        {"subject": "Priya Menon", "attribute": "texted about", "value": "Priya Menon", "seq": 1, "quote": "Message delivered to Priya Menon"},
+                        {"subject": "Priya Menon", "attribute": "lunch", "value": "Friday", "seq": 1, "quote": "Priya said Friday"}
+                    ],
+                    "open": [{"text": "Waiting for Priya to confirm lunch", "seq": 1}],
+                    "close": []
+                }).to_string()),
+                _ if body.to_string().contains("Your record of the week") => reply("I texted Priya about lunch on Monday."),
                 Some("claims") => {
                     let said = body["input"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap().to_string();
                     let claims = if said.contains("I texted Priya") {
@@ -447,7 +457,7 @@ async fn mcp_clients_list_the_tools_and_call_them() {
     assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
     let tools: Value = rpc(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await.unwrap().json().await.unwrap();
     let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["office_status", "run_errand", "errand_result", "ask_errand", "verify_ledger"]);
+    assert_eq!(names, ["office_status", "run_errand", "errand_result", "ask_errand", "ask_about_week", "verify_ledger"]);
     let run: Value = rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "run_errand", "arguments": {"brief": "Ask Priya to lunch"}}})).await.unwrap().json().await.unwrap();
     let id = run["result"]["structuredContent"]["id"].as_str().unwrap().to_string();
     let mut stream = http.get(format!("{base}/api/errands/{id}/events")).send().await.unwrap();
@@ -477,4 +487,48 @@ async fn a_spoken_errand_is_transcribed_on_the_server() {
     assert_eq!(res["text"], "Text Amma I'll call Sunday (9 keywords)", "{res}");
     let bad = http.post(format!("{base}/api/transcribe")).body("not audio").send().await.unwrap();
     assert_eq!(bad.status(), 400);
+}
+
+#[tokio::test]
+async fn the_office_remembers_only_what_its_ledger_backs_across_days() {
+    let base = hub(None).await;
+    let http = reqwest::Client::new();
+    let run = || async {
+        let started: Value = http.post(format!("{base}/api/errands")).json(&json!({"brief": "Ask Priya to lunch"})).send().await.unwrap().json().await.unwrap();
+        let id = started["id"].as_str().unwrap().to_string();
+        let mut stream = http.get(format!("{base}/api/errands/{id}/events")).send().await.unwrap();
+        (id, read_until(&mut stream, r#""type":"idle""#).await)
+    };
+    let (first, events) = run().await;
+    let learned = &events.iter().find(|e| e["type"] == "learned").unwrap()["learned"];
+    assert_eq!((&learned["new"], &learned["opened"]), (&json!(1), &json!(1)), "{learned}");
+    assert!(learned["rejected"][0].as_str().unwrap().contains("isn't in #1"), "a made-up quote is refused: {learned}");
+
+    // A new day; the next errand starts from what the office recalls, with sources.
+    let day: Value = http.post(format!("{base}/api/office/day")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(day["day_name"], "Tuesday");
+    assert!(day["arrived"].to_string().contains("priya.menon"), "{day}");
+    let (second, events) = run().await;
+    let recalled = events.iter().find(|e| e["type"] == "recalled").unwrap()["text"].as_str().unwrap().to_string();
+    assert!(recalled.contains("Waiting for Priya to confirm lunch") && recalled.contains(", Mon] messages.send · Priya Menon"), "{recalled}");
+
+    // A question about the week is checked against every errand's ledger.
+    let answer: Value = http.post(format!("{base}/api/memory/ask")).json(&json!({"question": "What did you do this week?"})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(answer["check"]["audit"]["checked"][0]["verdict"], "supported", "{answer}");
+    assert_eq!(answer["refs"].as_array().unwrap().len(), 2);
+
+    // Forgetting the entry a memory came from forgets the memory too.
+    let office: Value = http.get(format!("{base}/api/office")).send().await.unwrap().json().await.unwrap();
+    assert_eq!((&office["stats"]["active"], &office["stats"]["open_threads"]), (&json!(1), &json!(1)), "{office}");
+    let forgot: Value = http.post(format!("{base}/api/errands/{first}/forget")).json(&json!({"seq": 1})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(forgot["memories"], json!([1, 1]), "{forgot}");
+    let office: Value = http.get(format!("{base}/api/office")).send().await.unwrap().json().await.unwrap();
+    assert_eq!((&office["stats"]["active"], &office["stats"]["open_threads"]), (&json!(0), &json!(0)));
+    // And the later errand's recall of it is gone too.
+    let mut stream = http.get(format!("{base}/api/errands/{second}/events")).send().await.unwrap();
+    let events = read_until(&mut stream, r#""type":"idle""#).await;
+    let recalled = events.iter().find(|e| e["type"] == "recalled").unwrap()["text"].as_str().unwrap().to_string();
+    assert!(!recalled.contains(", Mon] messages.send") && recalled.contains("asked to forget"), "{recalled}");
+    // The later errand texted Priya the same words itself: the scan says where, plainly.
+    assert_eq!(forgot["scan"]["found_in"], json!([format!("errand {second}")]), "{forgot}");
 }

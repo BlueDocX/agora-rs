@@ -54,6 +54,15 @@ The page shows each stopped draft struck through with its reason, so the correct
 - The hash chain still verifies, because it covers a hash of the content. So the ledger still proves *that* the agent read something, without keeping *what* it read.
 - That hash is **salted** per entry, and the salt is deleted with the content. Without it, the hash that stays can't be checked against a guess ("was it the chat with Neha?").
 
+**Memory for days, without drift ([design](docs/memory.md), B7 [details](docs/benchmarks.md#b7-a-working-week-memory)).** A bot that works across days never remembers in its own words:
+- **Recall is built by code** from the ledger. Every line cites its source: `[a1b2c3d4#3, Mon] email.send · Priya Menon → ok`.
+- **Facts are written only if their quote is really in the source.**
+- **Contradictions are surfaced for the person, never merged.**
+- **Forgetting an entry forgets everything learned from it.**
+- Facts expire, the store is bounded, and its growth is watched. The design passes all 8 checks of a forgetting-policy linter.
+
+In a working week (Monday to Friday, with replies arriving on their days), answers about the week from agents that kept their own notes had **15 of 92 claims contradicted by the ledger**. We read each: 7 are real (invented searches, a sent message denied for four days running). Those answers also left out 22 acts. With ledger-grounded memory and the guard, **0 of 217 were delivered false and nothing was left out**, at under a third of the cost per backed claim.
+
 **Tamper evidence, and against whom.** The hash chain stops the *agent*: it never writes the ledger, and changing, dropping or reordering an entry is caught (`agora-verify`). A chain alone doesn't stop whoever *runs the server*, who could rewrite it and recompute every hash. So the office **signs each ledger head with Ed25519** and hands you the receipt (run, entry count, head, time, signature). Keep it, and `agora-verify --receipt receipt.json agora-journal.db <office-key>` later proves whether the ledger still reaches what the office signed. A rewritten history fails even with every hash recomputed, because only the office's key could have signed the old head. The office's public key is at `/.well-known/agora-signing-key`; publish it somewhere the operator doesn't control to anchor it.
 
 **Prompt injection.** What a call returns (an email, a chat, a file) is someone else's text. Results reach the agent marked as data, never as instructions. The executor also refuses to email any address that isn't saved in the person's contacts or written in the errand itself. So an address planted in an email (even one signed with a friend's name) can't be used to send their data out. A new address the person really wants used goes in the errand. A blocked attempt is still a failed ledger entry, so the guard makes the agent own up to it.

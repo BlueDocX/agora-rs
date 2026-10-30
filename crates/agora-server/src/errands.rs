@@ -62,6 +62,8 @@ pub(crate) const KEEP_ERRANDS: usize = 200;
 const MAX_ERRAND_CHARS: usize = 500;
 const MAX_QUESTION_CHARS: usize = 300;
 const DEFAULT_AGENT: &str = "Scout";
+/// Whose world the office runs on.
+const OWNER: &str = "Asha Rao";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Chain {
@@ -112,8 +114,25 @@ pub(crate) enum ErrandEvent {
         spent_usd: f64,
     },
     Failed { turn: usize, reason: String },
-    /// Entry `receipt.seq` was forgotten; these turns' messages were withdrawn.
-    Forgotten { receipt: Receipt, withdrawn: Vec<usize>, scan: Scan },
+    /// What the bot recalled from earlier days before it started (built by code from
+    /// its ledgers and memory; every line cites its source).
+    Recalled { text: String },
+    /// What the office's memory kept from this errand (and refused: a fact whose
+    /// quote isn't in its source is never written).
+    Learned { learned: agora_engine::memory::Learned },
+    /// The memory couldn't be updated after the errand (the errand itself is done).
+    NotLearned { reason: String },
+    /// Another bot is working in the office; this errand starts when it's done.
+    Waiting,
+    /// Entry `receipt.seq` was forgotten; these turns' messages were withdrawn, and
+    /// `memories` facts and threads learned from it deleted.
+    Forgotten {
+        receipt: Receipt,
+        withdrawn: Vec<usize>,
+        scan: Scan,
+        #[serde(default)]
+        memories: (usize, usize),
+    },
     Idle,
 }
 
@@ -156,6 +175,9 @@ struct Meta {
     /// When it was asked for (0 in errands stored before this was kept).
     #[serde(default)]
     at_ms: u64,
+    /// The office day it ran on.
+    #[serde(default)]
+    day: usize,
 }
 
 pub(crate) struct ErrandRoom {
@@ -174,11 +196,16 @@ pub(crate) struct ErrandRoom {
     poisoned: bool,
     /// When it was asked for.
     at_ms: u64,
+    /// The office day it ran on.
+    day: std::sync::atomic::AtomicUsize,
     caller: Caller,
-    world: tokio::sync::Mutex<World>,
+    /// The office's world (shared: errands that change it take turns), or for a
+    /// poisoned errand its own copy with the injection planted.
+    world: Arc<tokio::sync::Mutex<World>>,
     ledger: Ledger,
     signer: Arc<Signer>,
     store: Option<Store>,
+    memory: Arc<agora_engine::memory::Memory>,
     inner: Mutex<Inner>,
 }
 
@@ -236,6 +263,7 @@ impl ErrandRoom {
             reply_to: self.reply_to.clone(),
             poisoned: self.poisoned,
             at_ms: self.at_ms,
+            day: self.day(),
         }
     }
 
@@ -276,7 +304,60 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
+/// One errand's ledger, owned, for recall across the week.
+pub(crate) struct Recorded {
+    pub id: String,
+    pub day: usize,
+    pub entries: Vec<Entry>,
+}
+
+pub(crate) fn views(record: &[Recorded]) -> Vec<agora_engine::memory::Errand<'_>> {
+    record.iter().map(|r| agora_engine::memory::Errand { id: &r.id, day: r.day, entries: &r.entries }).collect()
+}
+
+impl ErrandRoom {
+    /// The office day it ran on.
+    fn day(&self) -> usize {
+        self.day.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// What the bot recalled before it started, if anything.
+    fn recalled(&self) -> String {
+        self.lock().history.iter().find_map(|e| if let ErrandEvent::Recalled { text } = e { Some(text.clone()) } else { None }).unwrap_or_default()
+    }
+}
+
 impl Hub {
+    /// The office's record: every kept errand's ledger in order (red-team copies and
+    /// `except` left out).
+    pub(crate) fn record(&self, except: &str) -> Vec<Recorded> {
+        let rooms: Vec<Arc<ErrandRoom>> = self.errands().rooms.clone();
+        rooms
+            .iter()
+            .filter(|r| !r.poisoned && r.id != except)
+            .map(|r| Recorded { id: r.id.clone(), day: r.day(), entries: r.ledger.entries().unwrap_or_default() })
+            .collect()
+    }
+
+    /// Count spending that didn't belong to a kept errand (a question about the week).
+    /// Negative to give back part of a reservation.
+    pub(crate) fn retire_spend(&self, usd: f64) {
+        self.errands().retired_usd += usd;
+    }
+
+    /// Reserve `usd` of the office's errand budget for work that isn't an errand (a
+    /// question about the week), checked and taken under one lock so concurrent
+    /// questions can't overshoot. Answers what was committed when it can't.
+    pub(crate) fn reserve(&self, usd: f64) -> Result<(), f64> {
+        let mut errands = self.errands();
+        let committed = errands.committed_usd();
+        if committed + usd > self.config.errands_cap_usd {
+            return Err(committed);
+        }
+        errands.retired_usd += usd;
+        Ok(())
+    }
+
     fn errands(&self) -> std::sync::MutexGuard<'_, Errands> {
         self.errands.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -287,7 +368,7 @@ impl Hub {
 
     /// The second checker: Spark Open on Baseten when the office has it and the
     /// first checker isn't already on it.
-    fn second_checker(&self) -> Option<String> {
+    pub(crate) fn second_checker(&self) -> Option<String> {
         let open = "meta-models/muse-spark-open-1026";
         (self.config.baseten.is_some() && self.config.model != open).then(|| open.to_string())
     }
@@ -304,7 +385,7 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
     let second = hub.second_checker();
     let checkers = Checkers { first: &hub.config.model, second: second.as_deref() };
     let on_draft = |round: usize, check: &Checked| room.push(ErrandEvent::Draft { turn, round, check: check.clone() });
-    let owner = room.world.lock().await.owner;
+    let owner = OWNER;
     let guarded = if room.guard {
         guard::deliver(&room.caller, checkers, guard::Author { model: &room.model, owner, persona: &room.persona }, message, &entries, &on_draft).await
     } else {
@@ -502,10 +583,13 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         poisoned: body.poisoned,
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
-        world: tokio::sync::Mutex::new(if body.poisoned { World::poisoned() } else { World::demo() }),
+        day: std::sync::atomic::AtomicUsize::new(hub.day()),
+        // A poisoned errand gets its own copy of the office when it starts (see `work`).
+        world: if body.poisoned { Arc::new(tokio::sync::Mutex::new(World::poisoned())) } else { Arc::clone(&hub.office) },
         ledger,
         signer: Arc::clone(&hub.signer),
         store: hub.store.clone(),
+        memory: Arc::clone(&hub.memory),
         inner: Mutex::new(Inner { history: Vec::new(), live: broadcast::channel(256).0, busy: true, report: None, turns: 0 }),
     });
     {
@@ -530,6 +614,10 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
     }
     room.push(ErrandEvent::Started { id: id.clone(), brief: brief.clone(), model, agent: agent.clone(), checker, guard, people: people.clone(), poisoned: body.poisoned });
     announce(hub, &people, &agent, &brief, &id);
+    let recalled = agora_engine::memory::recall(&hub.memory, &views(&hub.record(&id)), &brief);
+    if !recalled.is_empty() {
+        room.push(ErrandEvent::Recalled { text: recalled });
+    }
     room.push(ErrandEvent::Busy { turn: 0, question: None });
     tokio::spawn(work(Arc::clone(hub), room));
     Ok(id)
@@ -551,16 +639,47 @@ fn announce(hub: &Hub, people: &People, agent: &str, brief: &str, id: &str) {
 
 /// Run the errand, streaming each ledger entry as it is written, then check the report.
 async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
-    let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona };
+    let recalled = room.recalled();
+    let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled };
+    if room.poisoned {
+        // The red-team copy: the office as it is now, with the injection planted.
+        let mut copy = hub.office.lock().await.clone();
+        copy.poison();
+        *room.world.lock().await = copy;
+    }
     let done = {
-        let mut world = room.world.lock().await;
+        // The office's world is shared: an errand that may change it waits its turn.
+        let mut world = if let Ok(world) = room.world.try_lock() {
+            world
+        } else {
+            room.push(ErrandEvent::Waiting);
+            room.world.lock().await
+        };
+        // The day it really ran on (a new day may have started while it waited).
+        if !room.poisoned && world.today != room.day() {
+            room.day.store(world.today, std::sync::atomic::Ordering::Relaxed);
+            if let (Some(store), Ok(json)) = (&room.store, serde_json::to_string(&room.meta())) {
+                store.send(Op::Errand { id: room.id.clone(), json });
+            }
+        }
         let on_step = |entry: &Entry| room.push(ErrandEvent::Step { entry: entry.clone() });
-        errand::run(&room.caller, &room.ledger, &mut world, &errand, &on_step).await
+        let done = errand::run(&room.caller, &room.ledger, &mut world, &errand, &on_step).await;
+        if !room.poisoned {
+            hub.set_office_view(&world);
+        }
+        done
     };
     match done {
         Ok(done) => {
             let message = if done.message.is_empty() { "(The agent ran out of steps without reporting.)".to_string() } else { done.message };
             deliver(&hub, &room, 0, None, &message, done.finished).await;
+            // The office remembers what this errand's calls can back (not the red-team copy).
+            if !room.poisoned {
+                match agora_engine::memory::learn(&room.caller, &hub.config.model, &hub.memory, &room.id, &done.entries, room.day()).await {
+                    Ok(learned) => room.push(ErrandEvent::Learned { learned }),
+                    Err(e) => room.push(ErrandEvent::NotLearned { reason: e.to_string() }),
+                }
+            }
         }
         Err(e) => room.push(ErrandEvent::Failed { turn: 0, reason: e.to_string() }),
     }
@@ -618,13 +737,14 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
     };
     room.push(ErrandEvent::Busy { turn, question: Some(question.clone()) });
     tokio::spawn(async move {
-        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona };
-        // With the guard on, the agent answers from its ledger, not from memory.
+        // With the guard on, the agent answers from its ledger and the office's memory,
+        // not from its own impressions.
+        let recalled = if room.guard { agora_engine::memory::recall(&hub.memory, &views(&hub.record(&room.id)), &question) } else { String::new() };
+        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled };
         let log = room.guard.then(|| guard::log(&room.ledger.entries().unwrap_or_default()));
-        let answer = {
-            let world = room.world.lock().await;
-            errand::ask_later(&room.caller, &world, &errand, &report, &question, log.as_deref()).await
-        };
+        // A snapshot, without waiting: the office may be busy with another errand.
+        let world = if room.poisoned { room.world.lock().await.clone() } else { hub.office_view() };
+        let answer = errand::ask_later(&room.caller, &world, &errand, &report, &question, log.as_deref()).await;
         match answer {
             Ok(message) => deliver(&hub, &room, turn, Some(question), &message, true).await,
             Err(e) => room.push(ErrandEvent::Failed { turn, reason: e.to_string() }),
@@ -755,6 +875,9 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         company.withdraw_errand(&room.id, WITHDRAWN);
         company.message_texts()
     };
+    // Later errands recalled this entry (and facts learned from it): those lines go too,
+    // and what is left of every errand's stream is searched.
+    let others = scrub_recall(&hub, &room.id, seq).await;
     let event = {
         let mut inner = room.lock();
         // Everything the agent said came after its calls, so every message is withdrawn.
@@ -788,8 +911,9 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         }
         // Search what is left for this errand: the stream history, then every other
         // ledger entry (an agent may have repeated what it read in a call it made).
-        let scan = scan(&needles(&before), &inner.history, &room.ledger, messages);
-        (ErrandEvent::Forgotten { receipt, withdrawn, scan }, inner.history.clone())
+        let scan = scan(&needles(&before), &inner.history, &room.ledger, messages, others);
+        let memories = hub.memory.forget_source(&room.id, seq).unwrap_or_default();
+        (ErrandEvent::Forgotten { receipt, withdrawn, scan, memories }, inner.history.clone())
     };
     let (mut event, history) = event;
     // The office store holds the stream too: rewrite it (with this event), then say
@@ -813,15 +937,51 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
     Json(event).into_response()
 }
 
+/// Remove, from every other errand's recall, the lines that cite entry `seq` of
+/// `errand` (they quote what it returned), and rewrite those streams in the store.
+/// Answers each other errand's stream as text, for the forget's scan.
+async fn scrub_recall(hub: &Hub, errand: &str, seq: u64) -> Vec<(String, String)> {
+    let cite = |line: &str| {
+        let id = errand.strip_prefix("errand-").unwrap_or(errand);
+        let short = id.get(..8).unwrap_or(id);
+        line.contains(&format!("[{short}#{seq}]")) || line.contains(&format!("[{short}#{seq},"))
+    };
+    let rooms: Vec<Arc<ErrandRoom>> = hub.errands().rooms.iter().filter(|r| r.id != errand).cloned().collect();
+    let mut all = Vec::new();
+    for other in rooms {
+        let rewritten = {
+            let mut inner = other.lock();
+            let mut changed = false;
+            for e in &mut inner.history {
+                if let ErrandEvent::Recalled { text } = e
+                    && text.lines().any(cite)
+                {
+                    *text = text.lines().filter(|l| !cite(l)).collect::<Vec<_>>().join("\n");
+                    text.push_str("\n(a line here was removed: it held something the person asked to forget)");
+                    changed = true;
+                }
+            }
+            all.push((format!("errand {}", other.id), strings(&serde_json::to_value(&inner.history).unwrap_or_default())));
+            changed.then(|| inner.history.iter().filter_map(|e| serde_json::to_string(e).ok()).collect::<Vec<_>>())
+        };
+        if let (Some(events), Some(store)) = (rewritten, other.store.clone()) {
+            let id = other.id.clone();
+            let _ = tokio::task::spawn_blocking(move || store.rewrite(&id, events)).await;
+        }
+    }
+    all
+}
+
 /// Search what the office still holds about an errand for `wanted`: its stream, the
 /// office's messages, and its other ledger entries (an agent may have repeated what it
 /// read in a call it made). The text itself is searched (every string in it), not its
 /// JSON encoding, where quotes and backslashes would be escaped and never match.
-fn scan(wanted: &[String], history: &[ErrandEvent], ledger: &Ledger, messages: String) -> Scan {
+fn scan(wanted: &[String], history: &[ErrandEvent], ledger: &Ledger, messages: String, others: Vec<(String, String)>) -> Scan {
     let mut places = vec![
         ("the errand's history".to_string(), strings(&serde_json::to_value(history).unwrap_or_default())),
         ("the office's messages".to_string(), messages),
     ];
+    places.extend(others);
     for e in ledger.entries().unwrap_or_default() {
         places.push((format!("entry #{} {}", e.seq, e.action.tool.name()), strings(&serde_json::to_value((&e.action, &e.outcome)).unwrap_or_default())));
     }
@@ -939,38 +1099,66 @@ fn retire(gone: Arc<ErrandRoom>) {
     if let Some(store) = &gone.store {
         store.send(Op::DropErrand { id: gone.id.clone() });
     }
-    tokio::task::spawn_blocking(move || forget_all(&gone.ledger));
+    let memory = Arc::clone(&gone.memory);
+    tokio::task::spawn_blocking(move || forget_all(&gone.ledger, &memory));
 }
 
-fn forget_all(ledger: &Ledger) {
+fn forget_all(ledger: &Ledger, memory: &agora_engine::memory::Memory) {
     for e in ledger.entries().unwrap_or_default().iter().filter(|e| e.forgotten_at_ms.is_none()) {
         if let Err(e) = ledger.forget(e.seq) {
             eprintln!("couldn't forget an old errand's ledger ({}): {e}", ledger.run_id());
             return;
         }
+        let _ = memory.forget_source(ledger.run_id(), e.seq);
     }
 }
 
-/// Bring back the errands the store kept (their ledgers are in the journal). Each
-/// world is rebuilt by replaying its ledger on a fresh one (the world is
-/// deterministic); a forgotten call can't be replayed, so that world may differ, which
-/// only matters to later questions. An errand cut off by a restart says so.
-pub(crate) fn restore(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: &[String]) -> usize {
+/// Bring back the errands the store kept (their ledgers are in the journal), and the
+/// office's world: Asha's week replayed, errand by errand on the day each ran (the
+/// world is deterministic), then moved on to `today`. A forgotten call can't be
+/// replayed, so the world may differ there. A red-team errand gets its own copy. An
+/// errand cut off by a restart says so.
+pub(crate) fn restore(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: &[String], today: usize) -> usize {
+    let mut office = World::demo();
+    let restored = restore_errands(hub, kept, pruned, &mut office);
+    while office.today < today.min(agora_core::world::DAYS.len() - 1) {
+        office.next_day();
+    }
+    hub.set_office_view(&office);
+    if let Ok(mut world) = hub.office.try_lock() {
+        *world = office;
+    }
+    restored
+}
+
+fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: &[String], office: &mut World) -> usize {
     let (Some(path), Some(store)) = (&hub.config.journal, &hub.store) else { return 0 };
     // Past retention: the store already deleted their streams; forget their ledgers.
     for id in pruned {
         if let Ok(ledger) = Ledger::open(path, id) {
-            forget_all(&ledger);
+            forget_all(&ledger, &hub.memory);
         }
     }
     let mut restored = 0;
     for (id, meta, events) in kept {
         let Ok(meta) = serde_json::from_str::<Meta>(&meta) else { continue };
         let Ok(ledger) = Ledger::open(path, &id) else { continue };
-        let mut world = if meta.poisoned { World::poisoned() } else { World::demo() };
-        for e in ledger.entries().unwrap_or_default().iter().filter(|e| e.forgotten_at_ms.is_none()) {
-            world.execute(&e.action);
+        while office.today < meta.day && office.today + 1 < agora_core::world::DAYS.len() {
+            office.next_day();
         }
+        let world = if meta.poisoned {
+            let mut copy = office.clone();
+            copy.poison();
+            for e in ledger.entries().unwrap_or_default().iter().filter(|e| e.forgotten_at_ms.is_none()) {
+                copy.execute(&e.action);
+            }
+            Arc::new(tokio::sync::Mutex::new(copy))
+        } else {
+            for e in ledger.entries().unwrap_or_default().iter().filter(|e| e.forgotten_at_ms.is_none()) {
+                office.execute(&e.action);
+            }
+            Arc::clone(&hub.office)
+        };
         let mut history: Vec<ErrandEvent> = events.iter().filter_map(|j| serde_json::from_str(j).ok()).collect();
         let turns = history.iter().filter_map(|e| if let ErrandEvent::Busy { turn, .. } = e { Some(*turn) } else { None }).max().unwrap_or(0);
         // Cut off: the last turn started (busy) and never went idle.
@@ -1002,11 +1190,13 @@ pub(crate) fn restore(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, prune
             reply_to: meta.reply_to,
             poisoned: meta.poisoned,
             at_ms: meta.at_ms,
+            day: std::sync::atomic::AtomicUsize::new(meta.day),
             caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
-            world: tokio::sync::Mutex::new(world),
+            world,
             ledger,
             signer: Arc::clone(&hub.signer),
             store: Some(store.clone()),
+            memory: Arc::clone(&hub.memory),
             inner: Mutex::new(Inner { history: Vec::new(), live: broadcast::channel(256).0, busy: false, report, turns }),
         };
         for (n, e) in history.iter().enumerate().skip(events.len()) {

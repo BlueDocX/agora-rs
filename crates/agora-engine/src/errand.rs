@@ -45,6 +45,9 @@ pub struct Errand<'a> {
     /// Who the bot is beyond its name: a preset role and its skills (from
     /// `Agent::briefing`), or "" for a plain assistant. User content, never system.
     pub persona: &'a str,
+    /// What the agent recalls from earlier days, built by code from its record (see
+    /// `crate::memory::recall`), or "" for none. Every line cites its source.
+    pub memory: &'a str,
 }
 
 #[derive(Debug, Clone)]
@@ -108,15 +111,28 @@ fn opening(world: &World, errand: &Errand<'_>) -> Vec<Message> {
         Message::system(CHARTER),
         Message::system(ERRAND_ROLE),
         Message::user(format!(
-            "You are {}, working for {}.{} It is Monday morning; days are Monday to Sunday of this week.\n\nTools:\n{}\n\nErrand from {}: {}",
+            "You are {}, working for {}.{} It is {} morning; days are Monday to Sunday of this week.\n\nTools:\n{}\n{}\nErrand from {}: {}",
             errand.agent,
             world.owner,
             errand.persona,
+            world.day_name(),
             tool_guide(),
+            recalled(errand.memory),
             world.owner,
             errand.brief
         )),
     ]
+}
+
+/// The memory brief as the agent is shown it, or nothing.
+fn recalled(memory: &str) -> String {
+    if memory.trim().is_empty() {
+        return String::new();
+    }
+    format!(
+        "\nYour record from earlier this week (written by the system from your ledger, not by you). Rely on it over your own impressions, \
+         cite a [ref] when you use a line, and if something isn't here or in a tool result, say you don't know rather than guess:\n{memory}\n"
+    )
 }
 
 /// The addresses written in `text`, exactly (lowercased).
@@ -235,8 +251,13 @@ pub async fn ask_later(
     let mut input = vec![
         Message::system(CHARTER),
         Message::user(format!(
-            "You are {}, {}'s personal assistant, with access to their contacts, calendar, email, chat messages and files.{} Earlier today they asked: {}",
-            errand.agent, world.owner, errand.persona, errand.brief
+            "You are {}, {}'s personal assistant, with access to their contacts, calendar, email, chat messages and files.{} It is {}.{} Earlier they asked: {}",
+            errand.agent,
+            world.owner,
+            errand.persona,
+            world.day_name(),
+            recalled(errand.memory),
+            errand.brief
         )),
         Message::assistant(if message.is_empty() { "(no reply)".to_string() } else { message.to_string() }),
     ];
