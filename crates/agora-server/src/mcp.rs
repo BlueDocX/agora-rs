@@ -41,7 +41,7 @@ fn tools() -> Value {
         },
         {
             "name": "errand_result",
-            "description": "An errand's latest delivered message and its receipts: claims backed by the ledger, false claims delivered (the guard keeps this at zero), rewrites, and any correction written from the ledger. Without an id, the newest errand.",
+            "description": "An errand's latest delivered message and its receipts: claims backed by the ledger, claims the ledger contradicts that were delivered (with the guard on, any still wrong after rewrites are cut and corrected from the ledger), rewrites, and any correction. Without an id, the newest errand.",
             "inputSchema": { "type": "object", "properties": { "errand_id": { "type": "string" } } },
             "annotations": { "readOnlyHint": true }
         },
@@ -157,7 +157,7 @@ fn cross_site(headers: &HeaderMap) -> bool {
 }
 
 pub(crate) async fn post(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
-    if !authorized(&hub, &headers, None) {
+    if !authorized(&hub, &headers) {
         return unauthorized();
     }
     if cross_site(&headers) {

@@ -79,7 +79,9 @@ impl Caller {
         let response = client.respond(request).await.map_err(CallError::Model)?;
         self.budget.charge(&request.model, &response);
         if response.status != "completed" {
-            return Err(CallError::Unfinished { status: response.status });
+            // Say which prompt it was, so a cut-off can be traced.
+            let which = request.prompt_cache_key.as_deref().unwrap_or("a call");
+            return Err(CallError::Unfinished { status: format!("{} in {which} on {}", response.status, request.model) });
         }
         // A paid, finished reply is never thrown away because the journal couldn't
         // store it; the run only loses the ability to replay that one call.

@@ -56,7 +56,7 @@ pub struct Claim {
     pub outcome: Claimed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum Verdict {
     /// Backed by these ledger entries.
@@ -66,14 +66,14 @@ pub enum Verdict {
     Contradicted { seqs: Vec<u64>, why: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checked {
     pub claim: Claim,
     #[serde(flatten)]
     pub verdict: Verdict,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Audit {
     pub checked: Vec<Checked>,
     /// Calls that acted for the person (send, book, write; done or attempted) that no
@@ -82,6 +82,7 @@ pub struct Audit {
     /// Private reads (a chat, an email, a contact's notes, a file) no claim mentions.
     pub undisclosed_reads: Vec<u64>,
     /// Claims dropped because their quote isn't in the message (a misparse).
+    #[serde(default)]
     pub unquoted: usize,
 }
 
@@ -179,7 +180,26 @@ fn refers_to(claim: &Claim, entry: &Entry) -> bool {
     } else {
         about(entry)
     };
-    any_word(&wanted, &haystack)
+    // A claim that something was done must match every name it gives: "I emailed
+    // Priya Shah" is not backed by an email to Arjun Shah. (A denial may match on any
+    // one word: matching more there only makes more red marks. A lookup may too: one
+    // claim often covers several searches, "searched for climbing, Wednesday and Dev",
+    // and saying you looked is not what a guard protects.)
+    let names_match = claim.polarity == Polarity::DidNot
+        || claim.tool.weight() == Weight::Lookup
+        || proper_names(&claim.target).iter().all(|n| haystack.iter().any(|h| same_word(n, h)));
+    names_match && any_word(&wanted, &haystack)
+}
+
+/// The words of a target's proper names: capitalised, not generic ("Priya Shah" gives
+/// "priya" and "shah"; "Mr. Kapoor" gives "kapoor").
+fn proper_names(target: &str) -> Vec<String> {
+    target
+        .split_whitespace()
+        .filter(|w| w.chars().next().is_some_and(char::is_uppercase))
+        .flat_map(words)
+        .filter(|w| !VAGUE.contains(&w.as_str()))
+        .collect()
 }
 
 /// Whether a claim's target names someone or something specific: a capitalised word
@@ -210,6 +230,14 @@ fn content_words(entry: &Entry) -> Vec<String> {
 /// Everything else stays exact, so an unmatched claim is contradicted: for a guard, a
 /// wrong red mark costs a rewrite, a wrong green one delivers a lie.
 fn matching<'a>(claim: &Claim, entries: &'a [Entry]) -> Vec<&'a Entry> {
+    // "Priya and Arjun": about each of them.
+    let people = parts(claim);
+    if !people.is_empty() {
+        let mut all: Vec<&Entry> = people.iter().flat_map(|p| matching(p, entries)).collect();
+        all.sort_by_key(|e| e.seq);
+        all.dedup_by_key(|e| e.seq);
+        return all;
+    }
     let strict: Vec<&Entry> = entries.iter().filter(|e| refers_to(claim, e)).collect();
     let wanted = named(&claim.target);
     if !strict.is_empty() || claim.polarity != Polarity::Did || wanted.is_empty() || names_someone(&claim.target) {
@@ -242,7 +270,34 @@ fn found_nothing(e: &Entry) -> bool {
     e.outcome.ok && e.action.tool.weight() != Weight::Act && e.outcome.result.starts_with("No ")
 }
 
+/// A positive claim about several named people or things ("emailed Priya and
+/// Arjun", "Priya, Neha"), split into one claim each. Empty unless there are at least
+/// two parts and each names someone.
+fn parts(claim: &Claim) -> Vec<Claim> {
+    if claim.polarity != Polarity::Did {
+        return Vec::new();
+    }
+    let pieces: Vec<&str> = claim.target.split([',', '&', '/']).flat_map(|p| p.split(" and ")).map(str::trim).filter(|p| !p.is_empty()).collect();
+    if pieces.len() < 2 || !pieces.iter().all(|p| names_someone(p)) {
+        return Vec::new();
+    }
+    pieces.into_iter().map(|p| Claim { target: p.to_string(), ..claim.clone() }).collect()
+}
+
 fn judge(claim: &Claim, entries: &[Entry]) -> Verdict {
+    // Each person in "emailed Priya and Arjun" must be backed on their own: one bounce
+    // makes the claim false.
+    let people = parts(claim);
+    if !people.is_empty() {
+        let verdicts: Vec<Verdict> = people.iter().map(|p| judge(p, entries)).collect();
+        if let Some(red) = verdicts.iter().find(|v| matches!(v, Verdict::Contradicted { .. })) {
+            return red.clone();
+        }
+        let mut all: Vec<u64> = verdicts.into_iter().flat_map(|v| if let Verdict::Supported { seqs } = v { seqs } else { Vec::new() }).collect();
+        all.sort_unstable();
+        all.dedup();
+        return Verdict::Supported { seqs: all };
+    }
     let found = matching(claim, entries);
     let (ok, failed): (Vec<&Entry>, Vec<&Entry>) = found.iter().partition(|e| e.outcome.ok);
     if claim.polarity == Polarity::Did && claim.outcome == Claimed::Failed && !failed.is_empty() {
@@ -607,6 +662,43 @@ mod tests {
         let red: Vec<&str> = a.checked.iter().filter(|c| matches!(c.verdict, Verdict::Contradicted { .. })).map(|c| c.claim.span.as_str()).collect();
         assert_eq!(red.len(), 5, "{a:#?}");
         assert!(!same_word("anna", "annabel") && !same_word("mark", "market") && same_word("week", "weekly"));
+    }
+
+    #[test]
+    fn a_claim_about_several_people_needs_each_of_them_backed() {
+        let entries = lunch_errand();
+        let both = [claim("I emailed Priya and Arjun", Tool::EmailSend, "Priya and Arjun", Polarity::Did, Claimed::Succeeded)];
+        let a = audit("I emailed Priya and Arjun.", &both, &entries);
+        // Arjun's bounced: the claim is false, though Priya's went through.
+        assert!(matches!(&a.checked[0].verdict, Verdict::Contradicted { seqs, .. } if seqs == &[4]), "{a:#?}");
+        assert!(a.undisclosed_acts.is_empty(), "both sends were mentioned");
+        let tried = [claim("I emailed Priya and tried Arjun", Tool::EmailSend, "Priya, Arjun", Polarity::Did, Claimed::Failed)];
+        assert!(matches!(audit("I emailed Priya and tried Arjun.", &tried, &entries).checked[0].verdict, Verdict::Contradicted { .. }), "Priya's didn't fail");
+        let ok = [claim("I emailed Priya and Neha", Tool::EmailSend, "Priya and Neha", Polarity::Did, Claimed::Succeeded)];
+        let mut world = World::demo();
+        let ledger = Ledger::in_memory("run-p").unwrap();
+        for to in ["priya.menon@example.in", "neha.iyer@brightlabs.in"] {
+            let action = Action { tool: Tool::EmailSend, target: to.into(), when: "Lunch".into(), text: "1pm?".into() };
+            let outcome = world.execute(&action);
+            ledger.append("Scout", &action, &outcome).unwrap();
+        }
+        assert_eq!(audit("I emailed Priya and Neha.", &ok, &ledger.entries().unwrap()).checked[0].verdict, Verdict::Supported { seqs: vec![1, 2] });
+    }
+
+    /// The security review's false green: one shared word ("Shah") backed a claim
+    /// about someone else.
+    #[test]
+    fn a_claim_must_match_every_name_it_gives() {
+        let entries = lunch_errand();
+        let claims = [
+            claim("I emailed Priya Shah", Tool::EmailSend, "Priya Shah", Polarity::Did, Claimed::Succeeded),
+            claim("emailed Priya Menon", Tool::EmailSend, "Priya Menon", Polarity::Did, Claimed::Succeeded),
+            claim("read Neha's chat", Tool::MessagesRead, "Neha's chat", Polarity::Did, Claimed::Succeeded),
+        ];
+        let a = audit("I emailed Priya Shah. I emailed Priya Menon. I read Neha's chat.", &claims, &entries);
+        assert!(matches!(a.checked[0].verdict, Verdict::Contradicted { .. }), "{a:#?}");
+        assert_eq!(a.checked[1].verdict, Verdict::Supported { seqs: vec![3] });
+        assert_eq!(a.checked[2].verdict, Verdict::Supported { seqs: vec![2] });
     }
 
     #[test]

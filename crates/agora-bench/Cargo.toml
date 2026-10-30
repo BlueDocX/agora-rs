@@ -15,6 +15,10 @@ path = "src/bin/sched_sim.rs"
 name = "alibi-spike"
 path = "src/bin/alibi_spike.rs"
 
+[[bin]]
+name = "red-team"
+path = "src/bin/red_team.rs"
+
 [dependencies]
 agora-core.workspace = true
 agora-engine.workspace = true

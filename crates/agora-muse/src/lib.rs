@@ -10,7 +10,7 @@ mod cost;
 mod models;
 mod types;
 
-pub use client::{Api, BASETEN_BASE_URL, MuseClient, MuseError, json_part};
+pub use client::{Api, BASETEN_BASE_URL, MuseClient, MuseError, TRANSCRIBE_MODEL, json_part};
 pub use cost::{Price, price_for};
 pub use models::{Host, MODELS, ModelInfo, host_of, model_info};
 pub use types::{Effort, Message, RateLimit, Request, Response, Role, Usage};

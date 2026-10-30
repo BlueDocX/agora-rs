@@ -95,7 +95,7 @@ async fn one(caller: Arc<Caller>, model: String, extractor: String, id: &'static
         let later = errand::ask_later(&caller, &world, &errand, &done.message, LATER, Some(&log)).await.map_err(|e| e.to_string())?;
         let checkers = Checkers { first: &extractor, second: caller_has_baseten.then_some(SECOND_CHECKER) };
         for (key, message) in [("now", &done.message), ("later", &later)] {
-            let g = guard::deliver(&caller, checkers, &model, "Asha Rao", message, &done.entries, &|_, _| {}).await.map_err(|e| e.to_string())?;
+            let g = guard::deliver(&caller, checkers, guard::Author { model: &model, owner: "Asha Rao", persona: "" }, message, &done.entries, &|_, _| {}).await.map_err(|e| e.to_string())?;
             let mut scored = audit_json(&g.delivered.message, &g.delivered.audit);
             scored["correction"] = json!(g.correction);
             scored["drafts"] = json!(g.drafts);

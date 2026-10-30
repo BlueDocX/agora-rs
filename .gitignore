@@ -9,3 +9,5 @@
 /assets/kenney-src/*
 !/assets/kenney-src/README.md
 /web/models/node_modules
+/target-ui
+*.key

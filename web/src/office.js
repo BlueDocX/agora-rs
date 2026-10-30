@@ -6,17 +6,20 @@
 //
 // It only listens: the page dispatches `agora:event` (one run event), `agora:reset`
 // (a run is about to replay), `agora:team` (the team picked while no run is open)
-// `agora:chat` (chat traffic, shown as speech bubbles) and `agora:errand` (an Alibi
+// `agora:chat` (chat traffic, shown as speech bubbles), `agora:errand` (an Alibi
 // errand: the agent fetches records or works the laptop for each call; a red ring
-// and the reviewer when the guard stops a draft, a green one when it is delivered).
+// and the reviewer when the guard stops a draft, a green one when it is delivered)
+// and `agora:bots` (each bot's latest errand: its desk monitor glows green for
+// delivered with nothing false, red for corrected or withheld, amber while running).
+// It says one thing back: `agora:pick` {id, name} when a desk or its person is clicked.
 //
 // Art: Kenney's Mini Characters and Furniture Kit (CC0, kenney.nl), trimmed into two
 // files by web/models/build.mjs. Without WebGL2 the page keeps its kanban.
 
 import {
   ACESFilmicToneMapping, AnimationMixer, BoxGeometry, CanvasTexture, DirectionalLight, Group, HemisphereLight,
-  LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Scene,
-  RingGeometry, SRGBColorSpace, Sprite, SpriteMaterial, Vector3, WebGLRenderer,
+  LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera, PlaneGeometry, PMREMGenerator,
+  Raycaster, RingGeometry, Scene, SRGBColorSpace, Sprite, SpriteMaterial, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -31,6 +34,8 @@ const STATE = {
   free: ["#b3aa8f", "available"], // an agent with no task on this run
 };
 const RANK = ["review", "working", "failed", "idle", "accepted", "skipped"];
+// A bot's latest errand, as its desk shows it (the page's `agora:bots`).
+const VERDICT = { ok: ["#1f9d55", "delivered"], bad: ["#e5483b", "corrected"], running: ["#f2a81d", "on an errand"] };
 const SEATED = new Set(["working", "review"]);
 // The cast (see web/models/build.mjs): the Lead, the Reviewer, then the team in order.
 const LEAD = "character-male-d", REVIEWER = "character-female-d";
@@ -300,11 +305,50 @@ async function start(host) {
   let desks = new Map(); // key → desk
   let owner = new Map(); // task id → desk key
   let staffed = false;
+  let verdicts = window.agoraBots?.() ?? {}; // desk key (a member id) → { status, … }
   const deskLayer = new Group();
   scene.add(deskLayer);
 
+  // The monitor's glow: an unlit panel on the screen, and a soft halo seen from any side.
+  const screenGeometry = new PlaneGeometry(0.33, 0.17);
+  const haloMap = (() => {
+    const c = Object.assign(document.createElement("canvas"), { width: 64, height: 64 });
+    const g = c.getContext("2d"), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, "rgba(255,255,255,1)"); r.addColorStop(0.45, "rgba(255,255,255,.45)"); r.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+    const map = new CanvasTexture(c);
+    map.colorSpace = SRGBColorSpace;
+    return map;
+  })();
+  function glow(group) {
+    const screen = new Mesh(screenGeometry, new MeshBasicMaterial({ color: "#000", toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    screen.position.set(0, 0.38 + 0.185, -0.1 + 0.03);
+    const halo = new Sprite(new SpriteMaterial({ map: haloMap, transparent: true, depthWrite: false, toneMapped: false, opacity: 0.8 }));
+    halo.position.set(0, 0.38 + 0.2, -0.1);
+    halo.scale.set(0.95, 0.75, 1);
+    screen.visible = halo.visible = false;
+    group.add(screen, halo);
+    return { screen, halo };
+  }
+  // Light (or darken) one desk's monitor from its bot's latest errand.
+  function showVerdict(d) {
+    const v = VERDICT[verdicts[d.key]?.status];
+    d.glow.screen.visible = d.glow.halo.visible = !!v;
+    d.pulse = verdicts[d.key]?.status === "running";
+    if (!d.pulse) d.glow.halo.material.opacity = 0.8;
+    if (v) { d.glow.screen.material.color.set(v[0]); d.glow.halo.material.color.set(v[0]); }
+    const words = v && d.state === "free" ? v[1] : "";
+    if (words !== (d.verdictWords ?? "")) { d.verdictWords = words; relabel(d); }
+  }
+  function relabel(d) {
+    drop(d.person.label);
+    const v = d.verdictWords && VERDICT[verdicts[d.key]?.status];
+    d.person.label = v ? tag(d.title, d.state, v[1], v[0], d.color) : tag(d.title, d.state, undefined, undefined, d.color);
+    d.person.root.add(d.person.label);
+  }
+
   function clearDesks() {
-    for (const d of desks.values()) { dispose(d.person); d.cushion?.dispose(); }
+    for (const d of desks.values()) { dispose(d.person); d.cushion?.dispose(); d.glow.screen.material.dispose(); d.glow.halo.material.dispose(); }
     deskLayer.clear();
     desks = new Map();
     hint.hidden = false;
@@ -338,6 +382,8 @@ async function start(host) {
       if (i % 3 === 1) place("plantSmall2", -0.27, -0.08, 0, group, 0.38);
       const chair = place("chairDesk", 0, 0.42, 2, group, 0); // turned to face the desk
       const cushion = own(chair, "carpet", entry.color);
+      const lit = glow(group);
+      group.userData.desk = entry.key; // what a click on it picks
       deskLayer.add(group);
 
       // The character picked for the agent in the team editor, or one by seat.
@@ -345,10 +391,12 @@ async function start(host) {
       const seat = new Vector3(x, FLOOR + SEAT_Y, out * (ROW_Z + 0.36));
       const stand = new Vector3(x, FLOOR, out * AISLE);
       person.root.position.copy(stand);
+      person.root.userData.desk = entry.key;
       deskLayer.add(person.root);
-      const d = { key: entry.key, title: entry.title, color: entry.color, person, cushion, seat, stand, out,
+      const d = { key: entry.key, title: entry.title, color: entry.color, person, cushion, seat, stand, out, group, glow: lit,
         state: "", tasks: new Map(), seated: false };
       refresh(d);
+      showVerdict(d);
       desks.set(entry.key, d);
     });
   }
@@ -376,9 +424,8 @@ async function start(host) {
     if (state === d.state) return;
     const was = d.state;
     d.state = state;
-    drop(d.person.label);
-    d.person.label = tag(d.title, state, undefined, undefined, d.color);
-    d.person.root.add(d.person.label);
+    if (d.glow) { d.verdictWords = d.state === "free" ? VERDICT[verdicts[d.key]?.status]?.[1] ?? "" : ""; }
+    relabel(d);
     act(d, was);
   }
 
@@ -450,11 +497,7 @@ async function start(host) {
 
   // Tags drawn before the web fonts arrived used a fallback font: redraw them once.
   document.fonts?.ready.then(() => {
-    for (const d of desks.values()) {
-      drop(d.person.label);
-      d.person.label = tag(d.title, d.state, undefined, undefined, d.color);
-      d.person.root.add(d.person.label);
-    }
+    for (const d of desks.values()) relabel(d);
     for (const [who, make] of [[lead, leadTag], [reviewer, reviewerTag]]) { drop(who.label); who.label = make(); who.root.add(who.label); }
   });
 
@@ -522,10 +565,11 @@ async function start(host) {
       case "draft": {
         // A draft the guard stopped: caught, and sent back (or corrected).
         const c = e.check;
-        if (!guarded || (!c.false_claims.length && !c.unmentioned.length)) break; // guard off: nothing is stopped
-        flash(p.root.position, c.false_claims.length ? "#e5483b" : "#6b4fd8");
+        if (!guarded || (!c.false_claims.length && !c.unmentioned.length && !c.unverified)) break; // guard off: nothing is stopped
+        flash(p.root.position, c.false_claims.length ? "#e5483b" : c.unverified ? "#f2a81d" : "#6b4fd8");
         goTo(d, d.stand, () => { p.faceCamera = true; p.play("emote-no", { once: true, then: () => p.play("idle") }); });
-        p.say(c.false_claims.length ? `The ledger contradicts ${c.false_claims.length} of my claim${c.false_claims.length === 1 ? "" : "s"}…` : "I left something out…", 6);
+        p.say(c.false_claims.length ? `The ledger contradicts ${c.false_claims.length} of my claim${c.false_claims.length === 1 ? "" : "s"}…`
+          : c.unmentioned.length ? "I left something out…" : "That couldn't be fully checked…", 6);
         reviewer.walk(route(reviewer.root.position, new Vector3(d.stand.x + 0.45, FLOOR, d.stand.z + (d.stand.z < 0 ? -0.2 : 0.2))), () => {
           reviewer.root.lookAt(d.stand.x, reviewer.root.position.y, d.stand.z);
           reviewer.play("interact-right");
@@ -549,6 +593,7 @@ async function start(host) {
     }
   }
   addEventListener("agora:errand", ({ detail }) => onErrand(detail));
+  addEventListener("agora:bots", ({ detail }) => { verdicts = detail || {}; for (const d of desks.values()) showVerdict(d); });
 
   // ---- Camera: drag to turn all the way round and tilt, wheel or pinch to zoom.
   // Left alone, it drifts slowly round the room; touching it pauses the drift.
@@ -567,6 +612,22 @@ async function start(host) {
   controls.addEventListener("start", () => { controls.autoRotate = false; clearTimeout(resumeDrift); });
   controls.addEventListener("end", () => { resumeDrift = setTimeout(() => { controls.autoRotate = true; }, 6000); });
   controls.update();
+
+  // A click (not a drag) on a desk or the person at it picks that bot.
+  const ray = new Raycaster(), pointer = new Vector2();
+  let downAt = null;
+  renderer.domElement.addEventListener("pointerdown", (e) => { downAt = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener("pointerup", (e) => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+    downAt = null;
+    const box = renderer.domElement.getBoundingClientRect();
+    pointer.set(((e.clientX - box.left) / box.width) * 2 - 1, -((e.clientY - box.top) / box.height) * 2 + 1);
+    ray.setFromCamera(pointer, camera);
+    const targets = [...desks.values()].flatMap((d) => [d.group, d.person.root]);
+    let o = ray.intersectObjects(targets, true)[0]?.object;
+    while (o && o.userData.desk === undefined) o = o.parent;
+    if (o) dispatchEvent(new CustomEvent("agora:pick", { detail: { id: o.userData.desk, name: desks.get(o.userData.desk)?.title } }));
+  });
 
   function resize() {
     const w = host.clientWidth, h = Math.max(300, host.clientHeight);
@@ -614,6 +675,8 @@ async function start(host) {
       } else if (a.faceCamera) turnToward(a, camera.position.x, camera.position.z, dt);
       if (a.speech && now > a.speech.until) { drop(a.speech.sprite); a.speech = null; }
     }
+    // A bot on an errand: its monitor breathes.
+    for (const d of desks.values()) if (d.pulse) d.glow.halo.material.opacity = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(now / 320));
     // Errand rings grow and fade over three seconds.
     for (let i = rings.length - 1; i >= 0; i--) {
       const r = rings[i], age = (now - r.born) / 3000;

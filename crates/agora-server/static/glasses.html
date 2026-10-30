@@ -45,10 +45,18 @@
   </section>
 
   <section id="join" class="menu" hidden>
-    <div class="panel"><h2>Join</h2><div class="line">Your name (tap to dictate)</div></div>
-    <input id="join-name" type="text" maxlength="40" aria-label="Your name" autocomplete="name">
+    <div class="panel"><h2>Join the office</h2><div class="line">Your name, and the invite code from the owner (tap to dictate)</div></div>
+    <input id="join-name" type="text" maxlength="40" aria-label="Your name" placeholder="Your name" autocomplete="name">
+    <input id="join-invite" type="text" maxlength="64" aria-label="Invite code" placeholder="Invite code" autocomplete="off" spellcheck="false">
     <button id="join-go" type="button">Join</button>
-    <div class="note" id="join-note"></div>
+    <div class="note" id="join-note">The first person in owns the office and needs no code.</div>
+  </section>
+
+  <section id="token" class="menu" hidden>
+    <div class="panel"><h2>Access token</h2><div class="line">This office needs its access token first</div></div>
+    <input id="token-text" type="password" aria-label="Access token" placeholder="Access token" autocomplete="off">
+    <button id="token-go" type="button">Continue</button>
+    <div class="note" id="token-note"></div>
   </section>
 
   <section id="errand" class="menu" hidden>
@@ -73,19 +81,20 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
-// A key handed over in the link (#key=…) joins this device as that person.
-// Read the token first (and keep it), then drop the key from the address bar.
-const token = new URLSearchParams(location.search).get("token") || store.get("agora-token");
-if (token) store.set("agora-token", token);
+const JSON_HEADERS = { "Content-Type": "application/json" };
+// The token and member key live in HttpOnly cookies (POST /api/session), never here.
+try { localStorage.removeItem("agora-token"); localStorage.removeItem("agora-member"); } catch {}
+// A key handed over in the link (#key=…) signs this device in as that person, and an
+// invite link (#invite=…) fills in the join form. Both leave the address bar at once.
 const handed = new URLSearchParams(location.hash.slice(1));
-if (handed.get("key")) { store.set("agora-member", JSON.stringify({ key: handed.get("key"), member: null })); history.replaceState(null, "", location.pathname + location.search); }
-let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })();
-const headers = (json) => ({ ...(json ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: "Bearer " + token } : {}), ...(me?.key ? { "X-Agora-Member": me.key } : {}) });
+if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+let me = null; // whoami: { member, channels, call_room, invite? }
 let members = [], activity = [], watching = null, timer = 0, source = null;
+const post = (url, body) => fetch(url, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
 // ---- Screens: one level deep, so Back (history.back) always returns home ----
-const SCREENS = ["home", "join", "errand", "result", "activity"];
+const SCREENS = ["home", "join", "token", "errand", "result", "activity"];
 function show(id, push = true) {
   for (const s of SCREENS) $(s).hidden = s !== id;
   if (push && id !== "home") history.pushState({ screen: id }, "");
@@ -108,7 +117,7 @@ addEventListener("keydown", (e) => {
 // ---- Office state ----
 async function refresh() {
   try {
-    const feed = await fetch("/api/errands", { headers: headers() });
+    const feed = await fetch("/api/errands");
     const errands = feed.ok ? await feed.json() : [];
     const mine = errands.filter((e) => me?.member && (e.people.asked_by?.[0] === me.member.id));
     const last = mine[0];
@@ -121,11 +130,8 @@ async function refresh() {
   } catch { $("status").textContent = "Can't reach the office"; }
 }
 function connect() {
-  const q = new URLSearchParams();
-  if (token) q.set("token", token);
-  if (me?.key) q.set("member", me.key);
   source?.close();
-  source = new EventSource("/api/company/events" + (q.size ? "?" + q : ""));
+  source = new EventSource("/api/company/events"); // the session cookies say who is watching
   source.onmessage = (m) => {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
@@ -144,30 +150,51 @@ function renderWho() {
   const list = $("activity-list");
   list.replaceChildren(...activity.map((a) => Object.assign(document.createElement("div"), { className: "line", textContent: a.text })));
 }
+// Who this device is: 200 a member, 404 not joined (join first), 401 a token is needed.
 async function whoami() {
-  // A key handed over without its member: find who it is by asking the company.
-  if (!me?.key || me.member) return;
-  const res = await fetch("/api/company/whoami", { headers: headers() }).catch(() => null);
-  if (res?.ok) { me.member = await res.json(); store.set("agora-member", JSON.stringify(me)); }
-  else if (res?.status === 404) { me = null; store.set("agora-member", ""); } // only an unknown key is forgotten
+  const res = await fetch("/api/company/whoami").catch(() => null);
+  if (res?.ok) me = await res.json();
+  else if (res?.status === 404 || res?.status === 401) me = null;
   renderWho();
+  return res?.status ?? 0;
+}
+// Start (or restart) after the session changed: what to show first follows from whoami.
+async function begin() {
+  const status = await whoami();
+  connect(); refresh();
+  if (status === 401) show("token", false);
+  else if (!me) show("join", false);
+  else show("home", false);
 }
 
-// ---- Join ----
+// ---- Join: name and invite; the key it answers goes straight into a cookie ----
 $("go-join").onclick = () => show("join");
 $("join-go").onclick = async () => {
   const name = $("join-name").value.trim();
-  if (!name) return;
-  const res = await fetch("/api/company/join", { method: "POST", headers: headers(true), body: JSON.stringify({ name }) });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) { $("join-note").textContent = body.error || "Couldn't join"; return; }
-  me = body; store.set("agora-member", JSON.stringify(me));
-  connect(); renderWho(); show("home");
+  if (!name) { $("join-note").textContent = "Say your name first."; return; }
+  const invite = $("join-invite").value.trim() || undefined;
+  const res = await post("/api/company/join", { name, invite }).catch(() => null);
+  const body = await res?.json().catch(() => ({}));
+  if (!res?.ok) { $("join-note").textContent = body?.error || "Couldn't reach the office"; return; }
+  const session = await post("/api/session", { member: body.key }).catch(() => null);
+  if (!session?.ok) { $("join-note").textContent = "You joined, but this device couldn't be signed in."; return; }
+  $("join-note").textContent = "";
+  begin();
+};
+// ---- Token: traded for a cookie, never stored here ----
+$("token-go").onclick = async () => {
+  const token = $("token-text").value.trim();
+  $("token-text").value = "";
+  if (!token) return;
+  const res = await post("/api/session", { token }).catch(() => null);
+  if (!res?.ok) { $("token-note").textContent = res?.status === 401 ? "That token isn't right." : "Couldn't reach the office."; return; }
+  $("token-note").textContent = "";
+  begin();
 };
 
 // ---- Errands ----
 async function startErrand(brief, area) {
-  const res = await fetch("/api/errands", { method: "POST", headers: headers(true), body: JSON.stringify({ brief, area: area || undefined }) });
+  const res = await post("/api/errands", { brief, area: area || undefined });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || "Couldn't start it");
   return body.id;
@@ -197,7 +224,7 @@ function renderResult(e) {
   // What was delivered is the agent's words and, when the guard added one, the
   // correction from the ledger: both are shown and read out.
   const told = s ? [s.message, s.correction].filter(Boolean).join("\n\n") : "";
-  $("result-say").textContent = e.failed ? `Couldn't finish: ${e.failed}` : e.busy && !s ? `Working… ${e.steps} step${e.steps === 1 ? "" : "s"} on the ledger` : told;
+  $("result-say").textContent = e.failed ? `Couldn't finish: ${e.failed}` : e.busy && !s ? `Working… ${plural(e.steps, "step")} on the ledger` : told;
   const chips = [];
   if (s) {
     chips.push(chip(`${s.backed} backed`, "ok"));
@@ -217,8 +244,8 @@ $("read").onclick = () => {
 $("ask-go").onclick = async () => {
   const question = $("ask-text").value.trim();
   if (!question || !watching) return;
-  const res = await fetch(`/api/errands/${encodeURIComponent(watching)}/ask`, { method: "POST", headers: headers(true), body: JSON.stringify({ question }) });
-  if (res.ok) { $("ask-text").value = ""; refresh(); }
+  const res = await post(`/api/errands/${encodeURIComponent(watching)}/ask`, { question }).catch(() => null);
+  if (res?.ok) { $("ask-text").value = ""; refresh(); }
 };
 $("go-activity").onclick = () => show("activity");
 $("activity-back").onclick = () => history.back();
@@ -248,7 +275,7 @@ async function registerTools() {
       description: "Ask the bot a question about the wearer's latest errand (e.g. 'did you read my private chats?'). It answers from its ledger, and the answer is checked the same way.",
       inputSchema: { type: "object", properties: { question: { type: "string", description: "The question." } }, required: ["question"] },
       annotations: { readOnlyHint: false },
-      async execute({ question }) { const e = latest(); if (!e) return { ok: false, next_action: "No errand yet." }; const r = await fetch(`/api/errands/${encodeURIComponent(e.id)}/ask`, { method: "POST", headers: headers(true), body: JSON.stringify({ question }) }); return r.ok ? { ok: true, next_action: "Asked. Read the answer with agora_errand_result shortly." } : { ok: false, error: (await r.json().catch(() => ({}))).error }; },
+      async execute({ question }) { const e = latest(); if (!e) return { ok: false, next_action: "No errand yet." }; const r = await post(`/api/errands/${encodeURIComponent(e.id)}/ask`, { question }); return r.ok ? { ok: true, next_action: "Asked. Read the answer with agora_errand_result shortly." } : { ok: false, error: (await r.json().catch(() => ({}))).error }; },
     },
     {
       name: "agora_office_status",
@@ -263,9 +290,11 @@ async function registerTools() {
   }
 }
 
-connect(); whoami(); refresh(); registerTools();
+if (handed.get("invite")) $("join-invite").value = handed.get("invite");
+// A handed-over key signs this device in first (a 404 means it isn't anyone's now).
+(handed.get("key") ? post("/api/session", { member: handed.get("key") }).catch(() => null) : Promise.resolve()).then(begin);
+registerTools();
 timer = setInterval(refresh, 3000);
-show("home", false);
 </script>
 </body>
 </html>

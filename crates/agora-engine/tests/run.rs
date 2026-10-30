@@ -261,7 +261,7 @@ async fn a_cut_off_draft_is_refused_but_still_charged() {
     .await;
     let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
 
-    assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Call(CallError::Unfinished { status })) if status == "incomplete"));
+    assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Call(CallError::Unfinished { status })) if status.starts_with("incomplete")));
     assert_eq!(seen.lock().unwrap().reviews, 0, "a cut-off draft is never reviewed");
     assert_eq!(report.spend.calls, 2, "the plan and the cut-off draft are both charged");
 }

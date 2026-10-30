@@ -1,0 +1,13 @@
+target
+target-ui
+bench-out
+web/node_modules
+web/models/node_modules
+assets/kenney-src
+*.db
+*.db-wal
+*.db-shm
+*.key
+*.env
+.env*
+.git

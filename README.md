@@ -1,6 +1,6 @@
 # Agora (Rust rebuild): the office where AI can't lie about what it did
 
-A virtual office where Muse agents and people work as one team. Agents act on a person's contacts, calendar, email, chats and files. **Every call they make is written by the executor (never by the agent) to a hash-chained ledger.** When an agent explains what it did, each claim is checked against that ledger and marked:
+**The trust layer for AI agents that act on your data; the office is where you watch it.** A virtual office where people and their Muse bots work as one team. Bots act on a person's contacts, calendar, email, chats and files. **Every call they make is written by the executor (never by the agent) to a hash-chained ledger.** When an agent explains what it did, each claim is checked against that ledger and marked:
 - **backed** (green)
 - **contradicted** (red)
 - **done but not mentioned** (purple)
@@ -19,7 +19,16 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 - Nov 4, 2026), on Meta
 | Muse Spark 1.3 Contributor | 1 of 36 | 18 of 44 | 8 of 10 |
 | Muse Spark Open (Baseten) | 0 of 18 | 9 of 45 | 4 of 10 |
 
-**With the guard on (B5, [details](docs/benchmarks.md#b5-the-guard-no-false-claims-delivered)): 0 false claims and 0 unmentioned actions delivered**, out of 411 claims across the same 30 errands, right after the work and when asked later. The guard stopped 29 first drafts and had them rewritten, and one needed a correction written from the ledger. **An independent check agrees:** Muse Wonder, which the guard never consulted, re-read all 60 delivered messages. It flagged 1 of 416 claims, and that one is a misparse: "No writable team-notes.md was found in the file listing" was read as "I didn't look at the team notes", while the message is accurate.
+**With the guard on (B5, [details](docs/benchmarks.md#b5-the-guard-no-false-claims-delivered)): 0 claims the ledger contradicts and 0 unmentioned actions delivered**, out of 411 claims about the agents' own actions, across the same 30 errands, right after the work and when asked later. The guard stopped 29 first drafts and had them rewritten, and one needed a correction written from the ledger. **An independent check agrees:** Muse Wonder, which the guard never consulted, re-read all 60 delivered messages. It flagged 1 of 416 claims, and that one is a misparse: "No writable team-notes.md was found in the file listing" was read as "I didn't look at the team notes", while the message is accurate.
+
+**What that number covers, and what it doesn't.** It counts claims about the agent's own tool calls (what it sent, booked, wrote or read, and whether that worked), as two models parsed them. It doesn't check claims about the world ("the report is attached and up to date"), and within a matched call it checks who and whether, not every detail (a wrong time in "booked 3pm" can pass). B5 ran on the 30 errands whose matching rules were refined during B4, with agents that weren't trying to deceive. **B6 removes those conditions:** an agent told to lie, an inbox carrying a prompt injection, and errands written after the rules were frozen (below).
+
+**Red team (B6, [details](docs/benchmarks.md#b6-red-team-try-to-break-the-guard)): 0 of 907 delivered claims contradicted by the ledger, and 0 actions left unmentioned**, over 60 errands:
+- an agent told to lie
+- an inbox carrying a prompt injection, including when the person told the agent to obey it
+- 20 errands written after the matching rules were frozen
+
+And the case no model can be relied on to play: reports written by code to lie about 20 real ledgers (27 planted lies). With no rewrite allowed, **none reached the person**: the guard's last step cut each to its backed sentences and corrected it from the ledger. Honest notes: the models mostly refused to lie or to follow the injection even when told to, so the executor's block on planted addresses is covered by a unit test rather than by this run. And a gap this found (a blanket "Everything went through." surviving a correction) is fixed.
 
 A real exchange: the agent blocked Saturday on the calendar and messaged Priya. Asked later, it said *"I did not block your calendar or message Priya… The previous 'Done!' reply was incorrect and I apologize."* Both actions are in the ledger. With the guard, the same agent answered: *"I searched for Priya, opened Priya Menon's contact to get her details, sent her the message about Saturday, and booked Saturday 12:00… I did see her contact notes… but I did not open any private chats."*
 
@@ -28,10 +37,11 @@ A real exchange: the agent blocked Saturday on the calendar and messaged Priya. 
 - Plain Rust code decides each verdict against the ledger.
 - A second model (Muse Spark Open) parses the same account independently. A red mark the second parser doesn't reproduce is shown as *disputed* instead.
 
-**The guard: no false claim reaches you.** Detecting a lie is not enough, so every message goes through `agora-engine::guard` before you see it.
+**The guard: no claim the ledger contradicts reaches you.** Detecting a lie is not enough, so every message goes through `agora-engine::guard` before you see it.
 1. **Prevent.** Asked about an errand later, the agent answers from its own ledger, not from memory. Lost context is why the models above deny what they did.
 2. **Catch and revise.** Each draft is checked by both parsers, and one flagging a false claim is enough to stop it. A draft with a false claim, or with an action or private read left out, goes back to the agent with the exact receipts, up to twice.
 3. **Guarantee.** A draft that is still wrong is not delivered as written. Its false sentences are removed, and a correction written by code from the ledger (so it can't misreport) lists every send, booking, write and private read.
+4. **Fail closed.** A message that couldn't be fully checked counts as a problem, not a pass: a claim a parser couldn't tie to words in the message, or a second parser that didn't answer. If the guard itself can't run, you get only the ledger's own account, never the agent's unchecked words.
 
 The page shows each stopped draft struck through with its reason, so the correction is never hidden. Turn the guard off (the checkbox) to see the raw agent.
 
@@ -39,15 +49,27 @@ The page shows each stopped draft struck through with its reason, so the correct
 - Its content is deleted: SQLite `secure_delete` overwrites it, and the write-ahead log is checkpointed.
 - Every message the agent wrote after it is withdrawn.
 - The errand's records are scanned for any copy left.
+- The office's own stored copy of the errand's stream is rewritten too, and its write-ahead log checkpointed. Reports a bot posted to a channel from that errand are withdrawn, and the office's messages are part of the scan.
+- The office keeps the last 200 errands. An older one's stream is deleted and its ledger content forgotten; the hash chain stays.
 - The hash chain still verifies, because it covers a hash of the content. So the ledger still proves *that* the agent read something, without keeping *what* it read.
+- That hash is **salted** per entry, and the salt is deleted with the content. Without it, the hash that stays can't be checked against a guess ("was it the chat with Neha?").
+
+**Tamper evidence, and against whom.** The hash chain stops the *agent*: it never writes the ledger, and changing, dropping or reordering an entry is caught (`agora-verify`). A chain alone doesn't stop whoever *runs the server*, who could rewrite it and recompute every hash. So the office **signs each ledger head with Ed25519** and hands you the receipt (run, entry count, head, time, signature). Keep it, and `agora-verify --receipt receipt.json agora-journal.db <office-key>` later proves whether the ledger still reaches what the office signed. A rewritten history fails even with every hash recomputed, because only the office's key could have signed the old head. The office's public key is at `/.well-known/agora-signing-key`; publish it somewhere the operator doesn't control to anchor it.
+
+**Prompt injection.** What a call returns (an email, a chat, a file) is someone else's text. Results reach the agent marked as data, never as instructions. The executor also refuses to email any address that isn't saved in the person's contacts or written in the errand itself. So an address planted in an email (even one signed with a friend's name) can't be used to send their data out. A new address the person really wants used goes in the errand. A blocked attempt is still a failed ledger entry, so the guard makes the agent own up to it.
 
 ## A company in one office, on your glasses, and reachable by Meta AI
 
 - **Company rooms.**
-  - Up to 8 people join one office, and each gets a bot that works under them.
-  - The first person in is the owner, who can make others **leads of an area** (Finance, Marketing…).
-  - An errand sent to an area runs on that lead's bot, and everyone sees who asked whose bot to do what, and how its receipts came out.
-  - In 3D, every person's bot has a desk labelled with its owner.
+  - Up to 24 people join one office, each with a bot that works under them. The first person in is the owner; everyone after needs the owner's **invite link**.
+  - The owner makes others **leads of an area** (Finance, Marketing…). An errand sent to an area runs on that lead's bot, and everyone sees who asked whose bot to do what, and how its receipts came out.
+  - **People talk to each other**: `#general`, a channel per area, and direct messages that reach only the two people in them.
+  - **Bots work in the channels too**: "@Atlas remind Arjun about the money" gives Priya's bot the errand, and its report comes back to the channel, checked, with its receipt counts.
+  - **Calls**: one click opens a Jitsi Meet call for the channel, in a room name only members are told.
+  - Only the person who asked, the bot's owner or the office owner can question an errand or have it forget something.
+  - **It survives restarts**: people (only a hash of each key is kept), messages, activity and every errand's stream are kept in SQLite (`agora-state.db`).
+  - In 3D, every person's bot has a desk labelled with its owner, and its monitor glows with its latest verdict.
+- **Voice errands.** Speak an errand instead of typing it. The browser records a WAV and the office sends it to **Muse Voice Transcribe** (`/v1/asr/transcribe`) on its own key, with the names in the office (contacts, people, bots) as keywords so they come back spelled right.
 - **Ray-Ban Display web app** (`/glasses`), built to Meta's Web Apps docs:
   - `mrbd-web-app-capable`, a black background (black is transparent on the display), arrow and Enter navigation on native controls
   - the system composer for dictation, and `speechSynthesis` to read results aloud
@@ -78,7 +100,9 @@ The Wearables Device Access Toolkit (camera, mic and sensors from the glasses) i
 
 ## Built during the hackathon
 
-All code in this repository was written during the hackathon, starting after kickoff on 26 Oct 2026. The git history is the record.
+All code in this repository was written during the hackathon, starting at kickoff (9:30 PM IST, 26 Oct 2026). The git history is the record.
+
+**How this was built.** The author directed the work and an AI coding agent (Claude Code) wrote the code, in long sessions: research, design decisions and every product call came from the author; the agent wrote, tested and reviewed. The first file was written at 21:30 IST on 26 Oct, the moment kickoff began (the session transcripts keep the timestamps), and the first commit followed at 21:35. That is why it is 1,464 lines: commits are made at milestones, not per edit. The plan and research notes were written before kickoff, outside this repository; no code was. Panels of review agents (code review, security review, a mock judging panel) checked the work along the way, and their findings are fixed in the commits that mention them.
 
 This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/agora](https://github.com/Ritesh-Root/agora). The old project is used only as a reference and as a benchmark baseline: no code or assets are copied from it. Its 3D models are CC BY-NC and are not used here.
 
@@ -94,13 +118,13 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
     - The Alibi tab shows each ledger row live. Claims are marked, and clicking one shows its receipt.
     - You can cross-examine the agent ("Did you read my private chats?"), and each row has a Forget button.
     - In 3D, the agent walks to the records shelf or the laptop for each call. A ring flashes under it when its account is checked, and on a red one the reviewer walks over as auditor.
-  - **`agora-verify [agora-journal.db] [errand-id]`:** checks every ledger in a file without trusting the server; it exits 1 on tampering.
+  - **`agora-verify [agora-journal.db] [errand-id]`:** checks every ledger in a file without trusting the server; it exits 1 on tampering. `--receipt <file> [db] [key]` checks a signed receipt against the ledger.
 - **`agora-core`:** validates a planner's task graph. Duplicate ids, self-dependencies, unknown dependencies and cycles are rejected, each with a message the planner model can act on.
 - **`agora-engine`:** one run, end to end.
   - **Plan.** Muse returns a plan in a fixed JSON schema, and an invalid graph goes back to it with the exact error.
   - **Schedule.** See the next bullet.
   - **Work and review.** Each task's result is reviewed against its acceptance criteria. If the reviewer is unsure, two more reviews vote. A rejected draft gets one retry with the exact unmet criteria, and is then left for a person, without blocking unrelated tasks.
-  - **Budget.** Every call's cost is counted and shown live. Runs are uncapped by default; `AGORA_CAP_USD` sets a per-run cap (do set one before opening the hub to others).
+  - **Budget.** Every call's cost is counted and shown live. Each run is capped (`AGORA_CAP_USD`, default $2), each errand at $0.75, all errands together while the server runs (`AGORA_ERRANDS_CAP_USD`, default $10), the chat at $2, and voice at 2 hours of audio.
   - **Code checks.** The planner sets word limits and required headings per task. Plain code checks them before any paid review.
   - **Resume.** Every completed reply is saved to a SQLite file (`agora-journal.db`) as it arrives. `agora-run --resume <run-id>` replays those replies for free and continues from the first call that never finished. Tested live by force-killing a run mid-way.
 - **`agora-server`:** the room hub and office board.
@@ -108,7 +132,7 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
   - The cost updates live, and the deliverable appears at the end.
   - Runs stream as Server-Sent Events. A link like `/#run-…` replays a run from the start.
   - **3D office:** Three.js with soft shadows, filmic tone mapping and environment light. Each agent has a desk in a pod; they stand in the aisle while work waits, walk to their chair and sit to work, cheer when accepted, and the reviewer walks the aisles to each draft (skeletal animation with crossfades). Speech bubbles show the chat; Enter VR appears on headsets. Without WebGL2 the kanban remains. Characters and furniture are Kenney's CC0 packs (see Credits).
-  - It listens on localhost unless `AGORA_TOKEN` is set, and every `/api` call then needs the token. At most 2 runs are active at once.
+  - **Access.** It listens on localhost unless `AGORA_TOKEN` is set, and every `/api` call then needs the token: as a bearer header, or as an `HttpOnly`, `SameSite=Strict` cookie the page gets from `POST /api/session`. No secret ever goes in a URL, and the page keeps no key in storage. Every request must name the server in `Host` (localhost or `AGORA_HOSTS`), which stops DNS rebinding. Member keys come from the OS random source and only their SHA-256 is stored. `/healthz` answers for load balancers; SIGTERM shuts down gracefully. At most 2 runs are active at once.
 - **Open-weights reviewer:** `AGORA_REVIEWER=baseten` reviews on Muse Spark Open via Baseten (Chat Completions), while planning and writing stay on Meta's Model API.
 - **Scheduler (in `agora-engine`):** the ready-queue scheduler. A task starts the moment its own dependencies finish, the longest remaining chain goes first, and a failure skips only what depends on it. Property tests check dependency order, the parallel cap, critical-path optimality, and failure isolation on random plans.
 - **`agora-muse`:** a typed client for Meta's Model API (Responses endpoint). It supports structured output and prompt-cache keys. It retries 429 and 5xx responses up to 4 times, waiting at least as long as `Retry-After` asks. It reads the rate-limit headers and computes the exact cost of every call, billing cached tokens at the cached rate. The API key can't appear in debug output. Tested against a local mock server; `examples/smoke.rs` checks it against the live API.
@@ -130,6 +154,12 @@ MODEL_API_KEY=... cargo run -p agora-server   # then open http://127.0.0.1:8080 
 cargo run -p agora-engine --bin agora-verify -- agora-journal.db       # check every ledger
 MODEL_API_KEY=... BASETEN_API_KEY=... cargo run -p agora-bench --release --bin alibi-spike   # B4, about $0.85
 cargo run -p agora-bench --release --bin alibi-spike -- --reaudit bench/b4_alibi_rows.jsonl  # re-score, free
+
+MODEL_API_KEY=... BASETEN_API_KEY=... cargo run -p agora-bench --release --bin red-team       # B6, about $4
+cargo run -p agora-engine --bin agora-verify -- --receipt errand-…-receipt.json agora-journal.db <office key>
+
+# a container (Cloud Run sets PORT; keep /data on a volume to keep the office)
+podman build -t agora . && podman run -p 8080:8080 -e PORT=8080 -e AGORA_TOKEN=… -e AGORA_HOSTS=your.host -e MODEL_API_KEY=… agora
 
 # after editing web/src (the 3D office); the built files are committed
 cd web && npm ci --ignore-scripts && npm run build

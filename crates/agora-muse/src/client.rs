@@ -11,6 +11,8 @@ use crate::types::{RawChatResponse, RawResponse};
 use crate::{RateLimit, Request, Response};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.meta.ai/v1";
+/// Meta's speech-to-text model (`POST /v1/asr/transcribe`; $0.18 per hour of audio).
+pub const TRANSCRIBE_MODEL: &str = "muse-voice-transcribe-1.0";
 /// Baseten's OpenAI-compatible Model APIs, which serve Muse Spark Open.
 pub const BASETEN_BASE_URL: &str = "https://inference.baseten.co/v1";
 
@@ -157,6 +159,39 @@ impl MuseClient {
             }
             tokio::time::sleep(self.backoff(attempt).max(retry_after.unwrap_or_default())).await;
         }
+    }
+
+    /// Muse Voice Transcribe: a WAV recording (mono, 16-bit PCM, 16 or 24 kHz, at
+    /// most 10 minutes) to text, one push-to-talk turn. `keywords` bias recognition
+    /// toward names it might mishear. `POST {base}/asr/transcribe`, multipart.
+    ///
+    /// # Errors
+    /// The host's error (e.g. 400 for audio it can't read), or a transport failure.
+    pub async fn transcribe(&self, wav: Vec<u8>, keywords: &[String]) -> Result<String, MuseError> {
+        use reqwest::multipart::{Form, Part};
+        let mut settings = serde_json::json!({ "mode": "PUSH_TO_TALK", "model": TRANSCRIBE_MODEL, "audioEncoding": "WAV" });
+        if !keywords.is_empty() {
+            settings["keywords"] = serde_json::json!(keywords);
+        }
+        let part = |p: Part, mime: &str| p.mime_str(mime).map_err(|e| MuseError::Transport(e.to_string()));
+        let form = Form::new()
+            .part("request", part(Part::text(settings.to_string()), "application/json")?)
+            .part("audio", part(Part::bytes(wav).file_name("speech.wav"), "audio/wav")?);
+        let res = self
+            .http
+            .post(format!("{}/asr/transcribe", self.base_url))
+            .bearer_auth(&self.key.0)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| MuseError::Transport(e.without_url().to_string()))?;
+        let status = res.status();
+        let text = res.text().await.map_err(|e| MuseError::Decode(e.to_string()))?;
+        if !status.is_success() {
+            return Err(MuseError::Api { status: status.as_u16(), message: api_message(&text) });
+        }
+        let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| MuseError::Decode(e.to_string()))?;
+        body["transcript"].as_str().map(|t| t.trim().to_string()).ok_or_else(|| MuseError::Decode("no transcript in the reply".into()))
     }
 
     /// [`Self::respond`], then parse the output text as JSON. Use with

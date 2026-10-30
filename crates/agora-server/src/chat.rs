@@ -20,7 +20,7 @@ use agora_engine::RunEvent;
 use agora_engine::chat::{self, Addressed, ChatError, ChatMessage, Kind, LEAD_COLOR, Voice};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -138,7 +138,7 @@ pub(crate) struct Post {
 }
 
 pub(crate) async fn post(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Json<Post>, JsonRejection>) -> Response {
-    if !authorized(&hub, &headers, None) {
+    if !authorized(&hub, &headers) {
         return unauthorized();
     }
     let Json(body) = match body {
@@ -228,8 +228,8 @@ async fn converse(hub: Arc<Hub>, team: Team, addressed: Addressed, budget: Arc<a
     }
 }
 
-pub(crate) async fn events(State(hub): State<Arc<Hub>>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>) -> Response {
-    if !authorized(&hub, &headers, query.get("token").map(String::as_str)) {
+pub(crate) async fn events(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    if !authorized(&hub, &headers) {
         return unauthorized();
     }
     let (history, live) = {

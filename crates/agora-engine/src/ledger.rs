@@ -18,6 +18,10 @@
 //! disk), while the tool, the time, whether it worked and the content hash stay. The
 //! chain still verifies, and the ledger still proves *that* the agent read something
 //! at that moment, without keeping *what* it read.
+//!
+//! The content hash is salted: SHA-256 of a random per-entry salt and the content.
+//! Forgetting deletes the salt too, so the hash that stays can't be matched against
+//! guesses ("was it the chat with Neha?") the way a bare hash of guessable text could.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -46,9 +50,13 @@ pub struct Entry {
     /// For a forgotten entry only `outcome.ok` is real.
     pub outcome: Outcome,
     pub at_ms: u64,
-    /// SHA-256 of the content as written, kept when the content is forgotten.
+    /// SHA-256 of the salt and the content as written, kept when the content is forgotten.
     #[serde(default)]
     pub content_hash: String,
+    /// The per-entry salt (hex), deleted with the content. Empty in ledgers written
+    /// before salting, whose content hash is of the content alone.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub salt: String,
     /// When the content was forgotten, if it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forgotten_at_ms: Option<u64>,
@@ -68,6 +76,9 @@ pub struct Broken {
 pub struct Ledger {
     db: Mutex<Connection>,
     run_id: String,
+    /// Whether the table has the `salt` column (a ledger opened read-only from before
+    /// salting doesn't, and isn't changed to get it).
+    salted: bool,
 }
 
 /// What an entry's content hash covers.
@@ -102,8 +113,18 @@ fn content_json(action: &Action, outcome: &Outcome) -> String {
     serde_json::to_string(&Content { action, outcome }).unwrap_or_default()
 }
 
+/// The content hash: of the salt and the content, or of the content alone for an
+/// entry written before salting (no salt).
+fn commitment(salt: &str, content: &str) -> String {
+    if salt.is_empty() { sha_hex(content.as_bytes()) } else { sha_hex(format!("{salt}\n{content}").as_bytes()) }
+}
+
 fn hash_of(h: &Hashed<'_>) -> String {
     sha_hex(&serde_json::to_vec(h).unwrap_or_default())
+}
+
+fn has_salt(db: &Connection) -> rusqlite::Result<bool> {
+    db.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('ledger') WHERE name = 'salt'", [], |r| r.get(0))
 }
 
 fn now_ms() -> u64 {
@@ -119,13 +140,14 @@ fn to_u64(n: i64) -> u64 {
 }
 
 /// Proof that an entry's content was forgotten.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
     pub run: String,
     pub seq: u64,
     pub tool: Tool,
     pub at_ms: u64,
-    /// The hash of the content that existed (it can't be turned back into the content).
+    /// The salted hash of the content that existed. Its salt is gone with it, so it
+    /// can't be turned back into the content or checked against a guess.
     pub content_hash: String,
     pub forgotten_at_ms: u64,
     /// The chain still verifies with the content gone: this many entries, this head.
@@ -155,7 +177,8 @@ impl Ledger {
             return Err(JournalError::new(format!("no ledger at {}", path.display())));
         }
         let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        Ok(Self { db: Mutex::new(db), run_id: run_id.to_string() })
+        let salted = has_salt(&db)?;
+        Ok(Self { db: Mutex::new(db), run_id: run_id.to_string(), salted })
     }
 
     /// A ledger that lives only as long as the process (tests, one-off errands).
@@ -175,10 +198,14 @@ impl Ledger {
                  run_id TEXT NOT NULL, seq INTEGER NOT NULL, agent TEXT NOT NULL,
                  tool TEXT NOT NULL, ok INTEGER NOT NULL, at_ms INTEGER NOT NULL,
                  content TEXT, content_hash TEXT NOT NULL, forgotten_at_ms INTEGER,
-                 prev TEXT NOT NULL, hash TEXT NOT NULL,
+                 prev TEXT NOT NULL, hash TEXT NOT NULL, salt TEXT,
                  PRIMARY KEY (run_id, seq));",
         )?;
-        Ok(Self { db: Mutex::new(db), run_id: run_id.to_string() })
+        // Ledgers from before salting gain the column (their entries keep no salt).
+        if !has_salt(&db)? {
+            db.execute_batch("ALTER TABLE ledger ADD COLUMN salt TEXT;")?;
+        }
+        Ok(Self { db: Mutex::new(db), run_id: run_id.to_string(), salted: true })
     }
 
     /// The runs (errands) that have entries in the database at `path`, oldest first.
@@ -220,9 +247,13 @@ impl Ledger {
         let (seq, prev) = head.map_or((1, GENESIS.to_string()), |(s, h)| (to_u64(s) + 1, h));
         let at_ms = now_ms();
         let content = content_json(action, outcome);
-        let content_hash = sha_hex(content.as_bytes());
+        let salt = crate::signing::random_hex(16);
+        let content_hash = commitment(&salt, &content);
         let hash = hash_of(&Hashed { run: &self.run_id, seq, agent, tool: action.tool, ok: outcome.ok, at_ms, content: &content_hash, prev: &prev });
-        db.execute("INSERT INTO ledger VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)", params![
+        db.execute(
+            "INSERT INTO ledger (run_id, seq, agent, tool, ok, at_ms, content, content_hash, forgotten_at_ms, prev, hash, salt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11)",
+            params![
             self.run_id,
             to_i64(seq),
             agent,
@@ -232,7 +263,8 @@ impl Ledger {
             content,
             content_hash,
             prev,
-            hash
+            hash,
+            salt
         ])?;
         Ok(Entry {
             seq,
@@ -241,6 +273,7 @@ impl Ledger {
             outcome: outcome.clone(),
             at_ms,
             content_hash,
+            salt,
             forgotten_at_ms: None,
             prev,
             hash,
@@ -255,10 +288,11 @@ impl Ledger {
     /// If the database can't be read or an entry is unreadable.
     pub fn entries(&self) -> Result<Vec<Entry>, JournalError> {
         let db = self.lock();
-        let mut stmt = db.prepare(
-            "SELECT seq, agent, tool, ok, at_ms, content, content_hash, forgotten_at_ms, prev, hash
-             FROM ledger WHERE run_id = ?1 ORDER BY seq",
-        )?;
+        let salt = if self.salted { "salt" } else { "NULL" };
+        let mut stmt = db.prepare(&format!(
+            "SELECT seq, agent, tool, ok, at_ms, content, content_hash, forgotten_at_ms, prev, hash, {salt}
+             FROM ledger WHERE run_id = ?1 ORDER BY seq"
+        ))?;
         let rows = stmt.query_map(params![self.run_id], |r| {
             Ok(Row {
                 seq: to_u64(r.get(0)?),
@@ -271,6 +305,7 @@ impl Ledger {
                 forgotten_at_ms: r.get::<_, Option<i64>>(7)?.map(to_u64),
                 prev: r.get(8)?,
                 hash: r.get(9)?,
+                salt: r.get::<_, Option<String>>(10)?.unwrap_or_default(),
             })
         })?;
         rows.map(|row| row.map_err(JournalError::from).and_then(Row::into_entry)).collect()
@@ -311,7 +346,7 @@ impl Ledger {
         self.verify().map_err(|b| JournalError::new(format!("not forgetting: the ledger is broken at entry {}: {}", b.seq, b.reason)))?;
         let forgotten_at_ms = now_ms();
         let changed = self.lock().execute(
-            "UPDATE ledger SET content = NULL, forgotten_at_ms = COALESCE(forgotten_at_ms, ?3) WHERE run_id = ?1 AND seq = ?2",
+            "UPDATE ledger SET content = NULL, salt = NULL, forgotten_at_ms = COALESCE(forgotten_at_ms, ?3) WHERE run_id = ?1 AND seq = ?2",
             params![self.run_id, to_i64(seq), to_i64(forgotten_at_ms)],
         )?;
         if changed == 0 {
@@ -365,6 +400,7 @@ struct Row {
     forgotten_at_ms: Option<u64>,
     prev: String,
     hash: String,
+    salt: String,
 }
 
 #[derive(Deserialize)]
@@ -380,7 +416,7 @@ impl Row {
         let tool = Tool::from_name(&self.tool).ok_or_else(|| bad(format!("unknown tool {}", self.tool)))?;
         let (action, outcome) = match &self.content {
             Some(content) => {
-                if sha_hex(content.as_bytes()) != self.content_hash {
+                if commitment(&self.salt, content) != self.content_hash {
                     return Err(bad("its content was changed after it was written".into()));
                 }
                 let stored: Stored = serde_json::from_str(content).map_err(|e| bad(format!("unreadable content: {e}")))?;
@@ -402,6 +438,7 @@ impl Row {
             outcome,
             at_ms: self.at_ms,
             content_hash: self.content_hash,
+            salt: if self.content.is_some() { self.salt } else { String::new() },
             forgotten_at_ms: self.forgotten_at_ms,
             prev: self.prev,
             hash: self.hash,
@@ -425,7 +462,7 @@ pub fn verify_chain(run: &str, entries: &[Entry]) -> Result<usize, Broken> {
             return Err(Broken { seq: e.seq, reason: "does not follow the entry before it".into() });
         }
         let changed = || Broken { seq: e.seq, reason: "its content was changed after it was written".into() };
-        if e.forgotten_at_ms.is_none() && sha_hex(content_json(&e.action, &e.outcome).as_bytes()) != e.content_hash {
+        if e.forgotten_at_ms.is_none() && commitment(&e.salt, &content_json(&e.action, &e.outcome)) != e.content_hash {
             return Err(changed());
         }
         let hash = hash_of(&Hashed {
@@ -490,7 +527,8 @@ mod tests {
         // Faking the content hash too still breaks the chain hash.
         let db = ledger.lock();
         let content: String = db.query_row("SELECT content FROM ledger WHERE seq = 2", [], |r| r.get(0)).unwrap();
-        db.execute("UPDATE ledger SET content_hash = ?1 WHERE seq = 2", params![sha_hex(content.as_bytes())]).unwrap();
+        let salt: String = db.query_row("SELECT salt FROM ledger WHERE seq = 2", [], |r| r.get(0)).unwrap();
+        db.execute("UPDATE ledger SET content_hash = ?1 WHERE seq = 2", params![commitment(&salt, &content)]).unwrap();
         drop(db);
         assert_eq!(ledger.verify(), Err(Broken { seq: 2, reason: "its content was changed after it was written".into() }));
     }
@@ -538,12 +576,56 @@ mod tests {
         let e = &ledger.entries().unwrap()[2];
         assert_eq!((e.action.target.as_str(), e.outcome.subject.as_str(), e.outcome.result.as_str()), (FORGOTTEN, FORGOTTEN, ""));
         assert!(e.outcome.ok && e.forgotten_at_ms.is_some());
-        let stored: Option<String> = ledger.lock().query_row("SELECT content FROM ledger WHERE seq = 3", [], |r| r.get(0)).unwrap();
-        assert_eq!(stored, None);
+        let stored: (Option<String>, Option<String>) = ledger.lock().query_row("SELECT content, salt FROM ledger WHERE seq = 3", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(stored, (None, None), "the salt goes with the content, so the hash can't be checked against a guess");
+        assert_eq!(e.salt, "");
         assert_eq!(ledger.verify(), Ok(3));
         assert_eq!(ledger.forget(9).unwrap(), None);
         // But a forgotten entry can't be quietly turned into a different call.
         ledger.lock().execute("UPDATE ledger SET tool = 'messages.send' WHERE seq = 3", []).unwrap();
         assert_eq!(ledger.verify().unwrap_err().seq, 3);
+    }
+
+    #[test]
+    fn the_content_hash_is_salted_so_two_identical_calls_hash_differently() {
+        let ledger = Ledger::in_memory("run-s").unwrap();
+        let mut world = World::demo();
+        let a = act(Tool::MessagesRead, "Neha");
+        for _ in 0..2 {
+            let outcome = world.execute(&a);
+            ledger.append("Scout", &a, &outcome).unwrap();
+        }
+        let e = ledger.entries().unwrap();
+        assert_ne!(e[0].content_hash, e[1].content_hash);
+        assert_ne!(e[0].content_hash, sha_hex(content_json(&e[0].action, &e[0].outcome).as_bytes()), "a guess of the content alone doesn't match");
+        assert_eq!(e[0].salt.len(), 32);
+    }
+
+    #[test]
+    fn a_ledger_from_before_salting_still_verifies() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE ledger (run_id TEXT NOT NULL, seq INTEGER NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL, ok INTEGER NOT NULL,
+             at_ms INTEGER NOT NULL, content TEXT, content_hash TEXT NOT NULL, forgotten_at_ms INTEGER, prev TEXT NOT NULL, hash TEXT NOT NULL,
+             PRIMARY KEY (run_id, seq));",
+        )
+        .unwrap();
+        let a = act(Tool::ContactsRead, "Arjun");
+        let o = World::demo().execute(&a);
+        let content = content_json(&a, &o);
+        let content_hash = sha_hex(content.as_bytes());
+        let hash = hash_of(&Hashed { run: "run-old", seq: 1, agent: "Scout", tool: a.tool, ok: o.ok, at_ms: 5, content: &content_hash, prev: GENESIS });
+        db.execute("INSERT INTO ledger VALUES ('run-old', 1, 'Scout', 'contacts.read', 1, 5, ?1, ?2, NULL, ?3, ?4)", params![content, content_hash, GENESIS, hash]).unwrap();
+        // Read-only (as agora-verify opens it): readable without being changed.
+        let dir = std::env::temp_dir().join(format!("agora-old-{}", crate::signing::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.db");
+        db.execute("VACUUM INTO ?1", params![path.to_string_lossy()]).unwrap();
+        assert_eq!(Ledger::open_read_only(&path, "run-old").unwrap().verify(), Ok(1));
+        std::fs::remove_dir_all(dir).unwrap();
+        let ledger = Ledger::with(db, "run-old").unwrap();
+        assert_eq!(ledger.verify(), Ok(1));
+        ledger.append("Scout", &a, &o).unwrap();
+        assert_eq!(ledger.verify(), Ok(2));
     }
 }

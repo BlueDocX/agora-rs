@@ -12,6 +12,7 @@ pub mod ledger;
 pub mod planner;
 pub mod run;
 pub mod scheduler;
+pub mod signing;
 
 pub use budget::{Budget, BudgetError, OverBudget, Spend};
 pub use call::{CallError, Caller};
@@ -21,6 +22,7 @@ pub use ledger::{Broken, Entry, Ledger};
 pub use planner::{Planned, PlannerError, Task};
 pub use run::{Accepted, RunConfig, RunError, RunReport, TaskError, run};
 pub use scheduler::{Outcome, run_ready_queue, run_waves};
+pub use signing::{SignedHead, Signer, random_hex};
 
 /// The first message of every call, identical across roles so its tokens are cached.
 pub(crate) const CHARTER: &str = "You work in Agora, a virtual office where AI \

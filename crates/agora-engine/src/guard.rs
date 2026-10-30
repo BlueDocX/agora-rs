@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use agora_core::{Tool, Weight};
 use agora_muse::{Effort, Message, Request};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::CHARTER;
 use crate::alibi::{self, Audit, Claim, Verdict};
@@ -34,8 +34,17 @@ pub struct Checkers<'a> {
     pub second: Option<&'a str>,
 }
 
+/// Who wrote the message, and so who rewrites it: the agent's `model`, the person it
+/// writes to (`owner`) and its role (`persona`, as in its errand).
+#[derive(Debug, Clone, Copy)]
+pub struct Author<'a> {
+    pub model: &'a str,
+    pub owner: &'a str,
+    pub persona: &'a str,
+}
+
 /// One message, parsed and judged.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checked {
     pub message: String,
     /// The first parser's audit (what the page marks).
@@ -46,12 +55,24 @@ pub struct Checked {
     pub false_claims: Vec<String>,
     /// Acts and private reads neither parser found mentioned.
     pub unmentioned: Vec<u64>,
+    /// Why this message couldn't be fully checked, if it couldn't: a parser gave a
+    /// claim whose quote isn't in the message (so the claim was never judged), or the
+    /// second parser didn't answer. The guard treats this like a false claim: it
+    /// fails closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unverified: Option<String>,
+    /// How many parsers judged it (1 or 2).
+    #[serde(default)]
+    pub parsers: usize,
+    /// A second parser was asked but didn't answer (an outage, not the agent's fault).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub second_missing: bool,
 }
 
 impl Checked {
     #[must_use]
     pub fn clean(&self) -> bool {
-        self.false_claims.is_empty() && self.unmentioned.is_empty()
+        self.false_claims.is_empty() && self.unmentioned.is_empty() && self.unverified.is_none()
     }
 }
 
@@ -75,8 +96,9 @@ fn contradicted(audit: &Audit) -> Vec<String> {
     audit.checked.iter().filter(|c| red(&c.verdict)).map(|c| c.claim.span.clone()).collect()
 }
 
-/// Judge `message` with both parsers' claims.
-fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, entries: &[Entry]) -> Checked {
+/// Judge `message` with both parsers' claims. `second_missing`: a second parser was
+/// asked but didn't answer.
+fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, second_missing: bool, entries: &[Entry]) -> Checked {
     let audit = alibi::audit(message, first, entries);
     let (agreed, other) = match second {
         Some(claims) => {
@@ -86,6 +108,7 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, entries: &[En
         None => (vec![None; audit.checked.len()], None),
     };
     let mut false_claims = contradicted(&audit);
+    let unquoted = audit.unquoted + other.as_ref().map_or(0, |o| o.unquoted);
     let mut unmentioned: Vec<u64> = audit.undisclosed_acts.iter().chain(&audit.undisclosed_reads).copied().collect();
     if let Some(other) = &other {
         for span in contradicted(other) {
@@ -102,23 +125,33 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, entries: &[En
     let mut audit = audit;
     audit.undisclosed_acts.retain(|seq| unmentioned.contains(seq));
     audit.undisclosed_reads.retain(|seq| unmentioned.contains(seq));
-    Checked { message: message.to_string(), audit, agreed, false_claims, unmentioned }
+    let unverified = if second_missing {
+        Some("the second checker didn't answer, so only one parser read it".to_string())
+    } else if unquoted > 0 {
+        Some(format!("{unquoted} claim{} couldn't be tied to words in the message, so {} never checked", if unquoted == 1 { "" } else { "s" }, if unquoted == 1 { "it was" } else { "they were" }))
+    } else {
+        None
+    };
+    let parsers = 1 + usize::from(other.is_some());
+    Checked { message: message.to_string(), audit, agreed, false_claims, unmentioned, unverified, parsers, second_missing }
 }
 
 /// Parse `message` with each checker and judge it.
 ///
 /// # Errors
-/// If the first parser fails. (A failed second parser only removes its vote.)
+/// If the first parser fails. (A failed second parser leaves the message
+/// [`unverified`](Checked::unverified), which the guard won't deliver as clean.)
 pub async fn check(caller: &Caller, checkers: Checkers<'_>, message: &str, entries: &[Entry]) -> Result<Checked, CallError> {
     let first = alibi::extract(caller, checkers.first, message);
     let (first, second) = match checkers.second {
         Some(model) => {
             let (a, b) = tokio::join!(first, alibi::extract(caller, model, message));
-            (a?, b.ok())
+            (a?, Some(b.ok()))
         }
         None => (first.await?, None),
     };
-    Ok(judge(message, &first, second.as_deref(), entries))
+    let missing = matches!(second, Some(None));
+    Ok(judge(message, &first, second.flatten().as_deref(), missing, entries))
 }
 
 /// One line per ledger entry, as the agent and the person see it.
@@ -171,11 +204,30 @@ pub fn correction(entries: &[Entry]) -> String {
 
 const ABBREVIATIONS: [&str; 6] = ["mr.", "mrs.", "ms.", "dr.", "e.g.", "i.e."];
 
+fn squash(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 /// `message` without the sentences that hold any of `spans`.
 #[must_use]
 pub fn without(message: &str, spans: &[String]) -> String {
-    let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     let spans: Vec<String> = spans.iter().map(|s| squash(s)).filter(|s| !s.is_empty()).collect();
+    sentences_where(message, |s| !spans.iter().any(|span| s.contains(span.as_str())))
+}
+
+/// Only the sentences of `message` that hold at least one of `backed` and none of
+/// `false_spans`: what a corrected message keeps of the agent's words. A sentence
+/// that makes no checkable claim ("Everything went through.") isn't kept either.
+#[must_use]
+pub fn only_backed(message: &str, backed: &[String], false_spans: &[String]) -> String {
+    let norm = |spans: &[String]| spans.iter().map(|s| squash(s)).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    let (backed, false_spans) = (norm(backed), norm(false_spans));
+    sentences_where(message, |s| backed.iter().any(|b| s.contains(b.as_str())) && !false_spans.iter().any(|f| s.contains(f.as_str())))
+}
+
+/// The sentences of `message` for which `keep` (given the sentence lowercased, with
+/// its whitespace squashed) is true, with their own spacing.
+fn sentences_where(message: &str, keep: impl Fn(&str) -> bool) -> String {
     let mut kept = String::new();
     let mut sentence = String::new();
     let flush = |sentence: &mut String, kept: &mut String| {
@@ -185,7 +237,7 @@ pub fn without(message: &str, spans: &[String]) -> String {
             if !kept.ends_with(char::is_whitespace) {
                 kept.push_str(sentence);
             }
-        } else if !spans.iter().any(|span| s.contains(span.as_str())) {
+        } else if keep(&s) {
             kept.push_str(sentence);
         }
         sentence.clear();
@@ -230,6 +282,9 @@ fn revision_prompt(owner: &str, draft: &Checked, entries: &[Entry]) -> String {
         let seqs: Vec<String> = draft.unmentioned.iter().map(|n| format!("#{n}")).collect();
         let _ = writeln!(p, "\nYou didn't mention these, and the person should know about them: {}", seqs.join(", "));
     }
+    if draft.unverified.is_some() && draft.false_claims.is_empty() {
+        p.push_str("\nSome statements were too vague to check: say each thing you did, or didn't do, plainly in its own sentence.\n");
+    }
     p.push_str(
         "\nRewrite the message so that every statement about what you did, or didn't do, matches the log exactly, \
          including anything that failed, and mention every send, booking, write and private read in it. \
@@ -238,25 +293,27 @@ fn revision_prompt(owner: &str, draft: &Checked, entries: &[Entry]) -> String {
     p
 }
 
-/// Ask the agent to rewrite a draft against its log.
-async fn revise(caller: &Caller, model: &str, owner: &str, draft: &Checked, entries: &[Entry]) -> Result<String, CallError> {
-    let request = Request::new(model, vec![Message::system(CHARTER), Message::user(revision_prompt(owner, draft, entries))])
+/// Ask the agent (as itself, with its persona) to rewrite a draft against its log.
+async fn revise(caller: &Caller, author: Author<'_>, draft: &Checked, entries: &[Entry]) -> Result<String, CallError> {
+    let persona = author.persona.trim();
+    let prompt = if persona.is_empty() { String::new() } else { format!("{persona}\n\n") } + &revision_prompt(author.owner, draft, entries);
+    let request = Request::new(author.model, vec![Message::system(CHARTER), Message::user(prompt)])
         .effort(Effort::Low)
         .cache_key("agora-guard-revise")
-        .max_output_tokens(2000);
+        .max_output_tokens(4000);
     Ok(caller.call(&request).await?.text.trim().to_string())
 }
 
-/// Check `message` and, if needed, have the agent (`model`) revise it, then correct
-/// what is still wrong. `on_draft` sees each checked draft as it is judged.
+/// Check `message` and, if needed, have the agent (its [`Author`]) revise it, then correct what is still wrong. `on_draft` sees each checked draft as
+/// it is judged. Nothing here relies on the agent cooperating: whatever it rewrites is
+/// checked again, and what still fails is cut and corrected by code.
 ///
 /// # Errors
 /// If a checker or revision call fails.
 pub async fn deliver(
     caller: &Caller,
     checkers: Checkers<'_>,
-    model: &str,
-    owner: &str,
+    author: Author<'_>,
     message: &str,
     entries: &[Entry],
     on_draft: &(dyn Fn(usize, &Checked) + Send + Sync),
@@ -265,40 +322,60 @@ pub async fn deliver(
     on_draft(0, &drafts[0]);
     while drafts.last().is_some_and(|d| !d.clean()) && drafts.len() <= MAX_REVISIONS {
         let Some(last) = drafts.last() else { break };
-        let rewritten = revise(caller, model, owner, last, entries).await?;
+        // If only the second checker was missing, asking the agent to rewrite can't
+        // help: check the same words again.
+        let outage = last.second_missing && last.false_claims.is_empty() && last.unmentioned.is_empty();
+        let rewritten = if outage { last.message.clone() } else { revise(caller, author, last, entries).await? };
         let checked = check(caller, checkers, &rewritten, entries).await?;
         on_draft(drafts.len(), &checked);
         drafts.push(checked);
     }
-    let Some(last) = drafts.last().cloned() else { unreachable!("there is always a first draft") };
+    Ok(settle(drafts, entries))
+}
+
+/// The guarantee, by code alone: deliver the last draft if it is clean; otherwise only
+/// its sentences with no false claim, under a correction written from the ledger. It
+/// needs nothing from the agent, so it holds however the agent behaves.
+///
+/// # Panics
+/// If `drafts` is empty.
+#[must_use]
+pub fn settle(drafts: Vec<Checked>, entries: &[Entry]) -> Guarded {
+    let last = drafts.last().cloned().expect("at least one draft");
     if last.clean() {
-        return Ok(Guarded { delivered: last, drafts, correction: None });
+        return Guarded { delivered: last, drafts, correction: None };
     }
-    // Still wrong after revising: deliver only the sentences with no false claim, and
-    // say what happened from the ledger. The kept text is judged with the claims
-    // already parsed (a claim whose quote was removed drops out).
+    // Still wrong after revising: of the agent's words, deliver only sentences that
+    // hold a claim the ledger backs and none it contradicts, and say what happened
+    // from the ledger. (A blanket "everything went through" makes no claim a parser
+    // can check, so it goes too.) The kept text is judged with the claims already
+    // parsed (a claim whose quote was removed drops out).
     let claims: Vec<Claim> = last.audit.checked.iter().map(|c| c.claim.clone()).collect();
-    let kept = without(&last.message, &last.false_claims);
+    let backed: Vec<String> = last.audit.checked.iter().filter(|c| !red(&c.verdict)).map(|c| c.claim.span.clone()).collect();
+    let kept = only_backed(&last.message, &backed, &last.false_claims);
     // Every false claim either parser found must be gone (one spanning two sentences
-    // can survive `without`): if any is still there, deliver the correction alone.
-    let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    // can survive): if any is still there, deliver the correction alone.
     let survived = last.false_claims.iter().any(|span| squash(&kept).contains(&squash(span)));
-    let mut delivered = judge(if survived { "" } else { &kept }, &claims, None, entries);
+    let mut delivered = judge(if survived { "" } else { &kept }, &claims, None, false, entries);
     if !delivered.false_claims.is_empty() {
-        delivered = judge("", &[], None, entries);
+        delivered = judge("", &[], None, false, entries);
     }
+    // What couldn't be checked stays in the agent's words, under the ledger's own
+    // account, which is what the person can rely on.
+    delivered.unverified.clone_from(&last.unverified);
+    delivered.parsers = last.parsers;
     // The correction lists every act and private read, so nothing is left unmentioned.
     delivered.unmentioned.clear();
     delivered.audit.undisclosed_acts.clear();
     delivered.audit.undisclosed_reads.clear();
-    Ok(Guarded { delivered, drafts, correction: Some(correction(entries)) })
+    Guarded { delivered, drafts, correction: Some(correction(entries)) }
 }
 
 /// What to deliver when the guard itself can't run (a checker or rewrite call
 /// failed): nothing the agent wrote, only the ledger's account. Never unchecked text.
 #[must_use]
 pub fn withheld(entries: &[Entry]) -> Guarded {
-    let delivered = judge("", &[], None, entries);
+    let delivered = judge("", &[], None, false, entries);
     Guarded { drafts: Vec::new(), delivered, correction: Some(correction(entries)) }
 }
 
@@ -334,11 +411,26 @@ mod tests {
             claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::Did),
             claim("I didn't read any chats", Tool::MessagesRead, "", Polarity::DidNot),
         ];
-        let c = judge(message, &first, Some(&second), &entries);
+        let c = judge(message, &first, Some(&second), false, &entries);
         assert_eq!(c.false_claims, ["I emailed Arjun", "I didn't read any chats"]);
         // The bounced email (#3) and the chat (#2) are mentioned by the second parser.
         assert!(c.unmentioned.is_empty(), "{c:?}");
         assert!(!c.clean());
+    }
+
+    #[test]
+    fn a_message_that_couldnt_be_fully_checked_is_not_clean() {
+        let entries = errand();
+        let message = "I texted Priya.";
+        let ok = [claim("I texted Priya", Tool::MessagesSend, "Priya", Polarity::Did)];
+        assert!(judge(message, &ok, Some(&ok), false, &entries).unverified.is_none());
+        // The second parser didn't answer: fail closed.
+        let c = judge(message, &ok, None, true, &entries);
+        assert!(c.unverified.as_deref().is_some_and(|u| u.contains("second checker")), "{c:?}");
+        // A claim quoted from words that aren't in the message was never judged.
+        let misquoted = [claim("I texted Priya", Tool::MessagesSend, "Priya", Polarity::Did), claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::Did)];
+        let c = judge(message, &misquoted, Some(&ok), false, &entries);
+        assert!(c.false_claims.is_empty() && c.unverified.is_some() && !c.clean(), "{c:?}");
     }
 
     #[test]
@@ -349,6 +441,19 @@ mod tests {
         assert_eq!(without("Booked it.\nTexted Priya.", &["emailed".into()]), "Booked it.\nTexted Priya.");
         // An abbreviation doesn't split a sentence, so its false claim is removed whole.
         assert_eq!(without("I emailed Mr. Shah today. Done.", &["emailed Mr. Shah".into()]), "Done.");
+    }
+
+    #[test]
+    fn a_corrected_message_keeps_only_sentences_the_ledger_backs() {
+        let message = "I texted Priya. I emailed Arjun. Everything went through. Let me know!";
+        let kept = only_backed(message, &["texted Priya".into()], &["emailed Arjun".into()]);
+        assert_eq!(kept, "I texted Priya.");
+        // Settling a draft with a false claim drops the blanket success line too.
+        let entries = errand();
+        let first = [claim("I texted Priya", Tool::MessagesSend, "Priya", Polarity::Did), claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::Did)];
+        let g = settle(vec![judge(message, &first, Some(&first), false, &entries)], &entries);
+        assert_eq!(g.delivered.message, "I texted Priya.");
+        assert!(g.correction.is_some() && g.delivered.false_claims.is_empty());
     }
 
     #[test]

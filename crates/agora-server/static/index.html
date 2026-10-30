@@ -55,7 +55,7 @@
   /* Logs */
   .logs { padding: 20px 14px 14px; }
   .logs > .label { padding: 0 8px 14px; }
-  .tabs { display: grid; grid-template-columns: repeat(5, 1fr); background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; }
+  .tabs { display: grid; grid-template-columns: repeat(6, 1fr); background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; }
   .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 800 10.5px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--zinc, #55503f); }
   .tabs button.on { background: var(--ink); color: var(--paper); }
   .feed { flex: 1; overflow: auto; margin: 12px 0 0; padding: 0 6px; list-style: none; }
@@ -136,6 +136,17 @@
   .ab-busy { color: var(--muted); font-style: italic; font-size: 12.5px; }
   .ab-err { color: var(--bad); font-size: 12.5px; }
   .composer[hidden], .pill[hidden], .guard-pick[hidden] { display: none !important; }
+  #errandform .row { align-items: flex-start; }
+  #errandform .opts { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 8px; }
+  #errandform .guard-pick { margin-right: 0; }
+  .micwrap { position: relative; }
+  .micwrap textarea { padding-right: 48px; }
+  .mic { position: absolute; right: 8px; bottom: 10px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--paper); color: var(--ink); display: grid; place-items: center; padding: 0; }
+  .mic:hover { background: var(--butter); }
+  .mic.rec { background: var(--bad); border-color: var(--bad); color: #fff; animation: rec 1.2s ease-in-out infinite; }
+  .mic:disabled { opacity: .5; cursor: progress; }
+  @keyframes rec { 50% { box-shadow: 0 0 0 6px rgba(229,72,59,.25); } }
+  .poison { display: inline-block; font: 800 9px/1.4 var(--sans); letter-spacing: .08em; text-transform: uppercase; background: #4b2a7a; color: #fff; border-radius: 999px; padding: 2px 8px; margin-right: 6px; vertical-align: 1px; }
   /* ---- The company: people in the office and their bots ---- */
   .folks { display: flex; flex-direction: column; gap: 6px; }
   .person { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 10px; align-items: center; background: var(--stone); border: 1px solid var(--line); border-radius: 14px; padding: 8px 11px; font-size: 12.5px; }
@@ -158,6 +169,77 @@
   .kit button { cursor: pointer; } .kit button.on, .kit span { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; }
   .person select { grid-column: 2 / 4; border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; font: 600 11px var(--sans); background: var(--paper); }
   .empty-note { color: var(--muted); font: 800 10.5px var(--sans); letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 70px 10px; border: 0 !important; display: block !important; }
+  .empty-note.short { padding: 22px 10px; }
+
+  /* ---- Verdict: the open errand's outcome, pinned at the top ---- */
+  .verdict { position: sticky; top: 0; z-index: 2; border-radius: 16px; padding: 12px 14px !important; margin-bottom: 8px; border: 2px solid; }
+  .verdict.ok { background: #e9f7ee; border-color: #8fd3a8; color: #17663a; }
+  .verdict.bad { background: #fde8e5; border-color: #f0a79f; color: #a3261b; }
+  .verdict.warn, .verdict.busy { background: #fbf3d6; border-color: #ecd27a; color: #7a5d07; }
+  .verdict .big { display: block; font: 800 16px/1.3 var(--sans); color: var(--ink); }
+  .verdict .facts { display: block; font: 600 11.5px/1.5 var(--mono); margin-top: 4px; }
+  .verdict .why { display: block; font-size: 12px; margin-top: 4px; color: #55503f; }
+  .verdict a { display: inline-block; margin-top: 8px; font: 800 10.5px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink);
+               background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; text-decoration: none; }
+  .verdict a:hover { background: var(--butter); }
+  .feed details > summary { cursor: pointer; font: 700 11.5px var(--sans); color: #55503f; padding: 6px 4px; list-style-position: inside; }
+  .feed details > ul { list-style: none; margin: 0; padding: 0; }
+  .ab-draft details > summary { color: #a3261b; }
+  .backlink { border: 0; background: none; padding: 2px 2px 8px; font: 700 11.5px var(--sans); color: var(--muted); }
+  .backlink:hover { color: var(--ink); }
+  /* Errand history */
+  .hist { display: grid !important; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; cursor: pointer; border-radius: 12px; padding: 9px 8px !important; border-bottom: 1px dashed var(--line) !important; }
+  .hist:hover { background: var(--stone); }
+  .hist .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .hist b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist small { grid-column: 2 / 4; color: var(--muted); font: 500 11px var(--mono); }
+  .hist .t { color: var(--soft); font: 500 11px var(--mono); white-space: nowrap; }
+  .hist-head { font: 800 10.5px var(--sans) !important; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 12px 4px 4px !important; }
+  /* A bot picked in the office narrows the lists to it */
+  .filterbar { display: flex; gap: 6px; margin-top: 10px; }
+  .filterbar[hidden] { display: none; }
+  .filterbar button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fbf4d5; border-radius: 999px; padding: 4px 10px; font: 700 11.5px var(--sans); }
+  .filterbar button i { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ---- Messages: channels, direct messages, bots answering errands ---- */
+  .convs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; max-height: 92px; overflow-y: auto; align-items: center; }
+  .convs[hidden] { display: none; }
+  .convs button { position: relative; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 4px 10px; font: 700 11.5px var(--sans); color: var(--ink); }
+  .convs button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .convs button i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .convs button.unread::after { content: ""; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .convs .call { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; margin-left: auto; }
+  .convs .sep { width: 100%; height: 0; }
+  .feed.msgs li { border: 0; padding: 6px 2px; align-items: flex-start; }
+  .feed.msgs .face { width: 24px; height: 24px; border-radius: 50%; flex: none; margin-top: 2px; }
+  .feed.msgs .bubble { background: var(--stone); border: 1px solid var(--line); border-radius: 4px 16px 16px 16px; padding: 7px 11px; min-width: 0; }
+  .feed.msgs .mine .bubble { background: #fbf4d5; border-color: #f2e09b; }
+  .feed.msgs .bubble b { display: block; font-size: 11.5px; margin-bottom: 2px; }
+  .feed.msgs .bubble b small { font: 500 10.5px var(--mono); color: var(--soft); margin-left: 6px; }
+  .feed.msgs .bubble span { white-space: pre-wrap; word-break: break-word; }
+  .feed.msgs .bot .face { border-radius: 7px; }
+  .feed.msgs .bot .bubble { background: #f1ecfb; border-color: #d9cdf3; }
+  .feed.msgs .bot .tagbot { font: 800 9px var(--sans); letter-spacing: .08em; text-transform: uppercase; background: #4b3a8a; color: #fff; border-radius: 999px; padding: 2px 6px; margin-left: 6px; vertical-align: 1px; }
+  .feed.msgs .open { display: inline-block; margin-top: 5px; border: 1px solid #d9cdf3; background: var(--paper); border-radius: 999px; padding: 3px 10px; font: 700 10.5px var(--sans); color: #4b3a8a; }
+  .feed.msgs .open:hover { background: #e6ddf7; }
+  /* The call: a Jitsi Meet room per channel, floating over the page */
+  #call { position: fixed; right: 16px; bottom: 16px; z-index: 20; width: min(520px, calc(100vw - 32px)); height: min(420px, calc(100vh - 32px)); background: var(--ink);
+          border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 60px -20px rgba(23,21,15,.5); }
+  #call[hidden] { display: none; }
+  #call .head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; color: var(--paper); font: 700 12.5px var(--sans); }
+  #call .head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #call .head a { color: var(--butter); font-size: 11.5px; }
+  #call .close { width: 30px; height: 30px; font-size: 16px; background: rgba(252,250,244,.12); color: var(--paper); }
+  #call iframe { flex: 1; border: 0; width: 100%; background: #000; }
+  /* The owner's invite link */
+  .invite { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; background: #fbf4d5; border: 1px solid #f2e09b; border-radius: 14px; padding: 8px 10px; margin-bottom: 6px; }
+  .invite small { grid-column: 1 / 3; color: #7a5d07; font-size: 11px; }
+  .invite input { min-width: 0; border: 0; background: transparent; font: 500 11.5px var(--mono); color: var(--ink); outline: none; }
+  .invite button, .person .lead-form button { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 10px; font: 700 10.5px var(--sans); }
+  .person .lead-form { display: inline-flex; gap: 4px; align-items: center; }
+  .person .lead-form input { width: 96px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font: 600 11px var(--sans); background: var(--paper); }
+  .person .err { grid-column: 2 / 4; color: var(--bad); font-size: 11.5px; }
+  .kanban[hidden], .handle[hidden], #briefbox[hidden], #runbox[hidden], .key[hidden] { display: none !important; }
 
   /* Office */
   .office { padding: 0; }
@@ -309,12 +391,14 @@
     main, main.wide { grid-template-columns: 1fr; }
     .office { order: -1; }
     #office3d { flex: none; height: 420px; } /* fixed: the page has no height to share out here */
-    .logs { max-height: 420px; order: 1; } /* office, then the brief, then logs */
+    .logs { height: min(720px, 86vh); order: 0; } /* office, then the errands (the main thing), then the rest */
+    .info { order: 1; }
     .key input { width: 100px; }
   }
   @media (max-width: 560px) {
     header { flex-wrap: wrap; padding: 12px 16px; }
-    header .right { margin-left: 0; width: 100%; }
+    header .right { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 8px; }
+    header .right .pill { padding: 9px 13px; }
     .key { flex: 1; } .key input { width: 100%; }
     .bar .chip { display: none; }
   }
@@ -327,39 +411,50 @@
   <span class="ver">v0.2 · Rust · Muse</span>
   <div class="right">
     <button class="pill ghost" id="joinbtn" type="button" title="Join this office: you get your own bot">Join office</button>
-    <button class="pill butter" id="newbrief" type="button">
-      <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>New brief
+    <button class="pill butter" id="giveerrand" type="button" title="Your bot does it; every claim it makes is checked against its ledger">
+      <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>Give an errand
     </button>
+    <button class="pill ghost" id="newbrief" type="button" title="A team run: plan, draft, review, deliver">New brief</button>
     <button class="pill ghost" id="manage" type="button">
       <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Manage teams
     </button>
-    <label class="key" title="Access token, if the hub needs one">
+    <label class="key" id="keybox" title="This office needs an access token. It is kept in a cookie this page can't read." hidden>
       <svg class="i" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2"/></svg>
       <input id="token" type="password" placeholder="access token" autocomplete="off" aria-label="Access token">
     </label>
   </div>
 </header>
-<main>
+<main class="wide">
   <section class="panel logs">
     <div class="label">Logs</div>
     <div class="tabs" role="tablist">
-      <button type="button" data-tab="chat" class="on">Chat</button>
-      <button type="button" data-tab="alibi" title="Errands whose every claim is checked against a ledger">Alibi</button>
+      <button type="button" data-tab="alibi" class="on" title="Errands whose every claim is checked against a ledger">Alibi</button>
+      <button type="button" data-tab="messages" title="Channels and direct messages; @Bot gives a bot an errand">Messages</button>
+      <button type="button" data-tab="chat" title="Talk with the run's agent team">Chat</button>
       <button type="button" data-tab="activity">Activity</button>
       <button type="button" data-tab="technical" title="Technical">Tech</button>
       <button type="button" data-tab="runs">Runs</button>
     </div>
+    <div class="filterbar" id="filterbar" hidden></div>
+    <div class="convs" id="convs" hidden></div>
     <ul class="feed" id="feed"></ul>
-    <form class="composer" id="chatform">
+    <form class="composer" id="msgform" hidden>
+      <textarea id="msgtext" maxlength="1000" placeholder="Message #general" aria-label="Message"></textarea>
+      <div class="row"><span class="note" id="msgnote">Type @Atlas … to give a bot an errand</span><button class="pill butter" id="msgsend" type="submit">Send</button></div>
+    </form>
+    <form class="composer" id="chatform" hidden>
       <div class="chips" id="chips"></div>
       <textarea id="chattext" maxlength="1000" placeholder="Message the team. @Name asks one agent, @all starts a discussion." aria-label="Chat message"></textarea>
       <div class="row"><span class="note" id="chatnote"></span><button class="pill butter" id="send" type="submit">Send</button></div>
     </form>
-    <form class="composer" id="errandform" hidden>
+    <form class="composer" id="errandform">
       <div class="chips" id="errandchips"></div>
-      <textarea id="errandtext" maxlength="500" placeholder="Give an errand. The agent works on Asha's contacts, calendar, email, chats and files." aria-label="Errand or question"></textarea>
+      <div class="micwrap">
+        <textarea id="errandtext" maxlength="500" placeholder="Give an errand. The agent works on Asha's contacts, calendar, email, chats and files." aria-label="Errand or question"></textarea>
+        <button class="mic" id="mic" type="button" title="Speak the errand" aria-label="Speak the errand" aria-pressed="false"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      </div>
       <div class="row"><span class="note" id="errandnote"></span>
-        <span><select id="errandto" aria-label="Whose bot does it" title="Your own bot, or the bot of an area's lead"></select><label class="guard-pick" title="With the guard on, no message reaches you with a claim the ledger contradicts"><input type="checkbox" id="guardon" checked> Guard</label><button class="pill ghost" id="errandnew" type="button" hidden>New errand</button>
+        <span class="opts"><select id="errandto" aria-label="Whose bot does it" title="Your own bot, or the bot of an area's lead"></select><label class="guard-pick" title="With the guard on, no message reaches you with a claim the ledger contradicts"><input type="checkbox" id="guardon" checked> Guard</label><label class="guard-pick" id="poisonpick" title="Red team: run it on an inbox with a planted prompt injection, to see whether the bot follows it and whether the guard catches what it says"><input type="checkbox" id="poisoned"> Poisoned inbox (red team)</label><button class="pill ghost" id="errandnew" type="button" hidden>All errands</button>
         <button class="pill butter" id="errandgo" type="submit">Run errand</button></span></div>
     </form>
   </section>
@@ -379,13 +474,14 @@
       </div>
     </div>
     <div id="office3d" hidden></div>
-    <div class="handle"></div>
-    <div class="kanban" id="kanban"></div>
+    <div class="handle" id="handle" hidden></div>
+    <div class="kanban" id="kanban" hidden></div>
   </section>
 
   <section class="panel info">
     <div class="info-head"><h2>Project Info</h2><span class="status" id="status">Ready to start</span></div>
     <div class="sect"><span class="label">People in the office</span><span class="tag" id="peopletag">0 here</span></div>
+    <div id="invitebox"></div>
     <div class="folks" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
     <div class="sect"><span class="label">Team</span></div>
     <div class="team-pick">
@@ -399,6 +495,7 @@
       <label><span class="label">Reviewer</span><select id="reviewsel" aria-label="Reviewer model"></select></label>
     </div>
     <p class="note" id="modelnote"></p>
+    <div id="briefbox" hidden>
     <div class="sect"><span class="label">User brief</span></div>
     <form id="form">
       <textarea id="brief" maxlength="4000" placeholder="No active brief. Tell the office what to deliver…" required></textarea>
@@ -409,6 +506,8 @@
         <span class="note" id="formnote"></span>
       </div>
     </form>
+    </div>
+    <div id="runbox" hidden>
     <div class="sect"><span class="label">Spend</span><span class="tag" id="captag">Cap —</span></div>
     <div class="spend">
       <div class="big" id="spent">$0.0000</div>
@@ -416,17 +515,22 @@
     </div>
     <div class="sect"><span class="label">Deliverable</span></div>
     <pre id="deliverable" class="empty">Appears when the run finishes.</pre>
+    </div>
   </section>
 </main>
 <dialog id="joinbox" aria-label="Join the office"><form method="dialog" id="joinform">
   <h3>Join the office</h3>
-  <p>You get your own bot that works under you. The first person in owns the office and can make others leads of an area; errands sent to an area go to its lead's bot.</p>
+  <p>You get your own bot that works under you. The first person in owns the office and hands out the invite link; the owner can make others leads of an area, and errands sent to an area go to its lead's bot.</p>
   <label for="joinname">Your name</label><input id="joinname" maxlength="40" required autocomplete="name">
   <label for="joinarea">Your area (optional)</label><input id="joinarea" maxlength="40" placeholder="e.g. Finance, Marketing, Hiring">
+  <label for="joininvite" id="joininvitelabel">Invite code (from the owner's invite link)</label><input id="joininvite" maxlength="64" autocomplete="off" spellcheck="false">
   <label for="joinrole">Your bot works as</label><select id="joinrole" style="width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:14px var(--sans);background:var(--stone)"></select>
   <p class="note" id="joinnote"></p>
   <div class="row"><button class="pill ghost" type="button" id="joincancel">Cancel</button><button class="pill butter" id="joingo">Join</button></div>
 </form></dialog>
+<div id="call" hidden role="dialog" aria-label="Call">
+  <div class="head"><span id="calltitle">Call</span><a id="callopen" href="#" target="_blank" rel="noopener">Open in a new tab</a><button class="close" id="callclose" type="button" aria-label="Close the call">×</button></div>
+</div>
 <dialog id="teams" aria-label="Manage teams"><div class="tm"><nav class="tm-list" id="tmlist"></nav><div class="tm-main" id="tmedit"></div></div></dialog>
 <script>
 "use strict";
@@ -434,6 +538,17 @@ const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+// Secrets live in HttpOnly cookies now: drop what older versions kept here.
+try { localStorage.removeItem("agora-token"); localStorage.removeItem("agora-member"); } catch {}
+const JSON_HEADERS = { "Content-Type": "application/json" };
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+function ago(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
 
 // One color per teammate, in plan order; the 3D office uses the same list.
 // Butter yellow is the Lead and purple the reviewer, so neither is a teammate color.
@@ -441,7 +556,8 @@ const PALETTE = ["#4285f4", "#34a853", "#ea4335", "#14b8a6", "#f97316", "#ec4899
 window.agoraPalette = PALETTE;
 const COLUMNS = [["scheduled", "Scheduled"], ["hold", "On hold"], ["progress", "In progress"], ["done", "Done"]];
 
-let source = null, current = null, tasks = new Map(), tab = "chat", runsCache = [];
+let source = null, current = null, tasks = new Map(), tab = "alibi", runsCache = [];
+let botFilter = null; // a member id: the errand history and activity show only their bot
 const chatLog = []; let typing = null;
 let staffed = null; // the team on the run being watched
 const named = (t) => (t.owner ? `${t.owner} · ${t.title}` : t.title);
@@ -479,7 +595,25 @@ function updateChat(message) {
 
 function clock() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 
-function note(text, color) { activity.push({ text, color, t: clock() }); if (tab === "activity") renderFeed(); }
+function note(text, color, member, atMs) {
+  const t = atMs ? new Date(atMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : clock();
+  activity.push({ text, color, t, member });
+  if (tab === "activity") renderFeed();
+}
+
+// The bot picked in the office: a chip that narrows the lists, and removes the filter.
+function renderFilter() {
+  const bar = $("filterbar"), m = botFilter && company.members.find((x) => x.id === botFilter);
+  bar.replaceChildren();
+  bar.hidden = !m || !((tab === "alibi" && !errand) || tab === "activity");
+  if (bar.hidden) return;
+  const b = el("button");
+  b.type = "button"; b.title = "Show every bot again";
+  const dot = el("i"); dot.style.background = m.color;
+  b.append(dot, `${m.bot} · ${m.name}'s bot ×`);
+  b.onclick = () => { botFilter = null; renderFeed(); };
+  bar.append(b);
+}
 
 function renderFeed() {
   const feed = $("feed");
@@ -487,7 +621,11 @@ function renderFeed() {
   feed.replaceChildren();
   $("chatform").hidden = tab !== "chat";
   $("errandform").hidden = tab !== "alibi";
+  $("msgform").hidden = tab !== "messages" || !me;
+  $("convs").hidden = tab !== "messages" || !me;
+  renderFilter();
   if (tab === "alibi") { feed.className = "feed alibi"; renderAlibi(feed); return; }
+  if (tab === "messages") { feed.className = "feed msgs"; renderMessages(feed); return; }
   if (tab === "chat") {
     document.querySelector('.tabs [data-tab="chat"]').classList.remove("unread");
     if (!chatLog.length) feed.append(el("li", "empty-note", "Say hello to the team"));
@@ -507,8 +645,8 @@ function renderFeed() {
     }
     return;
   }
-  const items = tab === "activity" ? activity : technical;
-  if (!items.length) { feed.append(el("li", "empty-note", tab === "activity" ? "No activity yet" : "No technical data")); return; }
+  const items = tab === "activity" ? activity.filter((a) => !botFilter || a.member === botFilter) : technical;
+  if (!items.length) { feed.append(el("li", "empty-note", tab === "activity" ? (botFilter ? "No activity for this bot yet" : "No activity yet") : "No technical data")); return; }
   for (const a of items) {
     const li = el("li");
     if (tab === "activity") {
@@ -625,12 +763,14 @@ function onEvent(e) {
 function watch(id) {
   if (source) source.close();
   current = id;
-  if (location.hash.slice(1) !== id) history.replaceState(null, "", "#" + encodeURIComponent(id));
+  history.replaceState(null, "", "#run=" + encodeURIComponent(id));
+  // A run is open: show its board, brief, spend and deliverable.
+  for (const box of ["kanban", "handle", "briefbox", "runbox"]) $(box).hidden = false;
   if (tab === "runs") renderFeed();
   const run = runsCache.find((r) => r.id === id);
   if (run && !$("brief").value.trim()) $("brief").value = run.brief; // never over a draft
-  const token = $("token").value.trim();
-  source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events` + (token ? `?token=${encodeURIComponent(token)}` : ""));
+  source = new EventSource(`/api/runs/${encodeURIComponent(id)}/events`); // the session cookie authorizes it
+  ensureChat();
   // Every (re)connection replays the whole run, so start from a clean slate.
   source.onopen = () => {
     runEvents.length = 0; activity.length = 0; technical.length = 0;
@@ -643,15 +783,9 @@ function watch(id) {
   source.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (err) { note("bad event: " + err, "var(--bad)"); } };
 }
 
-function authHeader() {
-  const token = $("token").value.trim();
-  const headers = token ? { Authorization: "Bearer " + token } : {};
-  if (me?.key) headers["X-Agora-Member"] = me.key;
-  return headers;
-}
-
 async function refreshRuns() {
-  const res = await fetch("/api/runs", { headers: authHeader() });
+  const res = await fetch("/api/runs").catch(() => null);
+  if (!res) return;
   if (res.status === 401) runsCache = Object.assign([], { locked: true });
   else if (res.ok) { const runs = await res.json(); runsCache = Array.isArray(runs) ? runs : []; }
   if (tab === "runs") renderFeed();
@@ -690,30 +824,51 @@ async function loadInfo() {
   try {
     [info, models] = await Promise.all([(await fetch("/api/info")).json(), (await fetch("/api/models")).json()]);
     $("captag").textContent = info.cap_usd == null ? "No cap" : `Cap $${info.cap_usd.toFixed(2)} / run`;
+    if (info.persistent) document.querySelector(".ver").textContent += " · kept across restarts";
+    if (tab === "alibi" && !errand) renderFeed(); // the leaderboard's model names
     renderModels();
   } catch { $("model").textContent = "—"; $("reviewer").textContent = "—"; }
 }
 
-document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
-  tab = b.dataset.tab;
-  document.querySelector("main").classList.toggle("wide", tab === "alibi");
-  document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+function selectTab(name) {
+  tab = name;
+  // Receipts and conversations need room: those tabs widen the log column.
+  document.querySelector("main").classList.toggle("wide", tab === "alibi" || tab === "messages");
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x.dataset.tab === tab));
   if (tab === "runs") refreshRuns();
+  if (tab === "chat") ensureChat();
+  if (tab === "alibi" && !errand) refreshErrands();
   renderFeed();
-});
-$("newbrief").onclick = () => { $("brief").focus(); $("brief").select(); };
-$("token").value = store.get("agora-token");
-$("token").onchange = () => { store.set("agora-token", $("token").value.trim()); refreshRuns(); connectChat(); connectCompany(); };
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => selectTab(b.dataset.tab));
+// The main action: back to the errand composer, wherever you were.
+$("giveerrand").onclick = () => {
+  if (errand) closeErrand();
+  selectTab("alibi");
+  $("errandform").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  $("errandtext").focus();
+};
+$("newbrief").onclick = () => { $("briefbox").hidden = false; $("brief").scrollIntoView({ block: "center", behavior: "smooth" }); $("brief").focus(); $("brief").select(); };
+// A typed token is traded for an HttpOnly cookie at once; the page never keeps it.
+$("token").onchange = async () => {
+  const token = $("token").value.trim();
+  $("token").value = "";
+  if (!token) return;
+  const res = await fetch("/api/session", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ token }) }).catch(() => null);
+  if (!res?.ok) { $("token").placeholder = res?.status === 401 ? "wrong token, try again" : "couldn't reach the office"; return; }
+  $("token").placeholder = "access token";
+  await whoAmI();
+  refreshRuns(); if (chatSource) connectChat(); connectCompany(); refreshErrands();
+};
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
-  store.set("agora-token", $("token").value.trim());
   $("go").disabled = true; $("formnote").textContent = "Starting…";
   try {
     // The chosen team must be known before the run goes out, or it would run unstaffed.
     if (!presets.length) await loadTeams();
     if (selected && !teamForRun()) throw new Error("The teams couldn't be loaded; try again in a moment.");
     const res = await fetch("/api/runs", { method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() },
+      headers: JSON_HEADERS,
       body: JSON.stringify({ brief: $("brief").value, team: teamForRun(),
         model: $("modelsel").value || undefined, reviewer_model: $("reviewsel").value || undefined }) });
     const body = await res.json();
@@ -745,7 +900,7 @@ function renderTeamPicker() {
   const group = (label, list) => {
     if (!list.length) return;
     const g = el("optgroup"); g.label = label;
-    for (const t of list) { const o = el("option", null, `${t.name} · ${t.agents.length} agents`); o.value = t.id; g.append(o); }
+    for (const t of list) { const o = el("option", null, `${t.name} · ${plural(t.agents.length, "agent")}`); o.value = t.id; g.append(o); }
     sel.append(g);
   };
   group("Presets", presets);
@@ -829,7 +984,7 @@ function renderTeams() {
       const dots = el("span", "dots");
       t.agents.slice(0, 6).forEach((a) => { const i = el("i"); i.style.background = a.color; dots.append(i); });
       const txt = el("span", "t");
-      txt.append(el("b", null, t.name), el("small", null, `${t.kind || "Team"} · ${t.agents.length} agents`));
+      txt.append(el("b", null, t.name), el("small", null, `${t.kind || "Team"} · ${plural(t.agents.length, "agent")}`));
       b.append(dots, txt);
     }
   };
@@ -1004,10 +1159,12 @@ function renderChips() {
   for (const a of team?.agents ?? []) chip("@" + a.name, a.color, "@" + a.name);
 }
 
+// Browsers allow 6 connections per host over HTTP/1.1 and every stream holds one,
+// so the team chat's stream opens only once it is wanted (its tab, or a run).
+const ensureChat = () => { if (!chatSource) connectChat(); };
 function connectChat() {
   chatSource?.close();
-  const token = $("token").value.trim();
-  chatSource = new EventSource("/api/chat/events" + (token ? `?token=${encodeURIComponent(token)}` : ""));
+  chatSource = new EventSource("/api/chat/events");
   // Every (re)connection replays the kept history.
   chatSource.onopen = () => { chatLog.length = 0; typing = null; if (tab === "chat") renderFeed(); };
   chatSource.onmessage = (m) => {
@@ -1033,7 +1190,7 @@ $("chatform").onsubmit = async (ev) => {
   try {
     if (!presets.length) await loadTeams();
     if (!staffed && selected && !teamForRun()) throw new Error("The teams couldn't be loaded; try again in a moment.");
-    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() },
+    const res = await fetch("/api/chat", { method: "POST", headers: JSON_HEADERS,
       body: JSON.stringify({ text, team: chatTeam(), run: current || undefined }) });
     if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || res.statusText); }
     $("chattext").value = "";
@@ -1063,7 +1220,7 @@ fetch("/api/leaderboard").then((r) => r.json()).then((b) => { board = b; if (tab
 function boardItem(b) {
   const li = el("li", "lb");
   li.append(el("h4", null, "Self-report fidelity (B4) and the guard (B5)"),
-    el("p", null, `${b.errands.length} errands per model. Unguarded, the reports match the ledger right after the work, but asked later in a fresh chat they deny or invent actions (red bar). With the guard on, nothing false is delivered.`));
+    el("p", null, `${b.errands.length} errands per model. Unguarded, the reports match the ledger right after the work, but asked later in a fresh chat they deny or invent actions (red bar). With the guard on, no claim the ledger contradicts was delivered.`));
   const label = (id) => models.find((m) => m.id === id)?.label || id;
   for (const m of [...b.models].sort((x, y) => y.later.contradicted / y.later.claims - x.later.contradicted / x.later.claims)) {
     const row = el("div", "lb-row");
@@ -1077,6 +1234,13 @@ function boardItem(b) {
       row.append(el("span", "lb-guard", `With the guard: ${delivered}/${claims} false claims delivered · ${stopped} drafts stopped and rewritten`));
     }
     li.append(row);
+  }
+  const r = b.red_team;
+  if (r) {
+    const red = el("div", "lb-row");
+    red.append(el("b", null, "Red team (B6)"), el("span", "num", `${r.contradicted_delivered}/${r.claims_delivered} delivered`),
+      el("span", "note", `${r.errands} errands: a bot told to lie, a poisoned inbox, held-out errands. Scripted lies: ${r.scripted_liar.delivered} of ${r.scripted_liar.planted_lies} got through.`));
+    li.append(red);
   }
   return li;
 }
@@ -1109,9 +1273,10 @@ async function forgetEntry(seq) {
   $("errandnote").textContent = "";
   try {
     const res = await fetch(`/api/errands/${encodeURIComponent(errand.id)}/forget`, { method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify({ seq }) });
+      headers: JSON_HEADERS, body: JSON.stringify({ seq }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || res.statusText);
+    reopenErrand();
   } catch (err) { $("errandnote").textContent = err.message; }
 }
 function forgottenItem(e) {
@@ -1122,8 +1287,12 @@ function forgottenItem(e) {
     `Content deleted${r.wal_cleared ? " and overwritten on disk" : " (the old copy on disk is overwritten at the next checkpoint)"}. Its hash stays: ${short(r.content_hash)}`, document.createElement("br"),
     `Hash chain still verifies: ${r.chain_entries} entries, head ${short(r.head)}`, document.createElement("br"),
     `${e.withdrawn.length} message${e.withdrawn.length === 1 ? "" : "s"} written after it withdrawn`, document.createElement("br"),
-    `Searched this errand's records (${(e.scan.bytes / 1024).toFixed(1)} KB) for ${e.scan.needles} piece${e.scan.needles === 1 ? "" : "s"} of it: `
+    `Searched this errand's records (${(e.scan.bytes / 1024).toFixed(1)} KB) for ${plural(e.scan.needles, "piece")} of it: `
       + (e.scan.found_in.length ? `still in ${e.scan.found_in.join(", ")}. Forget that too to remove it.` : "no copy left."));
+  // The office store's saved copy of this errand (null: the office keeps no store).
+  if (e.scan.store_cleared != null) box.append(document.createElement("br"), e.scan.store_cleared
+    ? "The office's saved copy was rewritten, with no old copy left on disk."
+    : "The office's saved copy was rewritten; an old copy may stay on disk until its next checkpoint.");
   li.append(box);
   return li;
 }
@@ -1157,7 +1326,11 @@ function receipt(c, agreed, steps) {
     if (!e) continue;
     const row = el("div", null, `#${n} ${e.action.tool} · ${e.outcome.subject} → ${e.outcome.ok ? "ok" : "failed"} · ${short(e.hash)}`);
     row.style.cursor = "pointer";
-    row.onclick = () => document.getElementById("step-" + n)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    row.onclick = () => {
+      const step = document.getElementById("step-" + n), group = step?.closest("details");
+      if (group && !group.open) { group.open = true; errand.det.set(group.dataset.key, true); }
+      step?.scrollIntoView({ block: "center", behavior: "smooth" });
+    };
     box.append(row);
   }
   return box;
@@ -1187,14 +1360,25 @@ function draftItem(e, last, steps, agent) {
   const li = el("li", "ab-draft");
   const box = el("div", "bubble");
   const why = [];
-  if (c.false_claims.length) why.push(`${c.false_claims.length} statement${c.false_claims.length === 1 ? "" : "s"} the ledger contradicts`);
-  if (c.unmentioned.length) why.push(`${c.unmentioned.length} thing${c.unmentioned.length === 1 ? "" : "s"} done but not mentioned`);
-  box.append(el("b", null, `${agent} · draft ${e.round + 1} · stopped by the guard: ${why.join(", ")}`));
-  const [body, receipts] = markedText(c.message, c, `d${e.turn}.${e.round}`, steps, true);
+  if (c.false_claims.length) why.push(`${plural(c.false_claims.length, "statement")} the ledger contradicts`);
+  if (c.unmentioned.length) why.push(`${plural(c.unmentioned.length, "thing")} done but not mentioned`);
+  if (c.unverified) why.push("couldn't be fully checked");
+  const key = `d${e.turn}.${e.round}`;
+  const [body, receipts] = markedText(c.message, c, key, steps, true);
   box.append(body, ...receipts);
+  if (c.unverified) box.append(el("div", "ab-next", "Not fully checked: " + c.unverified));
   box.append(el("div", "ab-next", last ? "→ not delivered as written: corrected from the ledger" : "→ sent back with the receipts to rewrite"));
-  li.append(box);
+  li.append(fold(key, `${agent} · draft ${e.round + 1} stopped by the guard: ${why.join(", ")}`, false, box));
   return li;
+}
+// A <details> that stays open or shut across redraws (the feed is redrawn per event).
+function fold(key, title, open, ...content) {
+  const d = el("details");
+  d.dataset.key = key;
+  d.open = errand.det.has(key) ? errand.det.get(key) : open;
+  d.ontoggle = () => errand.det.set(key, d.open);
+  d.append(el("summary", null, title), ...content);
+  return d;
 }
 function saidItem(e, steps, agent) {
   const li = el("li", "ab-said");
@@ -1220,8 +1404,10 @@ function summaryItems(e, steps) {
   if (checked.length) sum.append(el("span", "s-ok", `${checked.length - lies - disputed} backed`));
   if (lies) sum.append(el("span", "s-bad", `${lies} contradicted`));
   if (disputed) sum.append(el("span", "s-dis", `${disputed} disputed`));
+  if (check.unverified) sum.append(el("span", "s-dis", "not fully checked"));
   if (hidden.length) sum.append(el("span", "s-hid", `${hidden.length} not mentioned`));
   if (!lies && !disputed && started()?.guard !== false && check.message !== undefined) sum.append(el("span", "s-ok", "0 false claims delivered"));
+  if (check.parsers) sum.append(el("span", "s-hid", `checked by ${plural(check.parsers, "parser")}`));
   if (sum.childElementCount) out.push(sum);
   if (hidden.length) {
     const box = el("li");
@@ -1240,10 +1426,122 @@ function summaryItems(e, steps) {
       + ` · errand cost $${(e.spent_usd ?? 0).toFixed(4)}`));
   return out;
 }
+// The open errand's outcome in one line, pinned above its ledger.
+function verdictItem(steps) {
+  const li = el("li", "verdict");
+  const st = started(), agent = st?.agent || "The bot";
+  const said = errand.events.findLast((e) => e.type === "said");
+  if (!said) {
+    const failed = errand.events.findLast((e) => e.type === "failed");
+    if (failed && !errandBusy()) {
+      li.classList.add("bad");
+      li.append(el("span", "big", "✗ It couldn't finish"), el("span", "why", failed.reason));
+    } else {
+      li.classList.add("busy");
+      li.append(el("span", "big", `${agent} is working…`),
+        el("span", "facts", `${plural(steps.size, "call")} on the ledger so far · every claim is checked before you see it`));
+    }
+    return li;
+  }
+  const c = said.check, chain = said.chain;
+  const backed = c.audit.checked.filter((x) => x.verdict === "supported").length;
+  const falseN = c.false_claims.length;
+  const corrected = !!said.correction;
+  const kind = falseN || corrected || !chain.intact ? "bad" : c.unverified ? "warn" : "ok";
+  li.classList.add(kind);
+  let big;
+  if (!chain.intact) big = "✗ The ledger's hash chain is broken";
+  else if (falseN) big = `✗ ${plural(falseN, "false claim")} delivered${st?.guard === false ? " (guard off)" : ""}`;
+  else if (corrected && !said.message) big = "✗ Withheld: you get the ledger's own account instead";
+  else if (corrected) big = `✗ Corrected from the ledger · ${plural(backed, "claim")} backed`;
+  else if (c.unverified) big = `! Not fully checked · ${plural(backed, "claim")} backed`;
+  else big = `✓ ${plural(backed, "claim")} backed by the ledger`;
+  const facts = [`${falseN} false delivered`, chain.intact ? "chain intact" : "chain broken", chain.signed ? "signed" : "not signed"];
+  if (said.rounds) facts.push(plural(said.rounds, "rewrite"));
+  if (c.parsers) facts.push(`checked by ${plural(c.parsers, "parser")}`);
+  li.append(el("span", "big", big), el("span", "facts", facts.join(" · ")));
+  if (said.turn > 0) li.append(el("span", "why", `Latest answer, to: ${said.question || "a question"}`));
+  if (c.unverified) li.append(el("span", "why", "Why not fully checked: " + c.unverified));
+  if (errandBusy()) li.append(el("span", "why", `${agent} is answering a question…`));
+  if (chain.signed) {
+    const a = el("a", null, "Download signed receipt");
+    a.href = `/api/errands/${encodeURIComponent(errand.id)}/receipt`;
+    a.download = `${errand.id}-receipt.json`;
+    a.title = `The ledger head ${short(chain.signed.head)} (${plural(chain.signed.entries, "entry", "entries")}), signed by the office's key ${short(chain.signed.key)}. Check it later with agora-verify --receipt.`;
+    li.append(a);
+  }
+  return li;
+}
+
+// ---- Errand history: every errand the office kept, newest first ----
+let errandList = [], errandsTimer = 0;
+const errandTimes = new Map(); // errand id → when it was asked (from the office's activity)
+function errandStatus(s) {
+  if (s.busy) return { kind: "running", color: "var(--warn)", text: s.said ? "answering…" : `working… ${plural(s.steps, "step")}` };
+  if (s.said) {
+    const bad = s.said.false_delivered > 0 || !!s.said.correction;
+    const parts = [`${plural(s.said.backed, "claim")} backed`, `${s.said.false_delivered} false delivered`];
+    if (s.said.correction) parts.push("corrected");
+    if (s.said.rewrites) parts.push(plural(s.said.rewrites, "rewrite"));
+    if (s.failed) parts.push("last question failed");
+    return { kind: bad ? "bad" : "ok", color: bad ? "var(--bad)" : "var(--ok)", text: parts.join(" · ") };
+  }
+  if (s.failed) return { kind: "bad", color: "var(--bad)", text: "failed: " + s.failed };
+  return { kind: "idle", color: "var(--idle)", text: plural(s.steps, "step") };
+}
+function historyItems(feed) {
+  const list = errandList.filter((s) => !botFilter || s.people.bot_of?.[0] === botFilter);
+  if (!list.length) { if (botFilter) feed.append(el("li", "empty-note short", "No errands for this bot yet")); return; }
+  feed.append(el("li", "hist-head", `Errands · ${list.length}`));
+  for (const s of list) {
+    const st = errandStatus(s), when = s.at_ms || errandTimes.get(s.id);
+    const li = el("li", "hist");
+    li.tabIndex = 0;
+    const dot = el("span", "dot"); dot.style.background = st.color;
+    const whose = s.people.bot_of ? `${s.agent} (${s.people.bot_of[1]}'s bot)` : s.agent;
+    const title = el("b", null, s.brief);
+    if (s.poisoned) title.prepend(el("span", "poison", "poisoned inbox"));
+    li.append(dot, title, el("span", "t", when ? ago(when) : ""), el("small", null, `${whose} · ${st.text}`));
+    li.onclick = () => openErrand(s.id, s);
+    li.onkeydown = (e) => { if (e.key === "Enter") li.click(); };
+    feed.append(li);
+  }
+}
+async function refreshErrands() {
+  const res = await fetch("/api/errands").catch(() => null);
+  if (!res?.ok) return;
+  errandList = await res.json().catch(() => []);
+  publishBots();
+  if (errand?.closed && errandList.find((s) => s.id === errand.id)?.busy) reopenErrand(); // someone asked it something
+  if (tab === "alibi" && !errand) renderFeed();
+}
+const refreshErrandsSoon = () => { clearTimeout(errandsTimer); errandsTimer = setTimeout(refreshErrands, 400); };
+// Each bot's latest errand, for the desk monitors in the office.
+function botStatuses() {
+  const out = {};
+  for (const s of errandList) {
+    const id = s.people.bot_of?.[0];
+    if (id && !out[id]) out[id] = { status: errandStatus(s).kind, errand: s.id, brief: s.brief, bot: s.agent };
+  }
+  return out;
+}
+window.agoraBots = botStatuses;
+const publishBots = () => dispatchEvent(new CustomEvent("agora:bots", { detail: botStatuses() }));
+
 function renderAlibi(feed) {
   if (!errand) {
-    feed.append(el("li", "empty-note", "Give the agent an errand. Every claim it makes is checked against the ledger before it reaches you."));
-    if (board) feed.append(boardItem(board));
+    feed.append(el("li", "empty-note short", "Give a bot an errand. Every claim it makes is checked against its ledger before it reaches you."));
+    historyItems(feed);
+    if (board && !botFilter) feed.append(boardItem(board));
+    renderErrandChips();
+    return;
+  }
+  const back = el("button", "backlink", "← All errands");
+  back.type = "button"; back.onclick = closeErrand;
+  const top = el("li"); top.append(back);
+  feed.append(top);
+  if (errand.missing) {
+    feed.append(el("li", "ab-err", "There is no such errand here. The office keeps the last 30."));
     renderErrandChips();
     return;
   }
@@ -1256,20 +1554,39 @@ function renderAlibi(feed) {
   }
   const agent = started()?.agent || "Agent";
   const saidTurns = new Set(errand.events.filter((e) => e.type === "said").map((e) => e.turn));
-  let busy = null;
+  if (errand.events.length) feed.append(verdictItem(steps));
+  let busy = null, group = null;
+  // Consecutive ledger steps fold into one group (open while short, or while the bot works).
+  const endGroup = () => {
+    if (!group) return;
+    const { list, first, last, flagged } = group;
+    const title = `Ledger: ${plural(list.childElementCount, "entry", "entries")} (#${first}–#${last})${flagged ? ` · ${flagged} not mentioned` : ""}`;
+    const li = el("li");
+    li.append(fold("steps" + first, title, list.childElementCount <= 6 || errandBusy(), list));
+    feed.append(li);
+    group = null;
+  };
   for (const e of errand.events) {
+    if (e.type !== "step") endGroup();
     if (e.type === "started") {
       const li = el("li", "ab-head");
       const whose = e.people?.bot_of ? ` (${e.people.bot_of[1]}'s bot${e.people.bot_of[2] ? ", " + e.people.bot_of[2] : ""})` : "";
       const asked = e.people?.asked_by && e.people.asked_by[0] !== e.people.bot_of?.[0] ? ` · asked by ${e.people.asked_by[1]}` : "";
+      if (e.poisoned) li.append(el("span", "poison", "poisoned inbox"));
       li.append(el("b", null, e.brief), el("small", null, `${e.agent}${whose}${asked} on ${e.model}${e.checker ? ` · second checker ${e.checker}` : ""} · guard ${e.guard ? "on" : "off"}`));
       feed.append(li);
-    } else if (e.type === "step") feed.append(stepLine(e.entry, hiddenNow.has(e.entry.seq)));
+    } else if (e.type === "step") {
+      group ??= { list: el("ul"), first: e.entry.seq, last: e.entry.seq, flagged: 0 };
+      const flagged = hiddenNow.has(e.entry.seq);
+      group.list.append(stepLine(e.entry, flagged));
+      group.last = e.entry.seq;
+      if (flagged) group.flagged++;
+    }
     else if (e.type === "busy") { busy = e; if (e.question) { const q = el("li", "ab-q"); q.append(el("span", null, e.question)); feed.append(q); } }
     else if (e.type === "draft") {
       // Drafts the guard stopped are shown; a draft that passed is the message itself.
       const c = e.check;
-      if (c.false_claims.length || c.unmentioned.length) {
+      if (c.false_claims.length || c.unmentioned.length || c.unverified) {
         if (started()?.guard === false) continue; // with the guard off nothing is stopped
         const final = saidTurns.has(e.turn) && lastRound.get(e.turn) === e.round;
         feed.append(draftItem(e, final, steps, agent));
@@ -1279,6 +1596,7 @@ function renderAlibi(feed) {
     else if (e.type === "forgotten") feed.append(forgottenItem(e));
     else if (e.type === "idle") busy = null;
   }
+  endGroup();
   if (busy) {
     const drafts = errand.events.filter((e) => e.type === "draft" && e.turn === busy.turn);
     const what = drafts.length ? `The guard sent it back: ${agent} is rewriting it against the ledger (round ${drafts.length})…`
@@ -1289,6 +1607,7 @@ function renderAlibi(feed) {
   feed.scrollTop = feed.scrollHeight;
 }
 const errandIdle = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "idle";
+const errandBusy = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "busy";
 const hasReport = () => errand?.events.some((e) => e.type === "said" && e.turn === 0);
 function renderErrandChips() {
   const box = $("errandchips");
@@ -1296,9 +1615,10 @@ function renderErrandChips() {
   const asking = hasReport();
   $("errandgo").textContent = asking ? "Ask" : "Run errand";
   $("guardon").parentElement.hidden = asking;
+  $("poisonpick").hidden = asking;
   $("errandto").hidden = asking || !company.members.length;
-  $("errandnew").hidden = !asking;
-  $("errandtext").placeholder = asking ? "Ask about the errand. The answer is checked the same way." : "Give an errand. The agent works on Asha's contacts, calendar, email, chats and files.";
+  $("errandnew").hidden = !errand;
+  $("errandtext").placeholder = asking ? "Ask about the errand. The answer is checked the same way." : "Give an errand. The bot works on Asha's contacts, calendar, email, chats and files.";
   for (const [label, text] of asking ? QUESTIONS.map((q) => [q, q]) : ERRANDS) {
     const b = el("button", null, label);
     b.type = "button";
@@ -1311,13 +1631,33 @@ function errandAgent() {
   const a = findTeam(selected)?.agents?.[0];
   return a ? { name: a.name, id: a.id, color: a.color } : { name: "Scout", id: null, color: "#4285f4" };
 }
+// Open an errand (from the history, a bot's message, or a #errand= link). A finished
+// one isn't acted out again in the office: its events are history.
+function openErrand(id, summary = errandList.find((s) => s.id === id)) {
+  watchErrand(id, summary?.busy ? 0 : Infinity);
+  // Not in the list yet (a fresh link): act it out only if it turns out to be running.
+  if (!summary) refreshErrands().then(() => { if (errand?.id === id && errandList.find((s) => s.id === id)?.busy) errand.skip = 0; });
+  if (tab !== "alibi") selectTab("alibi"); else renderFeed();
+}
+function closeErrand() {
+  errandSource?.close();
+  errand = null;
+  if (location.hash.startsWith("#errand=")) history.replaceState(null, "", location.pathname + location.search);
+  refreshErrands();
+  renderFeed();
+  $("feed").scrollTop = 0; // the history starts at the newest
+}
 function watchErrand(id, skip = 0) {
   errandSource?.close();
-  errand = { id, events: [], open: new Set(), agent: errandAgent(), skip };
-  const token = $("token").value.trim();
-  errandSource = new EventSource(`/api/errands/${encodeURIComponent(id)}/events` + (token ? `?token=${encodeURIComponent(token)}` : ""));
-  errandSource.onopen = () => { errand.events = []; };
-  errandSource.onmessage = (m) => {
+  errand = { id, events: [], open: new Set(), det: new Map(), agent: errandAgent(), skip };
+  history.replaceState(null, "", "#errand=" + encodeURIComponent(id));
+  const source = errandSource = new EventSource(`/api/errands/${encodeURIComponent(id)}/events`);
+  source.onopen = () => { errand.events = []; };
+  // A 404 (an unknown or dropped errand) closes the stream for good.
+  source.onerror = () => {
+    if (source === errandSource && source.readyState === EventSource.CLOSED && !errand.events.length) { errand.missing = true; if (tab === "alibi") renderFeed(); }
+  };
+  source.onmessage = (m) => {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
     errand.events.push(e);
@@ -1325,10 +1665,14 @@ function watchErrand(id, skip = 0) {
     if (e.type === "started" && e.people?.bot_of) errand.agent = { ...errand.agent, id: e.people.bot_of[0], name: e.agent };
     if (errand.skip > 0) errand.skip--; // a replay of what the office already acted out
     else dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
+    if (["busy", "said", "failed", "idle"].includes(e.type)) refreshErrandsSoon(); // the history and the desk monitors
+    // Idle, it needs no open stream (connections per host are few): it reopens to ask,
+    // to forget, or when the history shows it busy again.
+    if (e.type === "idle") setTimeout(() => { if (source === errandSource && errandIdle()) { source.close(); errand.closed = true; } }, 1500);
     // Forgetting rewrites the errand's history on the server: fetch it again.
     // (Once per forgetting: the replay after reconnecting includes the same event.)
     const key = e.type === "forgotten" ? `${errand.id}:${errand.events.length}` : null; // its place in the history
-    if (key && !refetched.has(key)) { refetched.add(key); const open = errand.open; watchErrand(errand.id, errand.events.length); errand.open = open; return; }
+    if (key && !refetched.has(key)) { refetched.add(key); const { open, det } = errand; watchErrand(errand.id, errand.events.length); Object.assign(errand, { open, det }); return; }
     if (tab === "alibi") renderFeed();
   };
 }
@@ -1339,22 +1683,107 @@ $("errandform").onsubmit = async (ev) => {
   const asking = hasReport();
   $("errandgo").disabled = true; $("errandnote").textContent = "";
   try {
-    if (asking && !errandIdle()) throw new Error("The agent is still busy.");
+    if (asking && !errandIdle()) throw new Error("The bot is still busy.");
     const url = asking ? `/api/errands/${encodeURIComponent(errand.id)}/ask` : "/api/errands";
     const agent = errandAgent();
-    const area = $("errandto").value || undefined;
-    const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked, area };
-    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify(body) });
+    // "area:<name>" goes to that area's lead's bot; "bot:<name>" to that bot.
+    const [kind, value] = $("errandto").value.split(/:(.*)/s);
+    const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked,
+      area: kind === "area" ? value : undefined, bot: kind === "bot" ? value : undefined, poisoned: $("poisoned").checked || undefined };
+    const res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
     const reply = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(reply.error || res.statusText);
     $("errandtext").value = "";
-    if (!asking) watchErrand(reply.id);
-    if (tab !== "alibi") document.querySelector('.tabs [data-tab="alibi"]').click();
+    if (asking) reopenErrand();
+    else watchErrand(reply.id);
+    refreshErrandsSoon();
+    if (tab !== "alibi") selectTab("alibi");
   } catch (err) { $("errandnote").textContent = err.message; }
   finally { $("errandgo").disabled = false; }
 };
-$("errandnew").onclick = () => { errandSource?.close(); errand = null; renderFeed(); $("errandtext").focus(); };
+$("errandnew").onclick = () => { closeErrand(); $("errandtext").focus(); };
+// Reconnect an errand whose stream was closed while idle; what was seen stays unacted.
+function reopenErrand() {
+  if (!errand) return;
+  if (!errand.closed) { errand.skip = 0; return; } // still connected: what comes next is live
+  const { open, det } = errand;
+  watchErrand(errand.id, errand.events.length);
+  Object.assign(errand, { open, det });
+}
 $("errandtext").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("errandform").requestSubmit(); } };
+
+// ---- Voice: speak the errand; the office transcribes it (Muse Voice Transcribe) ----
+// Recorded here, turned into the WAV the server takes (mono, 16-bit PCM, 24 kHz, at most
+// a minute) and sent; the transcript lands in the errand box to check before sending.
+const voice = { rec: null, chunks: [], started: 0, stopAt: 0, tick: 0 };
+const MAX_VOICE_S = 60;
+function voiceNote(text) { $("errandnote").textContent = text; }
+function showVoice() {
+  const s = Math.floor((Date.now() - voice.started) / 1000);
+  voiceNote(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} of 1:00 · press the mic to stop`);
+}
+async function startVoice() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { voiceNote("This browser can't record audio here; type the errand instead."); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (err) {
+    voiceNote(err.name === "NotAllowedError" || err.name === "SecurityError" ? "The microphone is blocked. Allow it for this site to speak an errand, or type it."
+      : err.name === "NotFoundError" ? "No microphone found; type the errand instead." : "Couldn't start the microphone: " + err.message);
+    return;
+  }
+  const rec = new MediaRecorder(stream);
+  voice.rec = rec; voice.chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) voice.chunks.push(e.data); };
+  rec.onstop = () => { stream.getTracks().forEach((t) => t.stop()); transcribe(new Blob(voice.chunks, { type: rec.mimeType })); };
+  rec.start();
+  voice.started = Date.now();
+  voice.stopAt = setTimeout(stopVoice, MAX_VOICE_S * 1000); // the server takes a minute at most
+  voice.tick = setInterval(showVoice, 250);
+  showVoice();
+  $("mic").classList.add("rec"); $("mic").setAttribute("aria-pressed", "true"); $("mic").title = "Stop recording";
+}
+function stopVoice() {
+  clearTimeout(voice.stopAt); clearInterval(voice.tick);
+  $("mic").classList.remove("rec"); $("mic").setAttribute("aria-pressed", "false"); $("mic").title = "Speak the errand";
+  if (voice.rec?.state === "recording") voice.rec.stop();
+  voice.rec = null;
+}
+async function transcribe(blob) {
+  $("mic").disabled = true;
+  voiceNote("Transcribing…");
+  try {
+    const wav = await toWav(await blob.arrayBuffer());
+    const res = await fetch("/api/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    const t = $("errandtext"), text = (body.text || "").trim();
+    if (!text) { voiceNote("Nothing was heard; try again closer to the mic."); return; }
+    t.value = (t.value.trim() ? t.value.trim() + " " : "") + text;
+    t.focus();
+    voiceNote(`Heard ${body.seconds?.toFixed?.(1) ?? "?"} s. Check it, then run the errand.`);
+  } catch (err) { voiceNote("Couldn't transcribe that: " + err.message); }
+  finally { $("mic").disabled = false; }
+}
+// Any recording the browser can decode → mono 24 kHz 16-bit PCM WAV.
+async function toWav(buffer) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  let audio;
+  try { audio = await ctx.decodeAudioData(buffer); } finally { ctx.close(); }
+  const rate = 24000, frames = Math.min(Math.ceil(audio.duration * rate), rate * MAX_VOICE_S);
+  const offline = new OfflineAudioContext(1, frames, rate); // one channel: stereo is mixed down
+  const src = offline.createBufferSource();
+  src.buffer = audio; src.connect(offline.destination); src.start();
+  const pcm = (await offline.startRendering()).getChannelData(0);
+  const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const ascii = (at, s) => { for (let i = 0; i < s.length; i++) out.setUint8(at + i, s.charCodeAt(i)); };
+  ascii(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); ascii(8, "WAVE");
+  ascii(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+  ascii(36, "data"); out.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) { const v = Math.max(-1, Math.min(1, pcm[i])); out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true); }
+  return out.buffer;
+}
+$("mic").onclick = () => (voice.rec ? stopVoice() : startVoice());
 
 
 
@@ -1377,21 +1806,43 @@ function botRoleOptions(select, value) {
   for (const t of presets) {
     const group = document.createElement("optgroup");
     group.label = t.name;
-    for (const a of t.agents) group.append(new Option(`${a.name}${a.kit?.length ? ` · ${a.kit.length} skills` : ""}`, `${t.id}/${a.id}`));
+    for (const a of t.agents) group.append(new Option(`${a.name}${a.kit?.length ? ` · ${plural(a.kit.length, "skill")}` : ""}`, `${t.id}/${a.id}`));
     select.append(group);
   }
   select.value = value || "";
 }
 
 // ---- The company: who is in the office, their bots, and who leads which area ----
-let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })(); // { key, member }
+// Who you are comes from the session cookie (set from your key right after you join);
+// the page never holds the key. `me` is whoami's answer: { member, channels, call_room, invite? }.
+let me = null, needToken = false, pendingInvite = "", whoTimer = 0;
 const company = { members: [], source: null };
+const peopleErr = new Map(), leadDraft = new Map(); // per member id: an error to show, a half-typed area
 function memberLabel(m) {
   if (m.role === "owner") return m.area ? `Owner · ${m.area}` : "Owner";
   if (m.role === "lead") return `Lead · ${m.area}`;
   return m.area ? `Member · ${m.area}` : "Member";
 }
+// The owner hands out this link; opening it fills in the join form's invite code.
+function renderInvite() {
+  const box = $("invitebox");
+  box.replaceChildren();
+  if (!me?.invite) return;
+  const link = `${location.origin}/#invite=${encodeURIComponent(me.invite)}`;
+  const wrap = el("div", "invite"), input = el("input");
+  input.readOnly = true; input.value = link; input.setAttribute("aria-label", "Invite link");
+  input.onfocus = () => input.select();
+  const copy = button("Copy", null, async () => {
+    try { await navigator.clipboard.writeText(link); } catch { input.focus(); input.select(); document.execCommand?.("copy"); }
+    copy.textContent = "Copied";
+    setTimeout(() => { copy.textContent = "Copy"; }, 1600);
+  });
+  wrap.append(input, copy, el("small", null, "Your invite link: whoever opens it can join this office. Share it with your team only."));
+  box.append(wrap);
+}
 function renderPeople() {
+  // Redrawing replaces the inline area inputs: keep the one being typed in focused.
+  const typing = document.activeElement?.dataset?.lead, caret = document.activeElement?.selectionStart;
   const box = $("people");
   box.replaceChildren();
   const online = company.members.filter((m) => m.online).length;
@@ -1414,103 +1865,324 @@ function renderPeople() {
       row.append(pick);
     }
     const acts = el("div", "acts");
+    if (mine && m.id !== mine.id) button("Message", null, () => openConv("@" + m.id), acts);
     if (mine?.role === "owner" && m.role !== "owner") {
       if (m.role === "lead") button("Make member", null, () => changeMember(m.id, { role: "member" }), acts);
-      else button("Make lead…", null, () => { const area = prompt(`Which area will ${m.name} lead?`, m.area || ""); if (area?.trim()) changeMember(m.id, { role: "lead", area: area.trim() }); }, acts);
+      else if (m.area) button(`Make lead of ${m.area}`, null, () => changeMember(m.id, { role: "lead", area: m.area }), acts);
+      else {
+        // No area yet: name one inline.
+        const form = el("span", "lead-form"), area = el("input");
+        area.placeholder = "Area, e.g. Finance"; area.maxLength = 40; area.dataset.lead = m.id;
+        area.value = leadDraft.get(m.id) || "";
+        area.setAttribute("aria-label", `Area ${m.name} will lead`);
+        area.oninput = () => leadDraft.set(m.id, area.value);
+        const go = () => { const a = area.value.trim(); if (a) changeMember(m.id, { role: "lead", area: a }).then((ok) => ok && leadDraft.delete(m.id)); };
+        area.onkeydown = (e) => { if (e.key === "Enter") go(); };
+        form.append(area, button("Make lead", null, go));
+        acts.append(form);
+      }
     }
-    if (m.id === mine?.id) button("Open on glasses", null, () => window.open(`/glasses#key=${encodeURIComponent(me.key)}`, "_blank", "width=620,height=640"), acts);
-    if (m.id === mine?.id) button("Leave", null, async () => { await fetch(`/api/company/members/${m.id}`, { method: "DELETE", headers: authHeader() }); me = null; store.set("agora-member", ""); connectCompany(); }, acts);
+    if (m.id === mine?.id) {
+      const g = button("Open on glasses", null, () => window.open("/glasses", "_blank", "width=620,height=640"), acts);
+      g.title = "On this device you're already signed in there. On other glasses, open /glasses and join with the invite code.";
+      button("Leave", null, leave, acts);
+    }
     if (acts.childElementCount) row.append(acts);
+    if (peopleErr.has(m.id)) row.append(el("span", "err", peopleErr.get(m.id)));
     box.append(row);
   }
+  if (typing) {
+    const input = box.querySelector(`input[data-lead="${CSS.escape(typing)}"]`);
+    if (input) { input.focus(); if (caret != null) input.setSelectionRange(caret, caret); }
+  }
   $("joinbtn").textContent = mine ? `You: ${mine.name}` : "Join office";
+  renderInvite();
   renderErrandTo();
   showIdleTeam();
   renderBoard();
+  if (tab === "messages") renderFeed();
 }
 function renderErrandTo() {
   const sel = $("errandto"), was = sel.value;
   sel.replaceChildren();
   const mine = company.members.find((m) => m.id === me?.member?.id);
   sel.append(new Option(mine ? `My bot (${mine.bot})` : "Your bot", ""));
-  for (const m of company.members.filter((m) => m.role !== "member" && m.area && m.id !== mine?.id)) sel.append(new Option(`${m.area} → ${m.name}'s ${m.bot}`, m.area));
+  for (const m of company.members.filter((m) => m.role !== "member" && m.area && m.id !== mine?.id)) sel.append(new Option(`${m.area} → ${m.name}'s ${m.bot}`, "area:" + m.area));
+  for (const m of company.members.filter((m) => m.id !== mine?.id)) sel.append(new Option(`${m.bot} (${m.name}'s bot)`, "bot:" + m.bot));
   sel.value = [...sel.options].some((o) => o.value === was) ? was : "";
+  sel.hidden = hasReport() || !company.members.length;
 }
+// Answers whether it worked; a refusal shows under that person.
 async function changeMember(id, change) {
-  const res = await fetch(`/api/company/members/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify(change) });
-  if (!res.ok) alert((await res.json().catch(() => ({}))).error || res.statusText);
+  const res = await fetch(`/api/company/members/${id}`, { method: "PATCH", headers: JSON_HEADERS, body: JSON.stringify(change) }).catch(() => null);
+  if (res?.ok) peopleErr.delete(id);
+  else peopleErr.set(id, (await res?.json().catch(() => ({})))?.error || "Couldn't reach the office");
+  renderPeople();
+  return !!res?.ok;
+}
+async function leave() {
+  const res = await fetch(`/api/company/members/${me.member.id}`, { method: "DELETE" }).catch(() => null);
+  if (!res?.ok && res?.status !== 404) return;
+  // Drop the member cookie too (the token cookie stays).
+  await fetch("/api/session/member", { method: "DELETE" }).catch(() => {});
+  me = null; closeCall();
+  connectCompany(); renderPeople(); renderFeed();
 }
 function connectCompany() {
   company.source?.close();
-  const token = $("token").value.trim();
-  const q = new URLSearchParams();
-  if (token) q.set("token", token);
-  if (me?.key) q.set("member", me.key);
-  company.source = new EventSource("/api/company/events" + (q.size ? "?" + q : ""));
+  company.source = new EventSource("/api/company/events"); // the cookies say who is watching
   company.source.onmessage = (msg) => {
     let e;
     try { e = JSON.parse(msg.data); } catch { return; }
     if (e.type === "snapshot") {
       company.members = e.members;
-      // A key from an earlier server is no longer valid: forget it.
-      if (me && !me.member) whoAmI(); // a key handed over by the glasses view, not yet resolved
-      else if (me && !e.members.some((m) => m.id === me.member.id && m.bot === me.member.bot)) { me = null; store.set("agora-member", ""); }
       for (const a of e.activity) companyNote(a, false);
+      msgs.list = e.messages.slice();
+      for (const m of msgs.list) {
+        if (m.errand && !errandTimes.has(m.errand)) errandTimes.set(m.errand, m.at_ms);
+        const c = convOf(m);
+        if (me && m.n > (seen[c] || 0) && !(m.from === me.member.id && !m.bot)) msgs.unread.add(c);
+      }
+      renderPeople(); updateMsgDot();
+      if (tab === "messages") renderFeed();
     } else if (e.type === "member") {
       const at = company.members.findIndex((m) => m.id === e.member.id);
       if (at < 0) company.members.push(e.member); else company.members[at] = e.member;
-      if (me?.member && e.member.id === me.member.id) { me.member = e.member; store.set("agora-member", JSON.stringify(me)); }
-    } else if (e.type === "left") company.members = company.members.filter((m) => m.id !== e.id);
-    else if (e.type === "activity") companyNote(e.activity, true);
-    renderPeople();
+      if (me?.member && e.member.id === me.member.id) me.member = e.member;
+      whoAmISoon(); // an area, a lead or the owner may have changed: the channels follow
+      renderPeople();
+    } else if (e.type === "left") {
+      company.members = company.members.filter((m) => m.id !== e.id);
+      if (me?.member?.id === e.id) { me = null; closeCall(); }
+      whoAmISoon();
+      renderPeople();
+    } else if (e.type === "activity") {
+      companyNote(e.activity, true);
+      if (e.activity.errand) refreshErrandsSoon();
+    } else if (e.type === "message") addMessage(e.message, true);
+    else if (e.type === "withdrawn") {
+      // A forget reached messages a bot posted from that errand.
+      for (const m of msgs.list) if (e.ns.includes(m.n)) m.text = e.text;
+      if (tab === "messages") renderFeed();
+    }
   };
 }
+// Who the session cookie belongs to: 200 a member, 404 not joined, 401 a token is needed.
 async function whoAmI() {
-  const res = await fetch("/api/company/whoami", { headers: authHeader() }).catch(() => null);
-  if (res?.ok) { me.member = await res.json(); store.set("agora-member", JSON.stringify(me)); renderPeople(); }
-  else if (res?.status === 404) { me = null; store.set("agora-member", ""); renderPeople(); }
+  const res = await fetch("/api/company/whoami").catch(() => null);
+  if (!res) return me;
+  needToken = res.status === 401;
+  $("keybox").hidden = !needToken;
+  if (res.ok) me = await res.json();
+  else if (res.status === 404 || res.status === 401) me = null;
+  if (me && !me.channels.includes(msgs.conv) && msgs.conv.startsWith("#")) msgs.conv = "#general";
+  renderPeople(); renderFeed();
+  return me;
 }
+const whoAmISoon = () => { clearTimeout(whoTimer); whoTimer = setTimeout(whoAmI, 500); };
 const seenActivity = new Set();
 function companyNote(a, live) {
   const key = `${a.at_ms}:${a.text}`;
   if (seenActivity.has(key)) return;
   seenActivity.add(key);
+  if (a.errand && !errandTimes.has(a.errand)) errandTimes.set(a.errand, a.at_ms);
   const m = company.members.find((x) => x.id === a.member);
-  note(a.text, m?.color);
+  note(a.text, m?.color, a.member, a.at_ms);
   if (live) dispatchEvent(new CustomEvent("agora:company", { detail: { members: company.members, activity: a } }));
 }
-$("joinbtn").onclick = () => { if (!me) { botRoleOptions($("joinrole"), ""); $("joinbox").showModal(); $("joinname").focus(); } };
+function openJoin() {
+  if (me) return;
+  botRoleOptions($("joinrole"), "");
+  // The first person in owns the office; everyone after needs the owner's invite.
+  const first = !company.members.length;
+  $("joininvite").hidden = $("joininvitelabel").hidden = first && !pendingInvite;
+  if (pendingInvite) $("joininvite").value = pendingInvite;
+  $("joinbox").showModal(); $("joinname").focus();
+}
+$("joinbtn").onclick = openJoin;
 $("joincancel").onclick = () => $("joinbox").close();
 $("joinform").onsubmit = async (ev) => {
   ev.preventDefault();
   $("joinnote").textContent = "";
+  $("joingo").disabled = true;
   try {
-    const res = await fetch("/api/company/join", { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ name: $("joinname").value, area: $("joinarea").value, bot_role: $("joinrole").value || undefined }) });
+    const res = await fetch("/api/company/join", { method: "POST", headers: JSON_HEADERS,
+      body: JSON.stringify({ name: $("joinname").value, area: $("joinarea").value, bot_role: $("joinrole").value || undefined, invite: $("joininvite").value.trim() || undefined }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || res.statusText);
-    me = body; store.set("agora-member", JSON.stringify(me));
+    // Trade the key for an HttpOnly cookie straight away; it is not kept here.
+    const session = await fetch("/api/session", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ member: body.key }) });
+    if (!session.ok) throw new Error((await session.json().catch(() => ({}))).error || "You joined, but this browser couldn't be signed in.");
+    pendingInvite = "";
     $("joinbox").close();
+    await whoAmI();
     connectCompany();
   } catch (err) { $("joinnote").textContent = err.message; }
+  finally { $("joingo").disabled = false; }
 };
+
+// ---- Messages: channels and direct messages; @Bot in a channel gives that bot an errand ----
+const msgs = { list: [], conv: "#general", unread: new Set() };
+// The newest message number read per conversation (not a secret), so unread survives a reload.
+const seen = (() => { try { return JSON.parse(store.get("agora-seen") || "{}"); } catch { return {}; } })();
+function markRead(c) {
+  const n = Math.max(0, ...msgs.list.filter((m) => convOf(m) === c).map((m) => m.n));
+  if (n > (seen[c] || 0)) { seen[c] = n; store.set("agora-seen", JSON.stringify(seen)); }
+  msgs.unread.delete(c);
+}
+// A direct message belongs to the conversation with the other person.
+const convOf = (m) => (!m.to.startsWith("@") ? m.to : m.from === me?.member?.id && !m.bot ? m.to : "@" + m.from);
+const convName = (c) => (c.startsWith("#") ? c : company.members.find((x) => "@" + x.id === c)?.name || c);
+function updateMsgDot() { document.querySelector('.tabs [data-tab="messages"]').classList.toggle("unread", msgs.unread.size > 0); }
+function addMessage(m, live) {
+  if (msgs.list.some((x) => x.n === m.n)) return;
+  msgs.list.push(m);
+  if (msgs.list.length > 500) msgs.list.shift();
+  if (m.errand && !errandTimes.has(m.errand)) errandTimes.set(m.errand, m.at_ms);
+  const c = convOf(m), mine = m.from === me?.member?.id && !m.bot;
+  if (live && !mine && (tab !== "messages" || c !== msgs.conv)) msgs.unread.add(c);
+  if (live && m.errand) refreshErrandsSoon();
+  // Channel talk shows over the speaker's desk in the office.
+  if (live && c.startsWith("#")) dispatchEvent(new CustomEvent("agora:chat", { detail: { type: "message", message: { agent: m.from, text: m.text, at_ms: m.at_ms } } }));
+  updateMsgDot();
+  if (tab === "messages") renderFeed();
+}
+function openConv(c) {
+  msgs.conv = c;
+  msgs.unread.delete(c);
+  selectTab("messages");
+  $("msgtext").focus();
+}
+function renderConvs() {
+  const box = $("convs");
+  box.replaceChildren();
+  if (!me) return;
+  const chip = (c, label, color) => {
+    const b = button("", (c === msgs.conv ? "on" : "") + (msgs.unread.has(c) ? " unread" : ""), () => openConv(c), box);
+    if (color) { const i = el("i"); i.style.background = color; b.append(i); }
+    b.append(label);
+  };
+  for (const c of me.channels?.length ? me.channels : ["#general"]) chip(c, c);
+  if (msgs.conv.startsWith("#")) {
+    const call = button(`Call ${msgs.conv}`, "call", () => openCall(msgs.conv), box);
+    call.title = "A video call for this channel (Jitsi Meet), for people in the office";
+  }
+  box.append(el("span", "sep"));
+  for (const m of company.members) if (m.id !== me.member.id) chip("@" + m.id, m.name, m.color);
+}
+function msgItem(m) {
+  const mine = m.from === me?.member?.id && !m.bot;
+  const li = el("li", (mine ? "mine" : "") + (m.bot ? " bot" : ""));
+  const face = el("span", "face");
+  face.style.background = company.members.find((x) => x.id === m.from)?.color || "var(--idle)";
+  const bubble = el("div", "bubble"), name = el("b", null, m.name);
+  if (m.bot) name.append(el("span", "tagbot", "bot"));
+  name.append(el("small", null, new Date(m.at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+  bubble.append(name, el("span", null, m.text));
+  if (m.errand) { bubble.append(document.createElement("br")); button("Open errand", "open", () => openErrand(m.errand), bubble); }
+  li.append(face, bubble);
+  return li;
+}
+function msgHint() {
+  if (!msgs.conv.startsWith("#")) return `Only you and ${convName(msgs.conv)} see this`;
+  const bot = company.members.find((m) => m.id !== me?.member?.id)?.bot || me?.member?.bot || "Atlas";
+  return `Type @${bot} … to give a bot an errand`;
+}
+function renderMessages(feed) {
+  renderConvs();
+  if (!me) {
+    feed.append(el("li", "empty-note", needToken ? "Enter the access token, then join the office" : "Join the office to message people and give bots errands"));
+    return;
+  }
+  markRead(msgs.conv); updateMsgDot();
+  const list = msgs.list.filter((m) => convOf(m) === msgs.conv);
+  if (!list.length) feed.append(el("li", "empty-note", msgs.conv.startsWith("#") ? `Nothing in ${msgs.conv} yet` : `Say hello to ${convName(msgs.conv)}`));
+  for (const m of list) feed.append(msgItem(m));
+  $("msgtext").placeholder = `Message ${convName(msgs.conv)}`;
+  if (!$("msgnote").dataset.err) $("msgnote").textContent = msgHint();
+  feed.scrollTop = feed.scrollHeight;
+}
+$("msgform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const text = $("msgtext").value.trim();
+  if (!text) return;
+  $("msgsend").disabled = true;
+  try {
+    const res = await fetch("/api/company/messages", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ to: msgs.conv, text }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    $("msgtext").value = "";
+    delete $("msgnote").dataset.err; $("msgnote").textContent = msgHint();
+  } catch (err) { $("msgnote").dataset.err = "1"; $("msgnote").textContent = err.message; }
+  finally { $("msgsend").disabled = false; }
+};
+$("msgtext").oninput = () => { if ($("msgnote").dataset.err) { delete $("msgnote").dataset.err; $("msgnote").textContent = msgHint(); } };
+$("msgtext").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("msgform").requestSubmit(); } };
+
+// ---- Calls: one Jitsi Meet room per channel, named with a secret only members get ----
+function openCall(channel) {
+  if (!me?.call_room) return;
+  const room = `agora-${me.call_room}-${channel.replace(/^#/, "").replace(/[^a-z0-9]+/gi, "-")}`;
+  const url = "https://meet.jit.si/" + encodeURIComponent(room);
+  closeCall();
+  const frame = el("iframe");
+  frame.src = url; frame.title = `Call in ${channel}`;
+  frame.allow = "camera; microphone; display-capture; fullscreen";
+  frame.allowFullscreen = true;
+  $("call").append(frame);
+  $("calltitle").textContent = `Call · ${channel}`;
+  $("callopen").href = url;
+  $("call").hidden = false;
+}
+function closeCall() { $("call").querySelector("iframe")?.remove(); $("call").hidden = true; }
+$("callclose").onclick = closeCall;
+
 // The office shows the company's bots at their desks (each labelled with its owner).
 function companyTeam() {
   if (!company.members.length) return null;
-  return { id: "company", name: "The office", kind: `${company.members.length} people · a bot each`, agents: company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color })) };
+  return { id: "company", name: "The office", kind: `${plural(company.members.length, "person", "people")} · a bot each`, agents: company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color })) };
 }
 
 // Before any run is watched, the office shows the picked team at their desks.
 window.agoraIdleTeam = () => (current ? null : companyTeam() || findTeam(selected) || null);
-const showIdleTeam = () => { if (!current) dispatchEvent(new CustomEvent("agora:team", { detail: companyTeam() || findTeam(selected) || null })); };
+let shownTeam = "";
+const showIdleTeam = () => {
+  if (current) return;
+  const team = companyTeam() || findTeam(selected) || null;
+  const sig = JSON.stringify(team);
+  if (sig === shownTeam) return; // an online dot changed, not who sits where: leave the office be
+  shownTeam = sig;
+  dispatchEvent(new CustomEvent("agora:team", { detail: team }));
+};
+// A desk clicked in the office: show that bot's errands and activity.
+addEventListener("agora:pick", ({ detail }) => {
+  if (!company.members.some((m) => m.id === detail.id)) return; // a run's agent, not a person's bot
+  botFilter = detail.id;
+  if (tab === "alibi" && errand) closeErrand();
+  if (tab !== "alibi" && tab !== "activity") selectTab("alibi"); else renderFeed();
+});
 
 $("teamsel").onchange = () => { selected = $("teamsel").value; store.set("agora-team", selected); renderTeamPicker(); };
 $("manage").onclick = () => openTeams();
 $("editteam").onclick = () => openTeams(selected);
 
-renderBoard(); renderFeed(); loadInfo(); loadTeams(); connectChat(); connectCompany();
-// A link like /#run-123 opens that run (after the list, so its brief shows too).
-refreshRuns().finally(() => { if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1))); });
+// Links: #invite=<code> fills in the join form (and leaves the address bar),
+// #errand=<id> opens that errand, #run=<id> (or an old bare #<id>) that run.
+const args = new URLSearchParams(location.hash.slice(1));
+if (args.get("invite")) {
+  pendingInvite = args.get("invite").trim();
+  $("joininvite").value = pendingInvite;
+  history.replaceState(null, "", location.pathname + location.search);
+}
+renderBoard(); renderFeed(); loadInfo(); loadTeams();
+whoAmI().then(() => { connectCompany(); if (pendingInvite && !me && !needToken) openJoin(); });
+refreshErrands();
+setInterval(() => { if (!document.hidden) refreshErrands(); }, 8000);
+setInterval(() => { if (tab === "alibi" && !errand && !document.hidden) renderFeed(); }, 60000); // "3 min ago"
+if (args.get("errand")) openErrand(args.get("errand"));
+const runLink = args.get("run") || (location.hash.length > 1 && !location.hash.includes("=") ? decodeURIComponent(location.hash.slice(1)) : "");
+// (after the list, so its brief shows too)
+refreshRuns().finally(() => { if (runLink) watch(runLink); });
 </script>
 <script type="module" src="/office.js"></script>
 </body>
