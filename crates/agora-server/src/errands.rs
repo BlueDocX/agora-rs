@@ -4,8 +4,12 @@
 //! - `POST /api/errands {"brief", "model"?, "agent"?}` starts one (at most
 //!   [`MAX_ACTIVE`] at once) and answers `{"id"}`.
 //! - `GET /api/errands/{id}/events` streams it as Server-Sent Events: `started`,
-//!   each ledger `step` as the executor writes it, what the agent `said`, the
-//!   `checked` receipts for it, then `idle`. The stream stays open for questions.
+//!   each ledger `step` as the executor writes it, each `draft` of the agent's
+//!   message as the guard judges it, what was `said` (delivered, with its receipts
+//!   and any correction from the ledger), then `idle`. It stays open for questions.
+//! - With the guard on (the default; `"guard": false` turns it off to compare), no
+//!   message reaches the person with a claim the ledger contradicts: see
+//!   `agora_engine::guard`.
 //! - `POST /api/errands/{id}/ask {"question"}` asks the agent about the errand
 //!   later, in a fresh conversation (see `agora_engine::errand::ask_later`), and
 //!   checks that answer the same way.
@@ -24,7 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agora_core::World;
-use agora_engine::alibi::{self, Audit};
+use agora_engine::alibi::Audit;
+use agora_engine::guard::{self, Checked, Checkers, Guarded};
 use agora_engine::errand::{self, Errand};
 use agora_engine::ledger::Receipt;
 use agora_engine::{Budget, Caller, Entry, Ledger};
@@ -61,15 +66,27 @@ pub(crate) struct Chain {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ErrandEvent {
-    Started { id: String, brief: String, model: String, agent: String, checker: Option<String> },
+    Started { id: String, brief: String, model: String, agent: String, checker: Option<String>, guard: bool },
     /// The agent is working (turn 0) or answering a question (turn 1, 2…).
     Busy { turn: usize, question: Option<String> },
     Step { entry: Entry },
-    /// What the agent told the person: the errand's report (turn 0) or an answer.
-    Said { turn: usize, question: Option<String>, message: String, finished: bool },
-    /// The receipts for that message. `agreed[i]` says whether the second checker
-    /// reached the same verdict on claim `i` (`None` = no second checker).
-    Checked { turn: usize, audit: Audit, agreed: Vec<Option<bool>>, chain: Chain, spent_usd: f64 },
+    /// A draft of the agent's message (round 0 is the first), judged before delivery.
+    Draft { turn: usize, round: usize, check: Checked },
+    /// What reached the person: the errand's report (turn 0) or an answer. `check`
+    /// is the delivered text with its receipts (`check.agreed[i]`: whether the second
+    /// checker agrees on claim `i`); `correction` was added from the ledger by code.
+    Said {
+        turn: usize,
+        question: Option<String>,
+        message: String,
+        correction: Option<String>,
+        finished: bool,
+        check: Checked,
+        /// How many times the agent rewrote it before delivery.
+        rounds: usize,
+        chain: Chain,
+        spent_usd: f64,
+    },
     Failed { turn: usize, reason: String },
     /// Entry `receipt.seq` was forgotten; these turns' messages were withdrawn.
     Forgotten { receipt: Receipt, withdrawn: Vec<usize>, scan: Scan },
@@ -91,6 +108,8 @@ const WITHDRAWN: &str = "[Withdrawn: written after reading something you asked t
 
 pub(crate) struct ErrandRoom {
     id: String,
+    /// Whether messages go through the guard before delivery.
+    guard: bool,
     brief: String,
     model: String,
     agent: String,
@@ -164,33 +183,48 @@ impl Hub {
     }
 }
 
-/// Check `message` against the ledger: parse it with the office model, and with the
-/// second checker when there is one, then judge in plain code.
-async fn check(hub: &Hub, room: &ErrandRoom, turn: usize, message: &str) {
+/// Judge the agent's `message` and deliver what may reach the person: through the
+/// guard (checked, revised, corrected from the ledger if needed), or with the guard
+/// off, checked only. Every draft is streamed as it is judged.
+async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<String>, message: &str, finished: bool) {
     let entries = match room.ledger.entries() {
         Ok(e) => e,
         Err(e) => return room.push(ErrandEvent::Failed { turn, reason: e.to_string() }),
     };
     let second = hub.second_checker();
-    let first = alibi::extract(&room.caller, &hub.config.model, message);
-    let (first, other) = match &second {
-        Some(model) => {
-            let (a, b) = tokio::join!(first, alibi::extract(&room.caller, model, message));
-            (a, Some(b))
+    let checkers = Checkers { first: &hub.config.model, second: second.as_deref() };
+    let on_draft = |round: usize, check: &Checked| room.push(ErrandEvent::Draft { turn, round, check: check.clone() });
+    let owner = room.world.lock().await.owner;
+    let guarded = if room.guard {
+        guard::deliver(&room.caller, checkers, &room.model, owner, message, &entries, &on_draft).await
+    } else {
+        guard::check(&room.caller, checkers, message, &entries).await.map(|check| {
+            on_draft(0, &check);
+            Guarded { drafts: vec![check.clone()], delivered: check, correction: None }
+        })
+    };
+    match guarded {
+        Ok(g) => {
+            let told = match &g.correction {
+                Some(c) if g.delivered.message.is_empty() => c.clone(),
+                Some(c) => format!("{}\n\n{c}", g.delivered.message),
+                None => g.delivered.message.clone(),
+            };
+            room.lock().report.get_or_insert(told);
+            room.push(ErrandEvent::Said {
+                turn,
+                question,
+                message: g.delivered.message.clone(),
+                correction: g.correction,
+                finished,
+                rounds: g.drafts.len() - 1,
+                check: g.delivered,
+                chain: room.chain(),
+                spent_usd: room.caller.spend().cost_usd,
+            });
         }
-        None => (first.await, None),
-    };
-    let claims = match first {
-        Ok(c) => c,
-        Err(e) => return room.push(ErrandEvent::Failed { turn, reason: format!("could not check the message: {e}") }),
-    };
-    let audit = alibi::audit(message, &claims, &entries);
-    let agreed = match other {
-        Some(Ok(second)) => alibi::agreement(&audit, message, &second, &entries).into_iter().map(Some).collect(),
-        // A second checker that failed can't confirm anything: mark every claim unconfirmed.
-        Some(Err(_)) | None => vec![None; audit.checked.len()],
-    };
-    room.push(ErrandEvent::Checked { turn, audit, agreed, chain: room.chain(), spent_usd: room.caller.spend().cost_usd });
+        Err(e) => room.push(ErrandEvent::Failed { turn, reason: format!("could not check the message: {e}") }),
+    }
 }
 
 #[derive(Deserialize)]
@@ -200,6 +234,9 @@ pub(crate) struct StartErrand {
     model: Option<String>,
     #[serde(default)]
     agent: Option<String>,
+    /// `false` turns the guard off (to see what the agent says unchecked). Default on.
+    #[serde(default)]
+    guard: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -249,8 +286,10 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
         Ok(l) => l,
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
+    let guard = body.guard.unwrap_or(true);
     let room = Arc::new(ErrandRoom {
         id: id.clone(),
+        guard,
         brief: brief.clone(),
         model: model.clone(),
         agent: agent.clone(),
@@ -270,7 +309,7 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
             errands.rooms.remove(oldest);
         }
     }
-    room.push(ErrandEvent::Started { id: id.clone(), brief, model, agent, checker });
+    room.push(ErrandEvent::Started { id: id.clone(), brief, model, agent, checker, guard });
     room.push(ErrandEvent::Busy { turn: 0, question: None });
     tokio::spawn(work(hub, room));
     (StatusCode::CREATED, Json(Started { id })).into_response()
@@ -287,9 +326,7 @@ async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
     match done {
         Ok(done) => {
             let message = if done.message.is_empty() { "(The agent ran out of steps without reporting.)".to_string() } else { done.message };
-            room.push(ErrandEvent::Said { turn: 0, question: None, message: message.clone(), finished: done.finished });
-            room.lock().report = Some(message.clone());
-            check(&hub, &room, 0, &message).await;
+            deliver(&hub, &room, 0, None, &message, done.finished).await;
         }
         Err(e) => room.push(ErrandEvent::Failed { turn: 0, reason: e.to_string() }),
     }
@@ -337,15 +374,14 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
     room.push(ErrandEvent::Busy { turn, question: Some(question.clone()) });
     tokio::spawn(async move {
         let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief };
+        // With the guard on, the agent answers from its ledger, not from memory.
+        let log = room.guard.then(|| guard::log(&room.ledger.entries().unwrap_or_default()));
         let answer = {
             let world = room.world.lock().await;
-            errand::ask_later(&room.caller, &world, &errand, &report, &question).await
+            errand::ask_later(&room.caller, &world, &errand, &report, &question, log.as_deref()).await
         };
         match answer {
-            Ok(message) => {
-                room.push(ErrandEvent::Said { turn, question: Some(question), message: message.clone(), finished: true });
-                check(&hub, &room, turn, &message).await;
-            }
+            Ok(message) => deliver(&hub, &room, turn, Some(question), &message, true).await,
             Err(e) => room.push(ErrandEvent::Failed { turn, reason: e.to_string() }),
         }
         finish(&room);
@@ -440,7 +476,8 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
             return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
         }
     };
-    let forgotten = room.ledger.entries().ok().and_then(|e| e.into_iter().find(|e| e.seq == seq));
+    let after = room.ledger.entries().unwrap_or_default();
+    let forgotten = after.iter().find(|e| e.seq == seq).cloned();
     let event = {
         let mut inner = room.lock();
         // Everything the agent said came after its calls, so every message is withdrawn.
@@ -452,15 +489,20 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
                         entry.clone_from(f);
                     }
                 }
-                ErrandEvent::Said { turn, message, .. } if message != WITHDRAWN => {
+                ErrandEvent::Said { turn, message, check, correction, .. } => {
+                    if message != WITHDRAWN {
+                        withdrawn.push(*turn);
+                    }
                     message.clear();
                     message.push_str(WITHDRAWN);
-                    withdrawn.push(*turn);
+                    *check = withdrawn_check();
+                    // The correction is the ledger's own account: write it again from
+                    // the ledger as it now stands.
+                    if correction.is_some() {
+                        *correction = Some(guard::correction(&after));
+                    }
                 }
-                ErrandEvent::Checked { audit, agreed, .. } => {
-                    *audit = Audit::default();
-                    agreed.clear();
-                }
+                ErrandEvent::Draft { check, .. } => *check = withdrawn_check(),
                 _ => {}
             }
         }
@@ -486,6 +528,10 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         event
     };
     Json(event).into_response()
+}
+
+fn withdrawn_check() -> Checked {
+    Checked { message: WITHDRAWN.to_string(), audit: Audit::default(), agreed: Vec::new(), false_claims: Vec::new(), unmentioned: Vec::new() }
 }
 
 /// Every string in a JSON value, one per line.

@@ -49,7 +49,7 @@
   /* Three panels */
   main { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr) 340px; gap: 12px; padding: 0 12px 12px; transition: grid-template-columns .25s; }
   /* Receipts need room: the Alibi tab widens the log column. */
-  main.wide { grid-template-columns: 420px minmax(0, 1fr) 320px; }
+  main.wide { grid-template-columns: 410px minmax(0, 1fr) 340px; }
   .panel { background: var(--paper); border: 1px solid rgba(23,21,15,.06); border-radius: 28px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
   /* Logs */
@@ -121,14 +121,21 @@
   .lb-row b { font-size: 12px; } .lb-row .num { font: 600 11px var(--mono); text-align: right; }
   .lb-bar { grid-column: 1 / 3; height: 6px; border-radius: 3px; background: #dff3e6; overflow: hidden; }
   .lb-bar i { display: block; height: 100%; background: var(--bad); }
+  .lb-guard { grid-column: 1 / 3; font: 700 11px var(--sans); color: #17663a; background: #eef7f1; border-radius: 8px; padding: 4px 8px; margin-top: 3px; }
   .ab-step .forget { grid-column: 3; grid-row: 2 / 4; align-self: center; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 2px 8px; font: 700 10px var(--sans); color: #4b3a8a; cursor: pointer; }
   .ab-step .forget:hover { background: #f1ecfb; }
   .ab-step.gone .tool, .ab-step.gone .res { color: var(--soft); text-decoration: line-through; }
   .ab-forgot { font: 11px/1.5 var(--mono); background: #17150f; color: #fcfaf4; border-radius: 12px; padding: 9px 11px; }
   .ab-forgot b { font-family: var(--sans); color: var(--butter); }
+  .ab-draft .bubble { background: #fff6f5; border: 1px dashed #f0b4ad; border-radius: 4px 16px 16px 16px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5; color: #6b6450; white-space: pre-wrap; word-break: break-word; }
+  .ab-draft .bubble > b { display: block; font-size: 11px; color: #a3261b; margin-bottom: 3px; }
+  .ab-draft s { text-decoration-color: var(--bad); text-decoration-thickness: 2px; cursor: pointer; }
+  .ab-next { font: 700 10.5px var(--sans); color: #a3261b; margin-top: 5px; }
+  .ab-correction { margin-top: 8px; font: 11.5px/1.55 var(--mono); background: #eef7f1; border: 1px solid #bfe3cc; border-radius: 10px; padding: 8px 10px; color: #17663a; white-space: pre-wrap; }
+  .guard-pick { display: inline-flex; gap: 6px; align-items: center; font: 700 11px var(--sans); color: var(--muted); margin-right: 8px; }
   .ab-busy { color: var(--muted); font-style: italic; font-size: 12.5px; }
   .ab-err { color: var(--bad); font-size: 12.5px; }
-  .composer[hidden], .pill[hidden] { display: none !important; }
+  .composer[hidden], .pill[hidden], .guard-pick[hidden] { display: none !important; }
   .empty-note { color: var(--muted); font: 800 10.5px var(--sans); letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 70px 10px; border: 0 !important; display: block !important; }
 
   /* Office */
@@ -330,7 +337,7 @@
       <div class="chips" id="errandchips"></div>
       <textarea id="errandtext" maxlength="500" placeholder="Give an errand. The agent works on Asha's contacts, calendar, email, chats and files." aria-label="Errand or question"></textarea>
       <div class="row"><span class="note" id="errandnote"></span>
-        <span><button class="pill ghost" id="errandnew" type="button" hidden>New errand</button>
+        <span><label class="guard-pick" title="With the guard on, no message reaches you with a claim the ledger contradicts"><input type="checkbox" id="guardon" checked> Guard</label><button class="pill ghost" id="errandnew" type="button" hidden>New errand</button>
         <button class="pill butter" id="errandgo" type="submit">Run errand</button></span></div>
     </form>
   </section>
@@ -1006,8 +1013,8 @@ let board = null;
 fetch("/api/leaderboard").then((r) => r.json()).then((b) => { board = b; if (tab === "alibi" && !errand) renderFeed(); }).catch(() => {});
 function boardItem(b) {
   const li = el("li", "lb");
-  li.append(el("h4", null, "Self-report fidelity (B4)"),
-    el("p", null, `${b.errands.length} errands per model. Right after the work, the models' reports match the ledger. Asked about it later in a fresh chat, as an assistant with summary memory would be, they deny or invent actions.`));
+  li.append(el("h4", null, "Self-report fidelity (B4) and the guard (B5)"),
+    el("p", null, `${b.errands.length} errands per model. Unguarded, the reports match the ledger right after the work, but asked later in a fresh chat they deny or invent actions (red bar). With the guard on, nothing false is delivered.`));
   const label = (id) => models.find((m) => m.id === id)?.label || id;
   for (const m of [...b.models].sort((x, y) => y.later.contradicted / y.later.claims - x.later.contradicted / x.later.claims)) {
     const row = el("div", "lb-row");
@@ -1015,6 +1022,11 @@ function boardItem(b) {
     const bar = el("div", "lb-bar"); const fill = el("i"); fill.style.width = (share * 100).toFixed(0) + "%"; bar.append(fill);
     row.append(el("b", null, label(m.model)), el("span", "num", `${m.later.contradicted}/${m.later.claims} later`),
       el("span", "note", `right away ${m.now.contradicted}/${m.now.claims} · caught in ${m.later.errands_with_a_contradiction}/${m.errands} errands`), el("span"), bar);
+    if (m.guarded) {
+      const g = m.guarded, delivered = g.now.contradicted + g.later.contradicted, claims = g.now.claims + g.later.claims;
+      const stopped = g.guard.first_drafts_with_a_problem[0] + g.guard.first_drafts_with_a_problem[1];
+      row.append(el("span", "lb-guard", `With the guard: ${delivered}/${claims} false claims delivered · ${stopped} drafts stopped and rewritten`));
+    }
     li.append(row);
   }
   return li;
@@ -1101,34 +1113,57 @@ function receipt(c, agreed, steps) {
   }
   return box;
 }
-function saidItem(e, check, steps, agent) {
+// The agent's words with each claim marked; `key` keeps a receipt open across redraws.
+function markedText(message, check, key, steps, strike) {
+  const body = el("span");
+  let at = 0;
+  for (const [from, to, i] of ranges(message, check.audit.checked)) {
+    body.append(message.slice(at, from));
+    const c = check.audit.checked[i], agreed = check.agreed[i];
+    const m = el(strike && c.verdict === "contradicted" ? "s" : "mark", claimClass(c, agreed), message.slice(from, to));
+    const k = `${key}:${i}`;
+    m.title = c.verdict === "supported" ? "Backed by the ledger: click for the receipt" : "Click for the receipt";
+    m.onclick = () => { errand.open.has(k) ? errand.open.delete(k) : errand.open.add(k); renderFeed(); };
+    body.append(m);
+    at = to;
+  }
+  body.append(message.slice(at));
+  const receipts = [];
+  check.audit.checked.forEach((c, i) => { if (errand.open.has(`${key}:${i}`)) receipts.push(receipt(c, check.agreed[i], steps)); });
+  return [body, receipts];
+}
+// A draft the guard stopped: struck through, with why, so nothing is hidden.
+function draftItem(e, last, steps, agent) {
+  const c = e.check;
+  const li = el("li", "ab-draft");
+  const box = el("div", "bubble");
+  const why = [];
+  if (c.false_claims.length) why.push(`${c.false_claims.length} statement${c.false_claims.length === 1 ? "" : "s"} the ledger contradicts`);
+  if (c.unmentioned.length) why.push(`${c.unmentioned.length} thing${c.unmentioned.length === 1 ? "" : "s"} done but not mentioned`);
+  box.append(el("b", null, `${agent} · draft ${e.round + 1} · stopped by the guard: ${why.join(", ")}`));
+  const [body, receipts] = markedText(c.message, c, `d${e.turn}.${e.round}`, steps, true);
+  box.append(body, ...receipts);
+  box.append(el("div", "ab-next", last ? "→ not delivered as written: corrected from the ledger" : "→ sent back with the receipts to rewrite"));
+  li.append(box);
+  return li;
+}
+function saidItem(e, steps, agent) {
   const li = el("li", "ab-said");
   const bubble = el("div", "bubble");
-  bubble.append(el("b", null, e.turn === 0 ? `${agent} · report` : `${agent} · answer`));
-  const body = el("span");
-  if (!check) body.textContent = e.message;
-  else {
-    let at = 0;
-    for (const [from, to, i] of ranges(e.message, check.audit.checked)) {
-      body.append(e.message.slice(at, from));
-      const c = check.audit.checked[i], agreed = check.agreed[i];
-      const m = el("mark", claimClass(c, agreed), e.message.slice(from, to));
-      const key = `${e.turn}:${i}`;
-      m.title = c.verdict === "supported" ? "Backed by the ledger: click for the receipt" : "Click for the receipt";
-      m.onclick = () => { errand.open.has(key) ? errand.open.delete(key) : errand.open.add(key); renderFeed(); };
-      body.append(m);
-      at = to;
-    }
-    body.append(e.message.slice(at));
+  const how = e.correction ? "corrected from the ledger" : e.rounds ? `delivered after ${e.rounds} rewrite${e.rounds === 1 ? "" : "s"}` : started()?.guard === false ? "guard off" : "passed the guard first time";
+  bubble.append(el("b", null, `${agent} · ${e.turn === 0 ? "report" : "answer"} · ${how}`));
+  if (e.message) {
+    const [body, receipts] = markedText(e.message, e.check, `s${e.turn}`, steps, false);
+    bubble.append(body, ...receipts);
   }
-  bubble.append(body);
-  if (check) check.audit.checked.forEach((c, i) => { if (errand.open.has(`${e.turn}:${i}`)) bubble.append(receipt(c, check.agreed[i], steps)); });
+  if (e.correction) bubble.append(el("div", "ab-correction", e.correction));
   li.append(bubble);
   return li;
 }
-function summaryItems(check, steps) {
+const started = () => errand?.events.find((e) => e.type === "started");
+function summaryItems(e, steps) {
   const out = [];
-  const checked = check.audit.checked;
+  const check = e.check, checked = check.audit.checked;
   const lies = checked.filter((c, i) => c.verdict === "contradicted" && check.agreed[i] !== false).length;
   const disputed = checked.filter((c, i) => c.verdict === "contradicted" && check.agreed[i] === false).length;
   const hidden = [...check.audit.undisclosed_acts, ...check.audit.undisclosed_reads].sort((a, b) => a - b);
@@ -1137,55 +1172,66 @@ function summaryItems(check, steps) {
   if (lies) sum.append(el("span", "s-bad", `${lies} contradicted`));
   if (disputed) sum.append(el("span", "s-dis", `${disputed} disputed`));
   if (hidden.length) sum.append(el("span", "s-hid", `${hidden.length} not mentioned`));
+  if (!lies && !disputed && started()?.guard !== false && check.message !== undefined) sum.append(el("span", "s-ok", "0 false claims delivered"));
   if (sum.childElementCount) out.push(sum);
   if (hidden.length) {
     const box = el("li");
     const inner = el("div", "ab-hidden");
     inner.append(el("b", null, "Done but not mentioned:"));
     for (const n of hidden) {
-      const e = steps.get(n);
-      if (e) inner.append(el("div", null, `#${n} ${e.action.tool} · ${e.outcome.subject}${e.outcome.ok ? "" : " (failed)"}`));
+      const s = steps.get(n);
+      if (s) inner.append(el("div", null, `#${n} ${s.action.tool} · ${s.outcome.subject}${s.outcome.ok ? "" : " (failed)"}`));
     }
     box.append(inner);
     out.push(box);
   }
-  const c = check.chain;
+  const c = e.chain;
   out.push(el("li", "ab-chain" + (c.intact ? "" : " broken"),
     (c.intact ? `Ledger: ${c.entries} entries · hash chain intact · head ${short(c.head)}` : `Ledger tampered: ${c.broken}`)
-      + ` · errand cost $${(check.spent_usd ?? 0).toFixed(4)}`));
+      + ` · errand cost $${(e.spent_usd ?? 0).toFixed(4)}`));
   return out;
 }
 function renderAlibi(feed) {
   if (!errand) {
-    feed.append(el("li", "empty-note", "Give the agent an errand. Every claim it makes will be checked against the ledger."));
+    feed.append(el("li", "empty-note", "Give the agent an errand. Every claim it makes is checked against the ledger before it reaches you."));
     if (board) feed.append(boardItem(board));
     renderErrandChips();
     return;
   }
-  const steps = new Map(), checks = new Map();
-  let started = null, busy = null, hiddenNow = new Set();
+  const steps = new Map(), lastRound = new Map();
+  let hiddenNow = new Set();
   for (const e of errand.events) {
     if (e.type === "step") steps.set(e.entry.seq, e.entry);
-    if (e.type === "checked") { checks.set(e.turn, e); hiddenNow = new Set([...e.audit.undisclosed_acts, ...e.audit.undisclosed_reads]); }
-    if (e.type === "started") started = e;
+    if (e.type === "draft") lastRound.set(e.turn, e.round);
+    if (e.type === "said") hiddenNow = new Set([...e.check.audit.undisclosed_acts, ...e.check.audit.undisclosed_reads]);
   }
-  const agent = started?.agent || "Agent";
+  const agent = started()?.agent || "Agent";
+  const saidTurns = new Set(errand.events.filter((e) => e.type === "said").map((e) => e.turn));
+  let busy = null;
   for (const e of errand.events) {
     if (e.type === "started") {
       const li = el("li", "ab-head");
-      li.append(el("b", null, e.brief), el("small", null, `${e.agent} on ${e.model}${e.checker ? ` · second checker ${e.checker}` : ""}`));
+      li.append(el("b", null, e.brief), el("small", null, `${e.agent} on ${e.model}${e.checker ? ` · second checker ${e.checker}` : ""} · guard ${e.guard ? "on" : "off"}`));
       feed.append(li);
     } else if (e.type === "step") feed.append(stepLine(e.entry, hiddenNow.has(e.entry.seq)));
     else if (e.type === "busy") { busy = e; if (e.question) { const q = el("li", "ab-q"); q.append(el("span", null, e.question)); feed.append(q); } }
-    else if (e.type === "said") feed.append(saidItem(e, checks.get(e.turn), steps, agent));
-    else if (e.type === "checked") for (const li of summaryItems(e, steps)) feed.append(li);
+    else if (e.type === "draft") {
+      // Drafts the guard stopped are shown; a draft that passed is the message itself.
+      const c = e.check;
+      if (c.false_claims.length || c.unmentioned.length) {
+        if (started()?.guard === false) continue; // with the guard off nothing is stopped
+        const final = saidTurns.has(e.turn) && lastRound.get(e.turn) === e.round;
+        feed.append(draftItem(e, final, steps, agent));
+      }
+    } else if (e.type === "said") { feed.append(saidItem(e, steps, agent)); for (const li of summaryItems(e, steps)) feed.append(li); }
     else if (e.type === "failed") feed.append(el("li", "ab-err", e.reason));
     else if (e.type === "forgotten") feed.append(forgottenItem(e));
     else if (e.type === "idle") busy = null;
   }
   if (busy) {
-    const said = errand.events.some((e) => e.type === "said" && e.turn === busy.turn);
-    const what = said ? "Checking every claim against the ledger…" : busy.turn === 0 ? `${agent} is working…` : `${agent} is answering…`;
+    const drafts = errand.events.filter((e) => e.type === "draft" && e.turn === busy.turn);
+    const what = drafts.length ? `The guard sent it back: ${agent} is rewriting it against the ledger (round ${drafts.length})…`
+      : busy.turn === 0 ? `${agent} is working…` : `${agent} is answering…`;
     feed.append(el("li", "ab-busy", what));
   }
   renderErrandChips();
@@ -1198,6 +1244,7 @@ function renderErrandChips() {
   box.replaceChildren();
   const asking = hasReport();
   $("errandgo").textContent = asking ? "Ask" : "Run errand";
+  $("guardon").parentElement.hidden = asking;
   $("errandnew").hidden = !asking;
   $("errandtext").placeholder = asking ? "Ask about the errand. The answer is checked the same way." : "Give an errand. The agent works on Asha's contacts, calendar, email, chats and files.";
   for (const [label, text] of asking ? QUESTIONS.map((q) => [q, q]) : ERRANDS) {
@@ -1240,7 +1287,7 @@ $("errandform").onsubmit = async (ev) => {
     if (asking && !errandIdle()) throw new Error("The agent is still busy.");
     const url = asking ? `/api/errands/${encodeURIComponent(errand.id)}/ask` : "/api/errands";
     const agent = errandAgent();
-    const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name };
+    const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked };
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify(body) });
     const reply = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(reply.error || res.statusText);

@@ -6,6 +6,7 @@ pub mod call;
 pub mod chat;
 pub mod errand;
 pub mod events;
+pub mod guard;
 pub mod journal;
 pub mod ledger;
 pub mod planner;

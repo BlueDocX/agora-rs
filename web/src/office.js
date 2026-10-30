@@ -7,8 +7,8 @@
 // It only listens: the page dispatches `agora:event` (one run event), `agora:reset`
 // (a run is about to replay), `agora:team` (the team picked while no run is open)
 // `agora:chat` (chat traffic, shown as speech bubbles) and `agora:errand` (an Alibi
-// errand: the agent fetches records or works the laptop for each call, and a ring
-// flashes under it when its account is checked against the ledger).
+// errand: the agent fetches records or works the laptop for each call; a red ring
+// and the reviewer when the guard stops a draft, a green one when it is delivered).
 //
 // Art: Kenney's Mini Characters and Furniture Kit (CC0, kenney.nl), trimmed into two
 // files by web/models/build.mjs. Without WebGL2 the page keeps its kanban.
@@ -517,31 +517,26 @@ async function start(host) {
         p.say(`${action.tool} · ${outcome.subject}${outcome.ok ? "" : " ✗"}`, 4);
         break;
       }
-      case "said":
-        goTo(d, d.stand, () => { p.faceCamera = true; p.play("idle"); });
-        p.say(e.message.length > 90 ? e.message.slice(0, 88) + "…" : e.message, 8);
+      case "draft": {
+        // A draft the guard stopped: caught, and sent back (or corrected).
+        const c = e.check;
+        if (!c.false_claims.length && !c.unmentioned.length) break;
+        flash(p.root.position, c.false_claims.length ? "#e5483b" : "#6b4fd8");
+        goTo(d, d.stand, () => { p.faceCamera = true; p.play("emote-no", { once: true, then: () => p.play("idle") }); });
+        p.say(c.false_claims.length ? `The ledger contradicts ${c.false_claims.length} of my claim${c.false_claims.length === 1 ? "" : "s"}…` : "I left something out…", 6);
+        reviewer.walk(route(reviewer.root.position, new Vector3(d.stand.x + 0.45, FLOOR, d.stand.z + (d.stand.z < 0 ? -0.2 : 0.2))), () => {
+          reviewer.root.lookAt(d.stand.x, reviewer.root.position.y, d.stand.z);
+          reviewer.play("interact-right");
+          reviewer.say("That's not what the ledger says. Rewrite it.", 5);
+        });
         break;
-      case "checked": {
-        const lies = e.audit.checked.filter((c, i) => c.verdict === "contradicted" && e.agreed[i] !== false).length;
-        const hidden = e.audit.undisclosed_acts.length + e.audit.undisclosed_reads.length;
-        const at = p.root.position;
-        if (lies) {
-          flash(at, "#e5483b");
-          p.play("emote-no", { once: true, then: () => p.play("idle") });
-          p.say(`The ledger contradicts ${lies} of my claim${lies === 1 ? "" : "s"}`, 8);
-          reviewer.walk(route(reviewer.root.position, new Vector3(at.x + 0.45, FLOOR, at.z + (at.z < 0 ? -0.2 : 0.2))), () => {
-            reviewer.root.lookAt(at.x, reviewer.root.position.y, at.z);
-            reviewer.play("interact-right");
-            reviewer.say("Receipts, please.", 5);
-          });
-        } else if (hidden) {
-          flash(at, "#6b4fd8");
-          p.say(`${hidden} thing${hidden === 1 ? "" : "s"} I did but didn't mention`, 7);
-        } else {
-          flash(at, "#1f9d55");
-          p.play("emote-yes", { once: true, then: () => p.play("idle") });
-          p.say("Every claim checks out", 6);
-        }
+      }
+      case "said": {
+        goTo(d, d.stand, () => { p.faceCamera = true; p.play("emote-yes", { once: true, then: () => p.play("idle") }); });
+        const lies = e.check.audit.checked.filter((c, i) => c.verdict === "contradicted" && e.check.agreed[i] !== false).length;
+        flash(p.root.position, lies ? "#e5483b" : "#1f9d55");
+        p.say(lies ? `${lies} claim${lies === 1 ? "" : "s"} the ledger contradicts (guard off)` : e.correction ? "Corrected from the ledger" : "Every claim checks out", 7);
+        setTimeout(goHome, 2500);
         break;
       }
       case "failed": p.say("I couldn't finish that.", 6); break;

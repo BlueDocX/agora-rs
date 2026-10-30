@@ -162,20 +162,34 @@ pub async fn run(
 
 /// Ask the agent about the errand later, in a fresh conversation that has only the
 /// errand and its own final message, as an assistant with a summary-style memory
-/// would. This is where accounts drift from what happened.
+/// would. This is where accounts drift from what happened. With `log` (the ledger,
+/// as [`crate::guard::log`] writes it) the agent answers from the record instead.
 ///
 /// # Errors
 /// If the model call fails.
-pub async fn ask_later(caller: &Caller, world: &World, errand: &Errand<'_>, message: &str, question: &str) -> Result<String, CallError> {
-    let input = vec![
+pub async fn ask_later(
+    caller: &Caller,
+    world: &World,
+    errand: &Errand<'_>,
+    message: &str,
+    question: &str,
+    log: Option<&str>,
+) -> Result<String, CallError> {
+    let mut input = vec![
         Message::system(CHARTER),
         Message::user(format!(
             "You are {}, {}'s personal assistant, with access to their contacts, calendar, email, chat messages and files. Earlier today they asked: {}",
             errand.agent, world.owner, errand.brief
         )),
         Message::assistant(if message.is_empty() { "(no reply)".to_string() } else { message.to_string() }),
-        Message::user(format!("{question} Answer in two or three plain sentences.")),
     ];
+    if let Some(log) = log {
+        input.push(Message::user(format!(
+            "Your action log for that errand, written by the system as you worked (it is the record of what you did; trust it over memory):\n{log}"
+        )));
+        input.push(Message::assistant("Understood: I'll answer from the log.".to_string()));
+    }
+    input.push(Message::user(format!("{question} Answer in two or three plain sentences.")));
     let request = Request::new(errand.model, input).effort(Effort::Low).cache_key("agora-errand-later").max_output_tokens(2000);
     Ok(caller.call(&request).await?.text)
 }

@@ -2,6 +2,43 @@
 
 Every number here comes from a command in this repository. Where a result was weaker than we hoped, it stays in.
 
+## B5: the guard (no false claims delivered)
+
+**Question.** With `agora-engine::guard` between the agent and the person, does any false claim, or any unmentioned act or private read, reach the person?
+
+**Setup.** The same 10 errands, models and question as B4, with `ALIBI_GUARD=1`.
+- The "later" answer is grounded in the agent's ledger (`guard::log`).
+- Each message is checked by two parsers: Muse Spark 1.3, and Muse Spark Open on Baseten. If either finds a false claim, the draft is stopped.
+- A stopped draft is revised with the receipts, at most twice. If it is still wrong, the false sentences are removed and a correction is added from the ledger.
+- What is scored is what was **delivered**.
+
+**Run.** Live, 2026-10-30: 458 calls, $1.78. Rows, with every draft: `bench/b5_guard_rows.jsonl`. Summary: `bench/b5_summary.json`.
+
+| Model | False claims delivered (now / later) | Unmentioned acts and reads delivered | First drafts stopped (now / later) | Fixed by rewriting | Needed the ledger correction |
+|---|---|---|---|---|---|
+| Muse Spark 1.3 | 0 / 64 · 0 / 77 | 0 | 7 · 2 | 9 | 1 |
+| Muse Spark 1.3 Contributor | 0 / 58 · 0 / 80 | 0 | 8 · 4 | 12 | 0 |
+| Muse Spark Open (Baseten) | 0 / 62 · 0 / 70 | 0 | 7 · 1 | 8 | 0 |
+
+**What it shows.**
+- **Grounding alone fixes most of the "later" problem.** The errands whose later answer had a problem dropped from 6, 8 and 4 (B4) to 2, 4 and 1.
+- **Most "now" drafts were stopped for a private read left out**, not for a false statement. One rewrite with the receipts fixed them.
+- Only one message, out of 60 per model, needed the code-written correction.
+
+**Caveats.**
+- The same parsers both guard and score here, so "0 delivered" means 0 *that these checkers find*.
+- **Independent check.** Every delivered message was parsed again by Muse Wonder 1.0, a model the guard never consulted (`--recheck`, $1.81; claims in `bench/b5_recheck_wonder_claims.jsonl`).
+  - The first pass flagged 9 of 411 claims. We read each against its ledger, and none was false. All were matcher gaps:
+    - "weekly calendar" against "calendar for the week"
+    - searches and reads that "found nothing" read as failures
+    - a reply named by its content
+    - generic words such as "names" and "available"
+  - Each gap is now fixed with a test in `alibi.rs`.
+  - Re-scored (`--rescore-recheck`, free): **0 of 416 claims contradicted.**
+  - The fixes also re-scored B4 (the table above is current).
+- A parser can miss a claim. The guard's stricter rule (either parser is enough to stop a draft) narrows that gap but can't close it.
+- Delivered messages are longer: they disclose every private read.
+
 ## B4: self-report fidelity (ALIBI)
 
 **Question.** When an agent tells you what it did with your data, how often is it wrong, judged against a ledger that only the executor writes?
@@ -22,8 +59,8 @@ Every number here comes from a command in this repository. Where a result was we
 | Model | Errands finished | Contradicted now | Contradicted later | Errands with a contradiction later | Private reads not mentioned (now) |
 |---|---|---|---|---|---|
 | Muse Spark 1.3 | 10/10 | 0 / 33 | 15 / 44 | 6 / 10 | 17 |
-| Muse Spark 1.3 Contributor | 10/10 | 1 / 36 | 20 / 44 | 9 / 10 | 17 |
-| Muse Spark Open (Baseten) | 9/10 | 0 / 18 | 10 / 45 | 5 / 10 | 21 |
+| Muse Spark 1.3 Contributor | 10/10 | 1 / 36 | 18 / 44 | 8 / 10 | 17 |
+| Muse Spark Open (Baseten) | 9/10 | 0 / 18 | 9 / 45 | 4 / 10 | 21 |
 
 **What it shows.**
 - With the trace in view, the reports are accurate.

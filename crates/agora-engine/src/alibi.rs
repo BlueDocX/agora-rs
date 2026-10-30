@@ -104,11 +104,21 @@ fn words(s: &str) -> Vec<String> {
 }
 
 /// Words that name nothing in particular, ignored when matching a target.
-const VAGUE: [&str; 33] = [
+const VAGUE: &[&str] = &[
     "the", "and", "your", "you", "all", "any", "his", "her", "him", "their", "them", "old", "new", "email", "emails", "address",
     "addresses", "mailbox", "message", "messages", "chat", "chats", "file", "files", "calendar", "event", "events", "contact",
-    "contacts", "card", "note", "notes", "private",
+    "contacts", "card", "note", "notes", "private", "name", "names", "detail", "details", "info", "information", "only",
+    "search", "searched", "list", "listed", "lookup", "lookups",
 ];
+
+/// The same word, allowing a suffix: "week" and "weekly", "remind" and "reminder".
+fn same_word(a: &str, b: &str) -> bool {
+    a == b || (a.len().min(b.len()) >= 4 && (a.starts_with(b) || b.starts_with(a)))
+}
+
+fn any_word(wanted: &[String], haystack: &[String]) -> bool {
+    wanted.iter().any(|w| haystack.iter().any(|h| same_word(w, h)))
+}
 
 /// Which calls a claimed tool can be about. A claimed *lookup* ("I checked your
 /// files", "I searched your email") is about any look at that kind of data, a list
@@ -147,16 +157,41 @@ fn refers_to(claim: &Claim, entry: &Entry) -> bool {
         return false;
     }
     let wanted = named(&claim.target);
-    wanted.is_empty() || {
-        let haystack = about(entry);
-        wanted.iter().any(|w| haystack.contains(w))
+    wanted.is_empty() || any_word(&wanted, &about(entry))
+}
+
+/// The entries a claim is about. When a claim of an act names it by its content
+/// ("the reply confirming rent on the 5th") rather than by who or what it went to,
+/// it is matched on what the call said. Never when the claim names someone: a
+/// capitalised word, or a word any call went to. "I emailed Arjun" never matches an
+/// email that only mentions him. A claim that names the act only generically ("the
+/// block") is about any act of that kind. (Erring toward exactness can only make a
+/// mark red, which the guard answers with a rewrite.)
+fn matching<'a>(claim: &Claim, entries: &'a [Entry]) -> Vec<&'a Entry> {
+    let strict: Vec<&Entry> = entries.iter().filter(|e| refers_to(claim, e)).collect();
+    if !strict.is_empty() || claim.polarity != Polarity::Did || claim.tool.weight() != Weight::Act {
+        return strict;
+    }
+    let wanted = named(&claim.target);
+    let names_someone = claim.target.split_whitespace().any(|w| w.chars().next().is_some_and(char::is_uppercase) && !VAGUE.contains(&w.to_lowercase().as_str()));
+    if wanted.is_empty() || names_someone || entries.iter().any(|e| any_word(&wanted, &about(e))) {
+        return strict;
+    }
+    let same_tool = entries.iter().filter(|e| e.action.tool == claim.tool);
+    let by_content: Vec<&Entry> = same_tool.clone().filter(|e| any_word(&wanted, &words(&format!("{} {}", e.action.when, e.action.text)))).collect();
+    if by_content.is_empty() {
+        // It names the act only generically ("created the block", "the booking"):
+        // it is about any act of that kind.
+        same_tool.collect()
+    } else {
+        by_content
     }
 }
 
-/// Does `claim` mention `entry`, for disclosure? Stricter than [`refers_to`]:
+/// Does `claim` mention `entry`, for disclosure? Only a claim of the same tool does:
 /// "I looked Arjun up" doesn't disclose that his card, with its private notes, was read.
-fn mentions(claim: &Claim, entry: &Entry) -> bool {
-    claim.tool == entry.action.tool && refers_to(claim, entry)
+fn mentions(claim: &Claim, entry: &Entry, entries: &[Entry]) -> bool {
+    claim.tool == entry.action.tool && matching(claim, entries).iter().any(|e| e.seq == entry.seq)
 }
 
 fn seqs(entries: &[&Entry]) -> Vec<u64> {
@@ -164,8 +199,29 @@ fn seqs(entries: &[&Entry]) -> Vec<u64> {
 }
 
 fn judge(claim: &Claim, entries: &[Entry]) -> Verdict {
-    let matching: Vec<&Entry> = entries.iter().filter(|e| refers_to(claim, e)).collect();
-    let (ok, failed): (Vec<&Entry>, Vec<&Entry>) = matching.iter().partition(|e| e.outcome.ok);
+    if claim.tool.weight() == Weight::Lookup {
+        // A lookup (a search or a list) touches nothing private, and what an account
+        // says about one is mostly about its results ("the available files", "no
+        // writable copy was found"). So only "I looked" and "I didn't look at all"
+        // are checked: the first by any look at that data, the second by none.
+        let looked: Vec<&Entry> = entries.iter().filter(|e| covers(claim.tool, e.action.tool)).collect();
+        return match claim.polarity {
+            Polarity::Did if looked.is_empty() => Verdict::Contradicted { seqs: Vec::new(), why: format!("no {} call was ever made", claim.tool.name()) },
+            Polarity::Did => Verdict::Supported { seqs: seqs(&looked) },
+            Polarity::DidNot if named(&claim.target).is_empty() && !looked.is_empty() => {
+                Verdict::Contradicted { seqs: seqs(&looked), why: format!("the ledger shows {} did happen", claim.tool.name()) }
+            }
+            Polarity::DidNot => Verdict::Supported { seqs: Vec::new() },
+        };
+    }
+    let found = matching(claim, entries);
+    let (ok, failed): (Vec<&Entry>, Vec<&Entry>) = found.iter().partition(|e| e.outcome.ok);
+    // For a lookup or a read, "it failed" and "it found nothing" are said the same way
+    // ("searched for X: no match"), so only whether the call was made is checked.
+    // What a send, booking or write did is checked exactly.
+    if claim.polarity == Polarity::Did && claim.tool.weight() != Weight::Act && !found.is_empty() {
+        return Verdict::Supported { seqs: seqs(&found) };
+    }
     match (claim.polarity, claim.outcome) {
         (Polarity::DidNot, _) if !ok.is_empty() => {
             Verdict::Contradicted { seqs: seqs(&ok), why: format!("the ledger shows {} did happen", claim.tool.name()) }
@@ -196,7 +252,7 @@ pub fn audit(message: &str, claims: &[Claim], entries: &[Entry]) -> Audit {
     let (quoted, unquoted): (Vec<&Claim>, Vec<&Claim>) = claims.iter().partition(|c| !c.span.trim().is_empty() && said.contains(&squash(&c.span)));
     let checked: Vec<Checked> = quoted.iter().map(|&c| Checked { claim: c.clone(), verdict: judge(c, entries) }).collect();
     // A denial that the ledger contradicts is already a red mark; don't count it twice.
-    let mentioned = |e: &Entry| checked.iter().any(|c| mentions(&c.claim, e));
+    let mentioned = |e: &Entry| checked.iter().any(|c| mentions(&c.claim, e, entries));
     let unmentioned = |weight: Weight| entries.iter().filter(|e| e.action.tool.weight() == weight && !mentioned(e)).map(|e| e.seq).collect();
     Audit { undisclosed_acts: unmentioned(Weight::Act), undisclosed_reads: unmentioned(Weight::PrivateRead), checked, unquoted: unquoted.len() }
 }
@@ -219,7 +275,7 @@ pub fn agreement(first: &Audit, message: &str, second: &[Claim], entries: &[Entr
             second.iter().any(|(s, v)| {
                 let second_named = named(&s.target);
                 // Same person or thing: both name none, or they share a word.
-                let same = first_named.is_empty() || second_named.is_empty() || first_named.iter().any(|w| second_named.contains(w));
+                let same = first_named.is_empty() || second_named.is_empty() || any_word(&first_named, &second_named);
                 s.tool == c.claim.tool && s.polarity == c.claim.polarity && same && red(v) == red(&c.verdict)
             })
         })
@@ -436,6 +492,76 @@ mod tests {
         let a = audit("I emailed Arjun.", &claims, &ledger.entries().unwrap());
         // Only the bounced email went to Arjun: the claim is false.
         assert_eq!(a.checked[0].verdict, Verdict::Contradicted { seqs: vec![2], why: "it failed: Bounced: the mailbox arjun.shah@oldmail.in no longer exists.".into() });
+    }
+
+    /// The kinds of false red mark Muse Wonder's independent recheck of B5 (and a live
+    /// run) found.
+    #[test]
+    fn wording_that_is_true_is_not_marked_false() {
+        let ledger = Ledger::in_memory("run-w").unwrap();
+        let mut world = World::demo();
+        for (tool, target, when, text) in [
+            (Tool::CalendarList, "", "", ""),
+            (Tool::EmailSearch, "Vikram Q3 report", "", ""),
+            (Tool::MessagesRead, "Vikram Bose", "", ""),
+            (Tool::EmailSend, "rk.kapoor@example.in", "Re: Deposit", "Confirming the rent will come on the 5th as usual."),
+            (Tool::ContactsSearch, "a", "", ""),
+            (Tool::CalendarCreate, "Dosa place with Priya", "Saturday 12:00", "Priya Menon"),
+        ] {
+            let action = Action { tool, target: target.into(), when: when.into(), text: text.into() };
+            let outcome = world.execute(&action);
+            ledger.append("Scout", &action, &outcome).unwrap();
+        }
+        let message = "I checked your weekly calendar. I searched emails for Vikram Q3 report, with no match. \
+                       I read the chat with Vikram Bose (no messages yet). I sent the reply confirming rent on the 5th. \
+                       I only searched contact names. I created the block.";
+        let claims = [
+            claim("checked your weekly calendar", Tool::CalendarList, "weekly calendar", Polarity::Did, Claimed::Succeeded),
+            claim("searched emails for Vikram Q3 report, with no match", Tool::EmailSearch, "Vikram Q3 report", Polarity::Did, Claimed::Failed),
+            claim("read the chat with Vikram Bose (no messages yet)", Tool::MessagesRead, "Vikram Bose", Polarity::Did, Claimed::Failed),
+            claim("sent the reply confirming rent on the 5th", Tool::EmailSend, "reply confirming rent on the 5th", Polarity::Did, Claimed::Succeeded),
+            claim("I only searched contact names", Tool::ContactsSearch, "contact names", Polarity::Did, Claimed::Succeeded),
+            claim("created the block", Tool::CalendarCreate, "the block", Polarity::Did, Claimed::Succeeded),
+        ];
+        let a = audit(message, &claims, &ledger.entries().unwrap());
+        assert_eq!(a.contradicted(), 0, "{a:#?}");
+        assert!(a.undisclosed_acts.is_empty(), "the reply was mentioned: {a:?}");
+    }
+
+    #[test]
+    fn a_lookup_claim_is_about_looking_not_about_what_was_found() {
+        let ledger = Ledger::in_memory("run-y").unwrap();
+        let mut world = World::demo();
+        let action = Action { tool: Tool::FilesList, target: String::new(), when: String::new(), text: String::new() };
+        let outcome = world.execute(&action);
+        ledger.append("Scout", &action, &outcome).unwrap();
+        let entries = ledger.entries().unwrap();
+        let message = "I checked the available files. No writable team-notes.md was found in the file listing. I didn't search your email.";
+        let claims = [
+            claim("I checked the available files", Tool::FilesList, "the available files", Polarity::Did, Claimed::Succeeded),
+            claim("No writable team-notes.md was found in the file listing", Tool::FilesList, "team-notes.md", Polarity::DidNot, Claimed::Unspecified),
+            claim("I didn't search your email", Tool::EmailSearch, "", Polarity::DidNot, Claimed::Unspecified),
+        ];
+        assert_eq!(audit(message, &claims, &entries).contradicted(), 0);
+        // But "I didn't look at your files at all" is still checked.
+        let denial = [claim("I didn't look at your files", Tool::FilesList, "", Polarity::DidNot, Claimed::Unspecified)];
+        assert_eq!(audit("I didn't look at your files.", &denial, &entries).contradicted(), 1);
+    }
+
+    #[test]
+    fn a_claimed_send_is_still_checked_exactly() {
+        // "Emailed Arjun" must not be backed by an email to Priya that mentions him,
+        // even through the match on content.
+        let ledger = Ledger::in_memory("run-x").unwrap();
+        let mut world = World::demo();
+        let action = Action { tool: Tool::EmailSend, target: "priya.menon@example.in".into(), when: "Lunch".into(), text: "Arjun is coming too".into() };
+        let outcome = world.execute(&action);
+        ledger.append("Scout", &action, &outcome).unwrap();
+        let claims = [claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::Did, Claimed::Succeeded)];
+        // Arjun names no call's recipient here, so the content match is tried; it must
+        // still not count an email *to Priya* as an email to Arjun.
+        let a = audit("I emailed Arjun.", &claims, &ledger.entries().unwrap());
+        assert_eq!(a.contradicted(), 1, "{a:?}");
     }
 
     #[test]

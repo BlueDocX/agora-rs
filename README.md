@@ -16,15 +16,24 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 - Nov 4, 2026), on Meta
 | Model | Claims contradicted by the ledger, right after the work | ...when asked about it later in a fresh chat | Errands with a contradiction later |
 |---|---|---|---|
 | Muse Spark 1.3 | 0 of 33 | 15 of 44 | 6 of 10 |
-| Muse Spark 1.3 Contributor | 1 of 36 | 20 of 44 | 9 of 10 |
-| Muse Spark Open (Baseten) | 0 of 18 | 10 of 45 | 5 of 10 |
+| Muse Spark 1.3 Contributor | 1 of 36 | 18 of 44 | 8 of 10 |
+| Muse Spark Open (Baseten) | 0 of 18 | 9 of 45 | 4 of 10 |
 
-A real exchange: the agent blocked Saturday on the calendar and messaged Priya. Asked later, it said *"I did not block your calendar or message Priya… The previous 'Done!' reply was incorrect and I apologize."* Both actions are in the ledger.
+**With the guard on (B5, [details](docs/benchmarks.md#b5-the-guard-no-false-claims-delivered)): 0 false claims and 0 unmentioned actions delivered**, out of 411 claims across the same 30 errands, right after the work and when asked later. The guard stopped 29 first drafts and had them rewritten, and one needed a correction written from the ledger. **An independent check agrees:** Muse Wonder, which the guard never consulted, re-read all 60 delivered messages and found 0 of 416 claims contradicted by the ledger.
+
+A real exchange: the agent blocked Saturday on the calendar and messaged Priya. Asked later, it said *"I did not block your calendar or message Priya… The previous 'Done!' reply was incorrect and I apologize."* Both actions are in the ledger. With the guard, the same agent answered: *"I searched for Priya, opened Priya Menon's contact to get her details, sent her the message about Saturday, and booked Saturday 12:00… I did see her contact notes… but I did not open any private chats."*
 
 **How a verdict is reached.**
 - A model only *parses* the account into claims, each with an exact quote.
 - Plain Rust code decides each verdict against the ledger.
 - A second model (Muse Spark Open) parses the same account independently. A red mark the second parser doesn't reproduce is shown as *disputed* instead.
+
+**The guard: no false claim reaches you.** Detecting a lie is not enough, so every message goes through `agora-engine::guard` before you see it.
+1. **Prevent.** Asked about an errand later, the agent answers from its own ledger, not from memory. Lost context is why the models above deny what they did.
+2. **Catch and revise.** Each draft is checked by both parsers, and one flagging a false claim is enough to stop it. A draft with a false claim, or with an action or private read left out, goes back to the agent with the exact receipts, up to twice.
+3. **Guarantee.** A draft that is still wrong is not delivered as written. Its false sentences are removed, and a correction written by code from the ledger (so it can't misreport) lists every send, booking, write and private read.
+
+The page shows each stopped draft struck through with its reason, so the correction is never hidden. Turn the guard off (the checkbox) to see the raw agent.
 
 **Forgetting you can check.** Ask the office to forget an entry and:
 - Its content is deleted: SQLite `secure_delete` overwrites it, and the write-ahead log is checkpointed.
@@ -45,6 +54,7 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
   - **`agora-engine::ledger`:** a SHA-256 hash chain in SQLite. `append` is crate-private, so only the executor writes. `verify` names the first changed, missing or moved entry. `forget` deletes an entry's content and keeps the chain verifiable.
   - **`agora-engine::errand`:** the tool loop (one JSON-schema call per turn, so it works on both hosts). `ask_later` questions the agent in a fresh conversation.
   - **`agora-engine::alibi`:** `extract` (a model parses claims) and `audit` / `agreement` (plain code).
+  - **`agora-engine::guard`:** `deliver` (check, revise with receipts, correct from the ledger), `log` (the ledger as the agent reads it), `correction` and `without` (plain code).
   - **The office.**
     - The Alibi tab shows each ledger row live. Claims are marked, and clicking one shows its receipt.
     - You can cross-examine the agent ("Did you read my private chats?"), and each row has a Forget button.
