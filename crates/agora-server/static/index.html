@@ -119,6 +119,11 @@
   .lb-row b { font-size: 12px; } .lb-row .num { font: 600 11px var(--mono); text-align: right; }
   .lb-bar { grid-column: 1 / 3; height: 6px; border-radius: 3px; background: #dff3e6; overflow: hidden; }
   .lb-bar i { display: block; height: 100%; background: var(--bad); }
+  .ab-step .forget { grid-column: 3; grid-row: 2 / 4; align-self: center; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 2px 8px; font: 700 10px var(--sans); color: #4b3a8a; cursor: pointer; }
+  .ab-step .forget:hover { background: #f1ecfb; }
+  .ab-step.gone .tool, .ab-step.gone .res { color: var(--soft); text-decoration: line-through; }
+  .ab-forgot { font: 11px/1.5 var(--mono); background: #17150f; color: #fcfaf4; border-radius: 12px; padding: 9px 11px; }
+  .ab-forgot b { font-family: var(--sans); color: var(--butter); }
   .ab-busy { color: var(--muted); font-style: italic; font-size: 12.5px; }
   .ab-err { color: var(--bad); font-size: 12.5px; }
   .composer[hidden], .pill[hidden] { display: none !important; }
@@ -1011,7 +1016,9 @@ function boardItem(b) {
   }
   return li;
 }
-let errand = null, errandSource = null; // errand: { id, events, open: Set of receipt keys }
+let errand = null, errandSource = null;
+// errand: { id, events, open: Set of receipt keys, agent, skip: events the office already saw }
+const refetched = new Set(); // forgettings already re-fetched
 
 const short = (h) => (h ? h.slice(0, 10) : "");
 function stepLine(entry, flagged) {
@@ -1019,7 +1026,41 @@ function stepLine(entry, flagged) {
   const li = el("li", "ab-step" + (o.ok ? "" : " fail") + (flagged ? " flag" : ""));
   li.id = "step-" + entry.seq;
   li.append(el("span", "n", "#" + entry.seq), el("span", "tool", `${a.tool} · ${o.subject || a.target}`), el("span", "ok", o.ok ? "ok" : "failed"));
+  if (entry.forgotten_at_ms) {
+    li.classList.add("gone");
+    li.append(el("span", "res", "content forgotten · its hash stays: " + short(entry.content_hash)), el("span", "h", "hash " + short(entry.hash) + " ← " + short(entry.prev)));
+    return li;
+  }
   li.append(el("span", "res", o.result.split("\n")[0]), el("span", "h", "hash " + short(entry.hash) + " ← " + short(entry.prev)));
+  if (errandIdle()) {
+    const b = el("button", "forget", "Forget");
+    b.type = "button";
+    b.title = "Delete what this call read or did from the agent's records. The ledger still proves it happened.";
+    b.onclick = () => forgetEntry(entry.seq);
+    li.append(b);
+  }
+  return li;
+}
+async function forgetEntry(seq) {
+  $("errandnote").textContent = "";
+  try {
+    const res = await fetch(`/api/errands/${encodeURIComponent(errand.id)}/forget`, { method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify({ seq }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.statusText);
+  } catch (err) { $("errandnote").textContent = err.message; }
+}
+function forgottenItem(e) {
+  const li = el("li");
+  const box = el("div", "ab-forgot");
+  const r = e.receipt, when = new Date(r.at_ms).toLocaleTimeString();
+  box.append(el("b", null, `Forgotten: entry #${r.seq} (${r.tool} at ${when})`), document.createElement("br"),
+    `Content deleted. Its hash stays: ${short(r.content_hash)}`, document.createElement("br"),
+    `Hash chain still verifies: ${r.chain_entries} entries, head ${short(r.head)}`, document.createElement("br"),
+    `${e.withdrawn.length} message${e.withdrawn.length === 1 ? "" : "s"} written after it withdrawn`, document.createElement("br"),
+    `Searched this errand's records (${(e.scan.bytes / 1024).toFixed(1)} KB) for ${e.scan.needles} piece${e.scan.needles === 1 ? "" : "s"} of it: `
+      + (e.scan.found_in.length ? `still in ${e.scan.found_in.join(", ")}. Forget that too to remove it.` : "no copy left."));
+  li.append(box);
   return li;
 }
 function claimClass(c, agreed) {
@@ -1135,6 +1176,7 @@ function renderAlibi(feed) {
     else if (e.type === "said") feed.append(saidItem(e, checks.get(e.turn), steps, agent));
     else if (e.type === "checked") for (const li of summaryItems(e, steps)) feed.append(li);
     else if (e.type === "failed") feed.append(el("li", "ab-err", e.reason));
+    else if (e.type === "forgotten") feed.append(forgottenItem(e));
     else if (e.type === "idle") busy = null;
   }
   if (busy) {
@@ -1145,7 +1187,7 @@ function renderAlibi(feed) {
   renderErrandChips();
   feed.scrollTop = feed.scrollHeight;
 }
-const errandIdle = () => errand && errand.events.length && errand.events[errand.events.length - 1].type === "idle";
+const errandIdle = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "idle";
 const hasReport = () => errand?.events.some((e) => e.type === "said" && e.turn === 0);
 function renderErrandChips() {
   const box = $("errandchips");
@@ -1165,9 +1207,9 @@ function errandAgent() {
   const a = findTeam(selected)?.agents?.[0];
   return a ? { name: a.name, id: a.id, color: a.color } : { name: "Scout", id: null, color: "#4285f4" };
 }
-function watchErrand(id) {
+function watchErrand(id, skip = 0) {
   errandSource?.close();
-  errand = { id, events: [], open: new Set(), agent: errandAgent() };
+  errand = { id, events: [], open: new Set(), agent: errandAgent(), skip };
   const token = $("token").value.trim();
   errandSource = new EventSource(`/api/errands/${encodeURIComponent(id)}/events` + (token ? `?token=${encodeURIComponent(token)}` : ""));
   errandSource.onopen = () => { errand.events = []; };
@@ -1175,7 +1217,12 @@ function watchErrand(id) {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
     errand.events.push(e);
-    dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
+    if (errand.skip > 0) errand.skip--; // a replay of what the office already acted out
+    else dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
+    // Forgetting rewrites the errand's history on the server: fetch it again.
+    // (Once per forgetting: the replay after reconnecting includes the same event.)
+    const key = e.type === "forgotten" ? `${errand.id}:${e.receipt.seq}:${e.receipt.forgotten_at_ms}` : null;
+    if (key && !refetched.has(key)) { refetched.add(key); const open = errand.open; watchErrand(errand.id, errand.events.length); errand.open = open; return; }
     if (tab === "alibi") renderFeed();
   };
 }

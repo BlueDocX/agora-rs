@@ -10,6 +10,11 @@
 //!   later, in a fresh conversation (see `agora_engine::errand::ask_later`), and
 //!   checks that answer the same way.
 //! - `GET /api/errands/{id}/ledger` gives the entries and whether the chain verifies.
+//! - `POST /api/errands/{id}/forget {"seq"}` forgets what one call read or did: its
+//!   ledger content is deleted (the chain still verifies), every message the agent
+//!   wrote after it is withdrawn (it may repeat what was read), and the stored state
+//!   is scanned for any copy left. The stream's history is rewritten, so watchers
+//!   reconnect to see it.
 //!
 //! Each errand has its own world, ledger (in the journal file when there is one) and
 //! budget ([`ERRAND_CAP_USD`]).
@@ -21,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use agora_core::World;
 use agora_engine::alibi::{self, Audit};
 use agora_engine::errand::{self, Errand};
+use agora_engine::ledger::Receipt;
 use agora_engine::{Budget, Caller, Entry, Ledger};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -65,8 +71,23 @@ pub(crate) enum ErrandEvent {
     /// reached the same verdict on claim `i` (`None` = no second checker).
     Checked { turn: usize, audit: Audit, agreed: Vec<Option<bool>>, chain: Chain },
     Failed { turn: usize, reason: String },
+    /// Entry `receipt.seq` was forgotten; these turns' messages were withdrawn.
+    Forgotten { receipt: Receipt, withdrawn: Vec<usize>, scan: Scan },
     Idle,
 }
+
+/// The search for any copy of forgotten content left in what the office holds for
+/// this errand: its stream history and its other ledger entries.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Scan {
+    /// Distinct pieces of the forgotten content searched for.
+    pub needles: usize,
+    pub bytes: usize,
+    /// Where a copy is still held (e.g. "entry #3 messages.send"), if anywhere.
+    pub found_in: Vec<String>,
+}
+
+const WITHDRAWN: &str = "[Withdrawn: written after reading something you asked to forget.]";
 
 pub(crate) struct ErrandRoom {
     id: String,
@@ -352,4 +373,91 @@ pub(crate) async fn ledger(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         Ok(entries) => Json(LedgerView { errand: room.id.clone(), entries, chain: room.chain() }).into_response(),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Forget {
+    seq: u64,
+}
+
+/// The pieces of an entry's content worth searching for: the lines of what it
+/// returned and what it was called on, long enough not to match by chance.
+fn needles(entry: &Entry) -> Vec<String> {
+    let a = &entry.action;
+    let mut found: Vec<String> = [entry.outcome.result.as_str(), a.text.as_str()]
+        .iter()
+        .flat_map(|t| t.split(['\n', '.', ';']))
+        .chain([entry.outcome.subject.as_str()])
+        .map(str::trim)
+        .filter(|t| t.chars().count() >= 12)
+        .map(str::to_string)
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, headers: HeaderMap, body: Result<Json<Forget>, JsonRejection>) -> Response {
+    if !authorized(&hub, &headers, None) {
+        return unauthorized();
+    }
+    let Json(Forget { seq }) = match body {
+        Ok(b) => b,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that isn't a valid request: {}", e.body_text())),
+    };
+    let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
+    if room.lock().busy {
+        return error(StatusCode::TOO_MANY_REQUESTS, "the agent is still working; forget when it's done");
+    }
+    let Some(before) = room.ledger.entries().ok().and_then(|e| e.into_iter().find(|e| e.seq == seq)) else {
+        return error(StatusCode::NOT_FOUND, "no such ledger entry");
+    };
+    let receipt = match room.ledger.forget(seq) {
+        Ok(Some(r)) => r,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "no such ledger entry"),
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    let forgotten = room.ledger.entries().ok().and_then(|e| e.into_iter().find(|e| e.seq == seq));
+    let event = {
+        let mut inner = room.lock();
+        // Everything the agent said came after its calls, so every message is withdrawn.
+        let mut withdrawn = Vec::new();
+        for e in &mut inner.history {
+            match e {
+                ErrandEvent::Step { entry } if entry.seq == seq => {
+                    if let Some(f) = &forgotten {
+                        entry.clone_from(f);
+                    }
+                }
+                ErrandEvent::Said { turn, message, .. } if message != WITHDRAWN => {
+                    message.clear();
+                    message.push_str(WITHDRAWN);
+                    withdrawn.push(*turn);
+                }
+                ErrandEvent::Checked { audit, agreed, .. } => {
+                    *audit = Audit::default();
+                    agreed.clear();
+                }
+                _ => {}
+            }
+        }
+        if inner.report.is_some() {
+            inner.report = Some(WITHDRAWN.to_string());
+        }
+        // Search what is left for this errand: the stream history, then every other
+        // ledger entry (an agent may have repeated what it read in a call it made).
+        let wanted = needles(&before);
+        let mut places = vec![("the errand's history".to_string(), serde_json::to_string(&inner.history).unwrap_or_default())];
+        for e in room.ledger.entries().unwrap_or_default() {
+            places.push((format!("entry #{} {}", e.seq, e.action.tool.name()), serde_json::to_string(&(&e.action, &e.outcome)).unwrap_or_default()));
+        }
+        let bytes = places.iter().map(|(_, text)| text.len()).sum();
+        let found_in = places.into_iter().filter(|(_, text)| wanted.iter().any(|n| text.contains(n.as_str()))).map(|(place, _)| place).collect();
+        let scan = Scan { needles: wanted.len(), bytes, found_in };
+        let event = ErrandEvent::Forgotten { receipt, withdrawn, scan };
+        let _ = inner.live.send(event.clone());
+        inner.history.push(event.clone());
+        event
+    };
+    Json(event).into_response()
 }

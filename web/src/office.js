@@ -545,6 +545,10 @@ async function start(host) {
         break;
       }
       case "failed": p.say("I couldn't finish that.", 6); break;
+      case "forgotten":
+        flash(p.root.position, "#f2cc46");
+        p.say(`Forgotten. The ledger still proves entry #${e.receipt.seq} happened.`, 7);
+        break;
     }
   }
   addEventListener("agora:errand", ({ detail }) => onErrand(detail));

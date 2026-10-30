@@ -216,6 +216,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/errands/{id}/events", get(errands::events))
         .route("/api/errands/{id}/ask", post(errands::ask))
         .route("/api/errands/{id}/ledger", get(errands::ledger))
+        .route("/api/errands/{id}/forget", post(errands::forget))
         .with_state(hub)
 }
 
