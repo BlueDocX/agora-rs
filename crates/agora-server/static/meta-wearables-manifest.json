@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "Agora",
+  "description": "Your bot does the errand; every claim it makes is checked against its ledger.",
+  "appearance": {
+    "theme_color": "#F2CC46",
+    "icon": {
+      "src": "/glasses-icon.png",
+      "type": "monochrome"
+    }
+  }
+}

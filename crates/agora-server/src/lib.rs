@@ -14,6 +14,10 @@
 //! - `GET /` is the office board.
 //!
 //! - `/api/chat` is the office chat: see [`chat`](crate::chat).
+//! - `/mcp` is the office as an MCP server (for Meta AI Connectors and any MCP
+//!   client): see [`mcp`](crate::mcp). `/glasses` is the Ray-Ban Display web app.
+//! - `/api/company` is who is in the office and the bot each one has: see
+//!   [`company`](crate::company).
 //! - `/api/errands` runs errands whose every claim is checked against a ledger: see
 //!   [`errands`](crate::errands).
 //!
@@ -27,7 +31,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod chat;
+mod company;
 mod errands;
+mod mcp;
 
 pub use chat::MAX_CHAT_CHARS;
 
@@ -49,6 +55,10 @@ pub const MAX_BRIEF_CHARS: usize = 4000;
 /// Finished runs kept in memory for the board; older ones are dropped first.
 pub const KEEP_RUNS: usize = 50;
 const INDEX: &str = include_str!("../static/index.html");
+/// The Ray-Ban Display web app (see the file's own notes) and its wearables manifest.
+const GLASSES: &str = include_str!("../static/glasses.html");
+const GLASSES_MANIFEST: &str = include_str!("../static/meta-wearables-manifest.json");
+const GLASSES_ICON: &[u8] = include_bytes!("../static/glasses-icon.png");
 /// The 3D office, built from `web/` with `npm run build`, which writes both files.
 /// Both are committed, so the server builds without Node.
 const OFFICE_JS: &str = include_str!("../static/office.js");
@@ -167,6 +177,7 @@ struct Hub {
     /// `None` when the chat can't be budgeted (an unpriced model or a bad cap).
     chat_budget: Option<Arc<Budget>>,
     errands: Mutex<errands::Errands>,
+    company: Mutex<company::Company>,
 }
 
 #[derive(Default)]
@@ -197,9 +208,12 @@ pub fn app(config: HubConfig) -> Router {
             None
         }
     };
-    let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()), chat: Mutex::default(), chat_budget, errands: Mutex::default() });
+    let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()), chat: Mutex::default(), chat_budget, errands: Mutex::default(), company: Mutex::default() });
     Router::new()
         .route("/", get(index))
+        .route("/glasses", get(glasses))
+        .route("/.well-known/meta-wearables-manifest.json", get(|| async { ([(header::CONTENT_TYPE, "application/json; charset=utf-8")], GLASSES_MANIFEST) }))
+        .route("/glasses-icon.png", get(|h: HeaderMap| async move { asset(&h, "image/png", GLASSES_ICON, None) }))
         .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), Some(OFFICE_JS_GZ)) }))
         .route("/models/people.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", PEOPLE, Some(PEOPLE_GZ)) }))
         .route("/models/cast.png", get(|h: HeaderMap| async move { asset(&h, "image/png", CAST_PNG, None) }))
@@ -212,7 +226,12 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/runs/{id}/events", get(events))
         .route("/api/chat", post(chat::post))
         .route("/api/chat/events", get(chat::events))
-        .route("/api/errands", post(errands::start))
+        .route("/mcp", post(mcp::post).get(mcp::get))
+        .route("/api/company/join", post(company::join))
+        .route("/api/company/members/{id}", axum::routing::patch(company::change).delete(company::leave))
+        .route("/api/company/events", get(company::events))
+        .route("/api/company/whoami", get(company::whoami))
+        .route("/api/errands", post(errands::start).get(errands::list))
         .route("/api/errands/{id}/events", get(errands::events))
         .route("/api/errands/{id}/ask", post(errands::ask))
         .route("/api/errands/{id}/ledger", get(errands::ledger))
@@ -240,6 +259,13 @@ fn asset(headers: &HeaderMap, content_type: &'static str, plain: &'static [u8], 
         Some(gz) if gzip => (common, [(header::CONTENT_ENCODING, "gzip")], gz).into_response(),
         _ => (common, plain).into_response()
     }
+}
+
+/// The glasses app: same rules as the board (no outside scripts at all).
+async fn glasses() -> Response {
+    let csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
+               img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+    ([(header::CONTENT_SECURITY_POLICY, csp), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")], Html(GLASSES)).into_response()
 }
 
 async fn index() -> Response {

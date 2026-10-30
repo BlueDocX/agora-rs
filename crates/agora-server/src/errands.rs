@@ -13,6 +13,8 @@
 //! - `POST /api/errands/{id}/ask {"question"}` asks the agent about the errand
 //!   later, in a fresh conversation (see `agora_engine::errand::ask_later`), and
 //!   checks that answer the same way.
+//! - `GET /api/errands` lists errands, newest first, each with its latest delivered
+//!   message and how its receipts came out (for the glasses and for MCP clients).
 //! - `GET /api/errands/{id}/ledger` gives the entries and whether the chain verifies.
 //! - `POST /api/errands/{id}/forget {"seq"}` forgets what one call read or did: its
 //!   ledger content is deleted (the chain still verifies), every message the agent
@@ -66,7 +68,7 @@ pub(crate) struct Chain {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ErrandEvent {
-    Started { id: String, brief: String, model: String, agent: String, checker: Option<String>, guard: bool },
+    Started { id: String, brief: String, model: String, agent: String, checker: Option<String>, guard: bool, people: People },
     /// The agent is working (turn 0) or answering a question (turn 1, 2…).
     Busy { turn: usize, question: Option<String> },
     Step { entry: Entry },
@@ -106,8 +108,16 @@ pub(crate) struct Scan {
 
 const WITHDRAWN: &str = "[Withdrawn: written after reading something you asked to forget.]";
 
+/// Who asked for an errand and whose bot runs it: (member id, name[, area]).
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct People {
+    pub asked_by: Option<(String, String)>,
+    pub bot_of: Option<(String, String, String)>,
+}
+
 pub(crate) struct ErrandRoom {
     id: String,
+    people: People,
     /// Whether messages go through the guard before delivery.
     guard: bool,
     brief: String,
@@ -221,6 +231,19 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
                 None => g.delivered.message.clone(),
             };
             room.lock().report.get_or_insert(told);
+            if let Some((owner_id, _, _)) = &room.people.bot_of {
+                let backed = g.delivered.audit.supported();
+                let how = if g.correction.is_some() {
+                    "corrected from the ledger".to_string()
+                } else if g.drafts.len() > 1 {
+                    format!("rewritten {}x by the guard", g.drafts.len() - 1)
+                } else {
+                    "passed the guard first time".to_string()
+                };
+                let what = if turn == 0 { "reported" } else { "answered" };
+                let text = format!("{} {what}: {backed} claims backed, {} false delivered ({how})", room.agent, g.delivered.false_claims.len());
+                hub.company().note(owner_id, text, Some(room.id.clone()));
+            }
             room.push(ErrandEvent::Said {
                 turn,
                 question,
@@ -247,6 +270,9 @@ pub(crate) struct StartErrand {
     /// `false` turns the guard off (to see what the agent says unchecked). Default on.
     #[serde(default)]
     guard: Option<bool>,
+    /// Send it to an area: it runs on the bot of that area's lead.
+    #[serde(default)]
+    area: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -270,10 +296,25 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
     if brief.is_empty() || brief.chars().count() > MAX_ERRAND_CHARS {
         return error(StatusCode::BAD_REQUEST, "the errand must be 1 to 500 characters");
     }
-    let agent = body.agent.map_or_else(|| DEFAULT_AGENT.to_string(), |a| a.trim().to_string());
+    // Who asked, and whose bot does it: the area's lead's, else the asker's own.
+    let me = hub.member(&headers);
+    let area = body.area.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let lead = match area {
+        Some(area) => match hub.company().lead_of(area).cloned() {
+            Some(lead) => Some(lead),
+            None => return error(StatusCode::BAD_REQUEST, &format!("nobody leads {area} yet")),
+        },
+        None => None,
+    };
+    let owner = lead.or_else(|| me.clone());
+    let agent = owner.as_ref().map_or_else(|| body.agent.map_or_else(|| DEFAULT_AGENT.to_string(), |a| a.trim().to_string()), |o| o.bot.clone());
     if agent.is_empty() || agent.chars().count() > 40 || agent.chars().any(char::is_control) {
         return error(StatusCode::BAD_REQUEST, "the agent's name must be 1 to 40 characters on one line");
     }
+    let people = People {
+        asked_by: me.as_ref().map(|m| (m.id.clone(), m.name.clone())),
+        bot_of: owner.as_ref().map(|o| (o.id.clone(), o.name.clone(), o.area.clone())),
+    };
     let model = body.model.unwrap_or_else(|| hub.config.model.clone());
     if let Err(why) = hub.config.check_model(&model) {
         return error(StatusCode::BAD_REQUEST, &why);
@@ -299,6 +340,7 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
     let guard = body.guard.unwrap_or(true);
     let room = Arc::new(ErrandRoom {
         id: id.clone(),
+        people: people.clone(),
         guard,
         brief: brief.clone(),
         model: model.clone(),
@@ -319,7 +361,18 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
             errands.rooms.remove(oldest);
         }
     }
-    room.push(ErrandEvent::Started { id: id.clone(), brief, model, agent, checker, guard });
+    room.push(ErrandEvent::Started { id: id.clone(), brief: brief.clone(), model, agent: agent.clone(), checker, guard, people: people.clone() });
+    if let Some((owner_id, owner_name, area)) = &people.bot_of {
+        let asker = people.asked_by.as_ref().map_or("Someone", |(_, n)| n.as_str());
+        let whose = if people.asked_by.as_ref().is_some_and(|(a, _)| a == owner_id) {
+            format!("their bot {agent}")
+        } else if area.is_empty() {
+            format!("{owner_name}'s bot {agent}")
+        } else {
+            format!("{owner_name}'s {area} bot {agent}")
+        };
+        hub.company().note(owner_id, format!("{asker} asked {whose}: {brief}"), Some(id.clone()));
+    }
     room.push(ErrandEvent::Busy { turn: 0, question: None });
     tokio::spawn(work(hub, room));
     (StatusCode::CREATED, Json(Started { id })).into_response()
@@ -560,4 +613,63 @@ fn strings(value: &serde_json::Value) -> String {
     let mut out = String::new();
     walk(value, &mut out);
     out
+}
+
+/// One errand at a glance.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Summary {
+    pub id: String,
+    pub brief: String,
+    pub agent: String,
+    pub people: People,
+    pub busy: bool,
+    pub steps: usize,
+    /// The latest message delivered, and its receipts.
+    pub said: Option<SaidSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SaidSummary {
+    pub turn: usize,
+    pub question: Option<String>,
+    pub message: String,
+    pub correction: Option<String>,
+    pub backed: usize,
+    pub false_delivered: usize,
+    pub rewrites: usize,
+}
+
+impl ErrandRoom {
+    pub(crate) fn summary(&self) -> Summary {
+        let inner = self.lock();
+        let steps = inner.history.iter().filter(|e| matches!(e, ErrandEvent::Step { .. })).count();
+        let said = inner.history.iter().rev().find_map(|e| match e {
+            ErrandEvent::Said { turn, question, message, correction, check, rounds, .. } => Some(SaidSummary {
+                turn: *turn,
+                question: question.clone(),
+                message: message.clone(),
+                correction: correction.clone(),
+                backed: check.audit.supported(),
+                false_delivered: check.false_claims.len(),
+                rewrites: *rounds,
+            }),
+            _ => None,
+        });
+        Summary { id: self.id.clone(), brief: self.brief.clone(), agent: self.agent.clone(), people: self.people.clone(), busy: inner.busy, steps, said }
+    }
+}
+
+impl Hub {
+    /// Every errand kept, newest first.
+    pub(crate) fn errand_summaries(&self) -> Vec<Summary> {
+        let rooms: Vec<Arc<ErrandRoom>> = self.errands().rooms.clone();
+        rooms.iter().rev().map(|r| r.summary()).collect()
+    }
+}
+
+pub(crate) async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
+    if !authorized(&hub, &headers, None) {
+        return unauthorized();
+    }
+    Json(hub.errand_summaries()).into_response()
 }

@@ -136,6 +136,23 @@
   .ab-busy { color: var(--muted); font-style: italic; font-size: 12.5px; }
   .ab-err { color: var(--bad); font-size: 12.5px; }
   .composer[hidden], .pill[hidden], .guard-pick[hidden] { display: none !important; }
+  /* ---- The company: people in the office and their bots ---- */
+  .people { display: flex; flex-direction: column; gap: 6px; }
+  .person { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 10px; align-items: center; background: var(--stone); border: 1px solid var(--line); border-radius: 14px; padding: 8px 11px; font-size: 12.5px; }
+  .person .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .person .who b { font-size: 13px; } .person .who small { display: block; color: var(--muted); font-size: 11px; }
+  .person .role { font: 800 9.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; border-radius: 999px; padding: 4px 8px; background: var(--paper); border: 1px solid var(--line); }
+  .person .role.owner { background: #fbf4d5; border-color: #f2e09b; } .person .role.lead { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; }
+  .person .acts { grid-column: 2 / 4; display: flex; gap: 6px; }
+  .person .acts button { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 9px; font: 700 10.5px var(--sans); cursor: pointer; }
+  .person.off { opacity: .55; }
+  .person.me { outline: 2px solid var(--butter); }
+  dialog#joinbox { border: 0; border-radius: 24px; padding: 22px 24px; width: min(420px, calc(100vw - 32px)); background: var(--paper); color: var(--ink); }
+  dialog#joinbox h3 { margin: 0 0 4px; } dialog#joinbox p { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  dialog#joinbox label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 10px 0 4px; }
+  dialog#joinbox input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 14px var(--sans); background: var(--stone); }
+  dialog#joinbox .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #errandto { border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font: 600 11.5px var(--sans); background: var(--paper); max-width: 190px; }
   .empty-note { color: var(--muted); font: 800 10.5px var(--sans); letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 70px 10px; border: 0 !important; display: block !important; }
 
   /* Office */
@@ -305,6 +322,7 @@
   <h1>AGORA</h1>
   <span class="ver">v0.2 · Rust · Muse</span>
   <div class="right">
+    <button class="pill ghost" id="joinbtn" type="button" title="Join this office: you get your own bot">Join office</button>
     <button class="pill butter" id="newbrief" type="button">
       <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>New brief
     </button>
@@ -337,7 +355,7 @@
       <div class="chips" id="errandchips"></div>
       <textarea id="errandtext" maxlength="500" placeholder="Give an errand. The agent works on Asha's contacts, calendar, email, chats and files." aria-label="Errand or question"></textarea>
       <div class="row"><span class="note" id="errandnote"></span>
-        <span><label class="guard-pick" title="With the guard on, no message reaches you with a claim the ledger contradicts"><input type="checkbox" id="guardon" checked> Guard</label><button class="pill ghost" id="errandnew" type="button" hidden>New errand</button>
+        <span><select id="errandto" aria-label="Whose bot does it" title="Your own bot, or the bot of an area's lead"></select><label class="guard-pick" title="With the guard on, no message reaches you with a claim the ledger contradicts"><input type="checkbox" id="guardon" checked> Guard</label><button class="pill ghost" id="errandnew" type="button" hidden>New errand</button>
         <button class="pill butter" id="errandgo" type="submit">Run errand</button></span></div>
     </form>
   </section>
@@ -363,6 +381,8 @@
 
   <section class="panel info">
     <div class="info-head"><h2>Project Info</h2><span class="status" id="status">Ready to start</span></div>
+    <div class="sect"><span class="label">People in the office</span><span class="tag" id="peopletag">0 here</span></div>
+    <div class="people" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
     <div class="sect"><span class="label">Team</span></div>
     <div class="team-pick">
       <select id="teamsel" aria-label="Team for the next run"></select>
@@ -394,6 +414,14 @@
     <pre id="deliverable" class="empty">Appears when the run finishes.</pre>
   </section>
 </main>
+<dialog id="joinbox" aria-label="Join the office"><form method="dialog" id="joinform">
+  <h3>Join the office</h3>
+  <p>You get your own bot that works under you. The first person in owns the office and can make others leads of an area; errands sent to an area go to its lead's bot.</p>
+  <label for="joinname">Your name</label><input id="joinname" maxlength="40" required autocomplete="name">
+  <label for="joinarea">Your area (optional)</label><input id="joinarea" maxlength="40" placeholder="e.g. Finance, Marketing, Hiring">
+  <p class="note" id="joinnote"></p>
+  <div class="row"><button class="pill ghost" type="button" id="joincancel">Cancel</button><button class="pill butter" id="joingo">Join</button></div>
+</form></dialog>
 <dialog id="teams" aria-label="Manage teams"><div class="tm"><nav class="tm-list" id="tmlist"></nav><div class="tm-main" id="tmedit"></div></div></dialog>
 <script>
 "use strict";
@@ -611,7 +639,9 @@ function watch(id) {
 
 function authHeader() {
   const token = $("token").value.trim();
-  return token ? { Authorization: "Bearer " + token } : {};
+  const headers = token ? { Authorization: "Bearer " + token } : {};
+  if (me?.key) headers["X-Agora-Member"] = me.key;
+  return headers;
 }
 
 async function refreshRuns() {
@@ -667,7 +697,7 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
 });
 $("newbrief").onclick = () => { $("brief").focus(); $("brief").select(); };
 $("token").value = store.get("agora-token");
-$("token").onchange = () => { store.set("agora-token", $("token").value.trim()); refreshRuns(); connectChat(); };
+$("token").onchange = () => { store.set("agora-token", $("token").value.trim()); refreshRuns(); connectChat(); connectCompany(); };
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
   store.set("agora-token", $("token").value.trim());
@@ -1211,7 +1241,9 @@ function renderAlibi(feed) {
   for (const e of errand.events) {
     if (e.type === "started") {
       const li = el("li", "ab-head");
-      li.append(el("b", null, e.brief), el("small", null, `${e.agent} on ${e.model}${e.checker ? ` · second checker ${e.checker}` : ""} · guard ${e.guard ? "on" : "off"}`));
+      const whose = e.people?.bot_of ? ` (${e.people.bot_of[1]}'s bot${e.people.bot_of[2] ? ", " + e.people.bot_of[2] : ""})` : "";
+      const asked = e.people?.asked_by && e.people.asked_by[0] !== e.people.bot_of?.[0] ? ` · asked by ${e.people.asked_by[1]}` : "";
+      li.append(el("b", null, e.brief), el("small", null, `${e.agent}${whose}${asked} on ${e.model}${e.checker ? ` · second checker ${e.checker}` : ""} · guard ${e.guard ? "on" : "off"}`));
       feed.append(li);
     } else if (e.type === "step") feed.append(stepLine(e.entry, hiddenNow.has(e.entry.seq)));
     else if (e.type === "busy") { busy = e; if (e.question) { const q = el("li", "ab-q"); q.append(el("span", null, e.question)); feed.append(q); } }
@@ -1245,6 +1277,7 @@ function renderErrandChips() {
   const asking = hasReport();
   $("errandgo").textContent = asking ? "Ask" : "Run errand";
   $("guardon").parentElement.hidden = asking;
+  $("errandto").hidden = asking || !company.members.length;
   $("errandnew").hidden = !asking;
   $("errandtext").placeholder = asking ? "Ask about the errand. The answer is checked the same way." : "Give an errand. The agent works on Asha's contacts, calendar, email, chats and files.";
   for (const [label, text] of asking ? QUESTIONS.map((q) => [q, q]) : ERRANDS) {
@@ -1255,6 +1288,7 @@ function renderErrandChips() {
   }
 }
 function errandAgent() {
+  if (me && company.members.length) return { name: me.member.bot, id: me.member.id, color: me.member.color };
   const a = findTeam(selected)?.agents?.[0];
   return a ? { name: a.name, id: a.id, color: a.color } : { name: "Scout", id: null, color: "#4285f4" };
 }
@@ -1268,6 +1302,8 @@ function watchErrand(id, skip = 0) {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
     errand.events.push(e);
+    // In a company the bot's desk is its owner's: point the office at it.
+    if (e.type === "started" && e.people?.bot_of) errand.agent = { ...errand.agent, id: e.people.bot_of[0], name: e.agent };
     if (errand.skip > 0) errand.skip--; // a replay of what the office already acted out
     else dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
     // Forgetting rewrites the errand's history on the server: fetch it again.
@@ -1287,7 +1323,8 @@ $("errandform").onsubmit = async (ev) => {
     if (asking && !errandIdle()) throw new Error("The agent is still busy.");
     const url = asking ? `/api/errands/${encodeURIComponent(errand.id)}/ask` : "/api/errands";
     const agent = errandAgent();
-    const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked };
+    const area = $("errandto").value || undefined;
+    const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked, area };
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify(body) });
     const reply = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(reply.error || res.statusText);
@@ -1300,15 +1337,117 @@ $("errandform").onsubmit = async (ev) => {
 $("errandnew").onclick = () => { errandSource?.close(); errand = null; renderFeed(); $("errandtext").focus(); };
 $("errandtext").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("errandform").requestSubmit(); } };
 
+
+// ---- The company: who is in the office, their bots, and who leads which area ----
+let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })(); // { key, member }
+const company = { members: [], source: null };
+function memberLabel(m) {
+  if (m.role === "owner") return m.area ? `Owner · ${m.area}` : "Owner";
+  if (m.role === "lead") return `Lead · ${m.area}`;
+  return m.area ? `Member · ${m.area}` : "Member";
+}
+function renderPeople() {
+  const box = $("people");
+  box.replaceChildren();
+  const online = company.members.filter((m) => m.online).length;
+  $("peopletag").textContent = `${online} online · ${company.members.length} in`;
+  if (!company.members.length) box.append(el("p", "note", "Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas."));
+  const mine = company.members.find((m) => m.id === me?.member?.id);
+  for (const m of company.members) {
+    const row = el("div", "person" + (m.online ? "" : " off") + (m.id === mine?.id ? " me" : ""));
+    const dot = el("span", "dot"); dot.style.background = m.color;
+    const who = el("span", "who");
+    who.append(el("b", null, m.name + (m.id === mine?.id ? " (you)" : "")), el("small", null, `bot ${m.bot}${m.online ? " · online" : ""}`));
+    row.append(dot, who, el("span", "role " + m.role, memberLabel(m)));
+    const acts = el("div", "acts");
+    if (mine?.role === "owner" && m.role !== "owner") {
+      if (m.role === "lead") button("Make member", null, () => changeMember(m.id, { role: "member" }), acts);
+      else button("Make lead…", null, () => { const area = prompt(`Which area will ${m.name} lead?`, m.area || ""); if (area?.trim()) changeMember(m.id, { role: "lead", area: area.trim() }); }, acts);
+    }
+    if (m.id === mine?.id) button("Open on glasses", null, () => window.open(`/glasses#key=${encodeURIComponent(me.key)}`, "_blank", "width=620,height=640"), acts);
+    if (m.id === mine?.id) button("Leave", null, async () => { await fetch(`/api/company/members/${m.id}`, { method: "DELETE", headers: authHeader() }); me = null; store.set("agora-member", ""); connectCompany(); }, acts);
+    if (acts.childElementCount) row.append(acts);
+    box.append(row);
+  }
+  $("joinbtn").textContent = mine ? `You: ${mine.name}` : "Join office";
+  renderErrandTo();
+  showIdleTeam();
+}
+function renderErrandTo() {
+  const sel = $("errandto"), was = sel.value;
+  sel.replaceChildren();
+  const mine = company.members.find((m) => m.id === me?.member?.id);
+  sel.append(new Option(mine ? `My bot (${mine.bot})` : "Your bot", ""));
+  for (const m of company.members.filter((m) => m.role !== "member" && m.area && m.id !== mine?.id)) sel.append(new Option(`${m.area} → ${m.name}'s ${m.bot}`, m.area));
+  sel.value = [...sel.options].some((o) => o.value === was) ? was : "";
+}
+async function changeMember(id, change) {
+  const res = await fetch(`/api/company/members/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json", ...authHeader() }, body: JSON.stringify(change) });
+  if (!res.ok) alert((await res.json().catch(() => ({}))).error || res.statusText);
+}
+function connectCompany() {
+  company.source?.close();
+  const token = $("token").value.trim();
+  const q = new URLSearchParams();
+  if (token) q.set("token", token);
+  if (me?.key) q.set("member", me.key);
+  company.source = new EventSource("/api/company/events" + (q.size ? "?" + q : ""));
+  company.source.onmessage = (msg) => {
+    let e;
+    try { e = JSON.parse(msg.data); } catch { return; }
+    if (e.type === "snapshot") {
+      company.members = e.members;
+      // A key from an earlier server is no longer valid: forget it.
+      if (me && !e.members.some((m) => m.id === me.member.id && m.bot === me.member.bot)) { me = null; store.set("agora-member", ""); }
+      for (const a of e.activity) companyNote(a, false);
+    } else if (e.type === "member") {
+      const at = company.members.findIndex((m) => m.id === e.member.id);
+      if (at < 0) company.members.push(e.member); else company.members[at] = e.member;
+      if (me && e.member.id === me.member.id) { me.member = e.member; store.set("agora-member", JSON.stringify(me)); }
+    } else if (e.type === "left") company.members = company.members.filter((m) => m.id !== e.id);
+    else if (e.type === "activity") companyNote(e.activity, true);
+    renderPeople();
+  };
+}
+const seenActivity = new Set();
+function companyNote(a, live) {
+  const key = `${a.at_ms}:${a.text}`;
+  if (seenActivity.has(key)) return;
+  seenActivity.add(key);
+  const m = company.members.find((x) => x.id === a.member);
+  note(a.text, m?.color);
+  if (live) dispatchEvent(new CustomEvent("agora:company", { detail: { members: company.members, activity: a } }));
+}
+$("joinbtn").onclick = () => { if (!me) { $("joinbox").showModal(); $("joinname").focus(); } };
+$("joincancel").onclick = () => $("joinbox").close();
+$("joinform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  $("joinnote").textContent = "";
+  try {
+    const res = await fetch("/api/company/join", { method: "POST", headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ name: $("joinname").value, area: $("joinarea").value }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    me = body; store.set("agora-member", JSON.stringify(me));
+    $("joinbox").close();
+    connectCompany();
+  } catch (err) { $("joinnote").textContent = err.message; }
+};
+// The office shows the company's bots at their desks (each labelled with its owner).
+function companyTeam() {
+  if (!company.members.length) return null;
+  return { id: "company", name: "The office", kind: "Company", agents: company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color })) };
+}
+
 // Before any run is watched, the office shows the picked team at their desks.
-window.agoraIdleTeam = () => (current ? null : findTeam(selected) || null);
-const showIdleTeam = () => { if (!current) dispatchEvent(new CustomEvent("agora:team", { detail: findTeam(selected) || null })); };
+window.agoraIdleTeam = () => (current ? null : companyTeam() || findTeam(selected) || null);
+const showIdleTeam = () => { if (!current) dispatchEvent(new CustomEvent("agora:team", { detail: companyTeam() || findTeam(selected) || null })); };
 
 $("teamsel").onchange = () => { selected = $("teamsel").value; store.set("agora-team", selected); renderTeamPicker(); };
 $("manage").onclick = () => openTeams();
 $("editteam").onclick = () => openTeams(selected);
 
-renderBoard(); renderFeed(); loadInfo(); loadTeams(); connectChat();
+renderBoard(); renderFeed(); loadInfo(); loadTeams(); connectChat(); connectCompany();
 // A link like /#run-123 opens that run (after the list, so its brief shows too).
 refreshRuns().finally(() => { if (location.hash.length > 1) watch(decodeURIComponent(location.hash.slice(1))); });
 </script>

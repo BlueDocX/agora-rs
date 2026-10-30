@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mrbd-web-app-capable" content="yes">
+<meta name="description" content="Agora on your glasses: give your bot an errand, hear what it did, and know every claim was checked against its ledger.">
+<title>Agora</title>
+<style>
+  /* Ray-Ban Display: a 600×600 additive display. Black adds no light (it reads as
+     transparent), so the page is black and every surface is a bounded, lit panel.
+     Input is arrows + Enter (Neural Band) on native, focusable controls. */
+  :root { --ink: #fcfaf4; --dim: #b9b29c; --butter: #f2cc46; --ok: #5fd38d; --bad: #ff7a6b; --panel: #1c1a14; --edge: #3a3628; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #000; color: var(--ink); font: 500 22px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 600px; margin: 0 auto; padding: 18px 20px 24px; min-height: 100vh; display: flex; flex-direction: column; gap: 12px; }
+  header { display: flex; align-items: baseline; gap: 10px; }
+  header b { font-size: 26px; letter-spacing: .02em; color: var(--butter); }
+  header span { color: var(--dim); font-size: 17px; }
+  .panel { background: var(--panel); border: 2px solid var(--edge); border-radius: 22px; padding: 14px 16px; }
+  .panel h2 { margin: 0 0 6px; font-size: 18px; color: var(--dim); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .menu { display: flex; flex-direction: column; gap: 10px; }
+  button, input { font: inherit; color: var(--ink); background: var(--panel); border: 2px solid var(--edge); border-radius: 18px; padding: 12px 16px; text-align: left; width: 100%; }
+  button:focus, input:focus { outline: none; border-color: var(--butter); background: #2a2614; box-shadow: 0 0 0 3px rgba(242, 204, 70, .35); }
+  button small { display: block; color: var(--dim); font-size: 16px; }
+  .say { font-size: 21px; line-height: 1.4; max-height: 240px; overflow: hidden; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chip { border-radius: 999px; padding: 4px 12px; font-size: 16px; font-weight: 700; border: 2px solid var(--edge); }
+  .chip.ok { color: var(--ok); border-color: #2c6b45; } .chip.bad { color: var(--bad); border-color: #7a3229; } .chip.dim { color: var(--dim); }
+  .line { color: var(--dim); font-size: 17px; margin: 4px 0; }
+  .note { color: var(--dim); font-size: 16px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header><b>AGORA</b><span id="who">not joined</span></header>
+
+  <section id="home" class="menu">
+    <div class="panel"><h2>Office</h2><div id="status" class="line">Connecting…</div></div>
+    <button id="go-errand" type="button">New errand<small>Say it: your bot does it, the ledger checks it</small></button>
+    <button id="go-last" type="button">My last errand<small id="last-sub">Nothing yet</small></button>
+    <button id="go-activity" type="button">Office activity<small>Who asked whose bot what</small></button>
+    <button id="go-join" type="button" hidden>Join the office<small>Get your own bot</small></button>
+  </section>
+
+  <section id="join" class="menu" hidden>
+    <div class="panel"><h2>Join</h2><div class="line">Your name (tap to dictate)</div></div>
+    <input id="join-name" type="text" maxlength="40" aria-label="Your name" autocomplete="name">
+    <button id="join-go" type="button">Join</button>
+    <div class="note" id="join-note"></div>
+  </section>
+
+  <section id="errand" class="menu" hidden>
+    <div class="panel"><h2>New errand</h2><div class="line">Tap the field and say what to do</div></div>
+    <input id="errand-text" type="text" maxlength="500" aria-label="The errand">
+    <button id="errand-go" type="button">Send to my bot</button>
+    <div class="note" id="errand-note"></div>
+  </section>
+
+  <section id="result" class="menu" hidden>
+    <div class="panel"><h2 id="result-head">Errand</h2><div id="result-brief" class="line"></div><div id="result-say" class="say"></div><div id="result-chips" class="chips"></div></div>
+    <button id="read" type="button">Read it to me</button>
+    <input id="ask-text" type="text" maxlength="300" aria-label="Ask about it" placeholder="Ask about it…">
+    <button id="ask-go" type="button">Ask</button>
+  </section>
+
+  <section id="activity" class="menu" hidden>
+    <div class="panel"><h2>Activity</h2><div id="activity-list"></div></div>
+    <button id="activity-back" type="button">Back</button>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+// A key handed over in the link (#key=…) joins this device as that person.
+const handed = new URLSearchParams(location.hash.slice(1));
+if (handed.get("key")) { store.set("agora-member", JSON.stringify({ key: handed.get("key"), member: null })); history.replaceState(null, "", location.pathname); }
+let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })();
+const token = new URLSearchParams(location.search).get("token") || store.get("agora-token");
+const headers = (json) => ({ ...(json ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: "Bearer " + token } : {}), ...(me?.key ? { "X-Agora-Member": me.key } : {}) });
+let members = [], activity = [], watching = null, timer = 0;
+
+// ---- Screens: one level deep, so Back (history.back) always returns home ----
+const SCREENS = ["home", "join", "errand", "result", "activity"];
+function show(id, push = true) {
+  for (const s of SCREENS) $(s).hidden = s !== id;
+  if (push && id !== "home") history.pushState({ screen: id }, "");
+  const first = $(id).querySelector("input, button");
+  first?.focus();
+}
+addEventListener("popstate", () => show("home", false));
+
+// ---- Focus: arrows move between controls, Enter clicks (native) ----
+addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const items = [...document.querySelectorAll("section:not([hidden]) button:not([hidden]), section:not([hidden]) input")];
+  if (!items.length) return;
+  const at = items.indexOf(document.activeElement);
+  const next = e.key === "ArrowDown" ? Math.min(items.length - 1, at + 1) : Math.max(0, at - 1);
+  items[at < 0 ? 0 : next].focus();
+  e.preventDefault();
+});
+
+// ---- Office state ----
+async function refresh() {
+  try {
+    const feed = await fetch("/api/errands", { headers: headers() });
+    const errands = feed.ok ? await feed.json() : [];
+    const mine = errands.filter((e) => me?.member && (e.people.asked_by?.[0] === me.member.id));
+    const last = mine[0];
+    $("last-sub").textContent = last ? `${last.agent}: ${last.busy ? "working…" : last.said ? `${last.said.backed} backed · ${last.said.false_delivered} false` : "done"}` : "Nothing yet";
+    if (watching) renderResult(errands.find((e) => e.id === watching));
+    const busy = errands.filter((e) => e.busy).map((e) => e.agent);
+    const online = members.filter((m) => m.online).length;
+    $("status").textContent = `${members.length} in the office · ${online} online${busy.length ? ` · ${busy.join(", ")} working` : ""}`;
+    window.agoraErrands = errands;
+  } catch { $("status").textContent = "Can't reach the office"; }
+}
+function connect() {
+  const q = new URLSearchParams();
+  if (token) q.set("token", token);
+  if (me?.key) q.set("member", me.key);
+  const src = new EventSource("/api/company/events" + (q.size ? "?" + q : ""));
+  src.onmessage = (m) => {
+    let e;
+    try { e = JSON.parse(m.data); } catch { return; }
+    if (e.type === "snapshot") { members = e.members; activity = e.activity.slice(-6); }
+    else if (e.type === "member") { const i = members.findIndex((x) => x.id === e.member.id); if (i < 0) members.push(e.member); else members[i] = e.member; }
+    else if (e.type === "left") members = members.filter((x) => x.id !== e.id);
+    else if (e.type === "activity") { activity.push(e.activity); activity = activity.slice(-6); }
+    renderWho();
+  };
+}
+function renderWho() {
+  const mine = me?.member && members.find((m) => m.id === me.member.id);
+  if (mine) me.member = mine;
+  $("who").textContent = mine ? `${mine.name} · bot ${mine.bot}${mine.area ? " · " + mine.area : ""}` : "not joined";
+  $("go-join").hidden = !!mine;
+  const list = $("activity-list");
+  list.replaceChildren(...activity.map((a) => Object.assign(document.createElement("div"), { className: "line", textContent: a.text })));
+}
+async function whoami() {
+  // A key handed over without its member: find who it is by asking the company.
+  if (!me?.key || me.member) return;
+  const res = await fetch("/api/company/whoami", { headers: headers() });
+  if (res.ok) { me.member = await res.json(); store.set("agora-member", JSON.stringify(me)); } else { me = null; store.set("agora-member", ""); }
+  renderWho();
+}
+
+// ---- Join ----
+$("go-join").onclick = () => show("join");
+$("join-go").onclick = async () => {
+  const name = $("join-name").value.trim();
+  if (!name) return;
+  const res = await fetch("/api/company/join", { method: "POST", headers: headers(true), body: JSON.stringify({ name }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { $("join-note").textContent = body.error || "Couldn't join"; return; }
+  me = body; store.set("agora-member", JSON.stringify(me));
+  connect(); renderWho(); show("home");
+};
+
+// ---- Errands ----
+async function startErrand(brief, area) {
+  const res = await fetch("/api/errands", { method: "POST", headers: headers(true), body: JSON.stringify({ brief, area: area || undefined }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || "Couldn't start it");
+  return body.id;
+}
+$("go-errand").onclick = () => show("errand");
+$("errand-go").onclick = async () => {
+  const brief = $("errand-text").value.trim();
+  if (!brief) return;
+  $("errand-note").textContent = "Sending…";
+  try {
+    watching = await startErrand(brief);
+    $("errand-text").value = ""; $("errand-note").textContent = "";
+    show("result", false); history.replaceState({ screen: "result" }, ""); refresh();
+  } catch (err) { $("errand-note").textContent = err.message; }
+};
+$("go-last").onclick = () => {
+  const mine = (window.agoraErrands || []).filter((e) => me?.member && e.people.asked_by?.[0] === me.member.id);
+  if (!mine.length) return;
+  watching = mine[0].id; show("result"); refresh();
+};
+function chip(text, cls) { return Object.assign(document.createElement("span"), { className: "chip " + cls, textContent: text }); }
+function renderResult(e) {
+  if (!e) return;
+  $("result-head").textContent = `${e.agent}${e.people.bot_of && e.people.bot_of[0] !== me?.member?.id ? ` · ${e.people.bot_of[1]}'s` : ""}`;
+  $("result-brief").textContent = e.brief;
+  const s = e.said;
+  $("result-say").textContent = e.busy && !s ? `Working… ${e.steps} step${e.steps === 1 ? "" : "s"} on the ledger` : s ? (s.message || s.correction || "") : "";
+  const chips = [];
+  if (s) {
+    chips.push(chip(`${s.backed} backed`, "ok"));
+    chips.push(chip(`${s.false_delivered} false`, s.false_delivered ? "bad" : "ok"));
+    if (s.rewrites) chips.push(chip(`rewritten ${s.rewrites}×`, "dim"));
+    if (s.correction) chips.push(chip("corrected from ledger", "dim"));
+  }
+  if (e.busy && s) chips.push(chip("answering…", "dim"));
+  $("result-chips").replaceChildren(...chips);
+}
+$("read").onclick = () => {
+  const text = $("result-say").textContent;
+  if (!text || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+};
+$("ask-go").onclick = async () => {
+  const question = $("ask-text").value.trim();
+  if (!question || !watching) return;
+  const res = await fetch(`/api/errands/${encodeURIComponent(watching)}/ask`, { method: "POST", headers: headers(true), body: JSON.stringify({ question }) });
+  if (res.ok) { $("ask-text").value = ""; refresh(); }
+};
+$("go-activity").onclick = () => show("activity");
+$("activity-back").onclick = () => history.back();
+
+// ---- WebMCP: Meta AI on the glasses can drive Agora with these tools ----
+// (document.modelContext, developer preview; tools live while this app is open.)
+async function registerTools() {
+  if (!document.modelContext?.registerTool) return;
+  const latest = () => (window.agoraErrands || []).find((e) => me?.member && e.people.asked_by?.[0] === me.member.id);
+  const tools = [
+    {
+      name: "agora_run_errand",
+      description: "Give the wearer's Agora bot an errand on their contacts, calendar, email, chats and files. Every claim the bot makes about it is checked against a ledger before the wearer hears it. Optionally send it to an area (e.g. Finance) to have that area lead's bot do it.",
+      inputSchema: { type: "object", properties: { brief: { type: "string", description: "What to do, in the wearer's words." }, area: { type: "string", description: "Optional area whose lead's bot should do it." } }, required: ["brief"] },
+      annotations: { readOnlyHint: false },
+      async execute({ brief, area }) { const id = await startErrand(brief, area); watching = id; return { ok: true, errand_id: id, next_action: "The bot is working. Check back with agora_errand_result in a minute." }; },
+    },
+    {
+      name: "agora_errand_result",
+      description: "What the wearer's latest Agora errand delivered: the bot's checked message and its receipts (claims backed by the ledger, false claims delivered, rewrites).",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: true },
+      async execute() { await refresh(); const e = latest(); if (!e) return { ok: false, next_action: "No errand yet." }; return { ok: true, brief: e.brief, bot: e.agent, working: e.busy, message: e.said?.message, correction: e.said?.correction, claims_backed: e.said?.backed, false_claims_delivered: e.said?.false_delivered, rewrites: e.said?.rewrites }; },
+    },
+    {
+      name: "agora_ask_errand",
+      description: "Ask the bot a question about the wearer's latest errand (e.g. 'did you read my private chats?'). It answers from its ledger, and the answer is checked the same way.",
+      inputSchema: { type: "object", properties: { question: { type: "string", description: "The question." } }, required: ["question"] },
+      annotations: { readOnlyHint: false },
+      async execute({ question }) { const e = latest(); if (!e) return { ok: false, next_action: "No errand yet." }; const r = await fetch(`/api/errands/${encodeURIComponent(e.id)}/ask`, { method: "POST", headers: headers(true), body: JSON.stringify({ question }) }); return r.ok ? { ok: true, next_action: "Asked. Read the answer with agora_errand_result shortly." } : { ok: false, error: (await r.json().catch(() => ({}))).error }; },
+    },
+    {
+      name: "agora_office_status",
+      description: "Who is in the wearer's Agora office, who leads which area, and what the bots are doing.",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: true },
+      async execute() { await refresh(); return { people: members.map((m) => ({ name: m.name, role: m.role, area: m.area, bot: m.bot, online: m.online })), recent: activity.map((a) => a.text) }; },
+    },
+  ];
+  for (const tool of tools) {
+    try { await document.modelContext.registerTool(tool); } catch (err) { console.warn("WebMCP", tool.name, err); }
+  }
+}
+
+connect(); whoami(); refresh(); registerTools();
+timer = setInterval(refresh, 3000);
+show("home", false);
+</script>
+</body>
+</html>
