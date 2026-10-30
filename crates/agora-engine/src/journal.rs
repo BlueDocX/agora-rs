@@ -30,6 +30,12 @@ impl std::fmt::Display for JournalError {
 
 impl std::error::Error for JournalError {}
 
+impl JournalError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
 impl From<rusqlite::Error> for JournalError {
     fn from(e: rusqlite::Error) -> Self {
         Self(e.to_string())

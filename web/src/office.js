@@ -6,15 +6,17 @@
 //
 // It only listens: the page dispatches `agora:event` (one run event), `agora:reset`
 // (a run is about to replay), `agora:team` (the team picked while no run is open)
-// and `agora:chat` (chat traffic, shown as speech bubbles).
+// `agora:chat` (chat traffic, shown as speech bubbles) and `agora:errand` (an Alibi
+// errand: the agent fetches records or works the laptop for each call, and a ring
+// flashes under it when its account is checked against the ledger).
 //
 // Art: Kenney's Mini Characters and Furniture Kit (CC0, kenney.nl), trimmed into two
 // files by web/models/build.mjs. Without WebGL2 the page keeps its kanban.
 
 import {
   ACESFilmicToneMapping, AnimationMixer, BoxGeometry, CanvasTexture, DirectionalLight, Group, HemisphereLight,
-  LoopOnce, LoopRepeat, Mesh, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Scene,
-  SRGBColorSpace, Sprite, SpriteMaterial, Vector3, WebGLRenderer,
+  LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Scene,
+  RingGeometry, SRGBColorSpace, Sprite, SpriteMaterial, Vector3, WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -476,6 +478,77 @@ async function start(host) {
     else if (e.type === "message" && Date.now() - e.message.at_ms < 20000) speaker({ agent: e.message.agent, message: e.message })?.say(e.message.text, 9);
   });
 
+
+  // ---- Alibi errands: for each call the agent goes to the records shelf (reads) or
+  // the laptop at the meeting table (sending, booking, writing). When its account is
+  // checked, a ring flashes under it: red for contradicted claims, purple for things
+  // it did but didn't mention, green when every claim checks out; on a red one the
+  // reviewer walks over as the auditor.
+  const SHELF = new Vector3(-0.72, FLOOR, -2.3), LAPTOP = new Vector3(-1.32, FLOOR, 2.3);
+  const ACTS = new Set(["calendar.create", "email.send", "messages.send", "files.write"]);
+  const rings = [];
+  function flash(at, color) {
+    const ring = new Mesh(new RingGeometry(0.22, 0.34, 40), new MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(at.x, FLOOR + 0.006, at.z);
+    scene.add(ring);
+    rings.push({ ring, born: performance.now() });
+  }
+  function errandDesk(id) {
+    if (!desks.size) build([{ key: "scout", title: "Scout", color: PALETTE[0] }]);
+    return desks.get(id) ?? desks.values().next().value;
+  }
+  function goTo(d, spot, then) {
+    const p = d.person;
+    d.seated = false; d.toSeat = false;
+    if (p.root.position.y > FLOOR + 0.01) p.root.position.copy(d.stand); // up from the chair first
+    p.walk(route(p.root.position, spot), then);
+  }
+  function onErrand(e) {
+    const d = errandDesk(e.agentId);
+    const p = d.person;
+    switch (e.type) {
+      case "busy":
+        p.say(e.turn === 0 ? "On it!" : "…", e.turn === 0 ? 3 : 30);
+        break;
+      case "step": {
+        const { action, outcome } = e.entry;
+        goTo(d, ACTS.has(action.tool) ? LAPTOP : SHELF, () => { p.faceCamera = false; p.play("interact-right"); });
+        p.say(`${action.tool} · ${outcome.subject}${outcome.ok ? "" : " ✗"}`, 4);
+        break;
+      }
+      case "said":
+        goTo(d, d.stand, () => { p.faceCamera = true; p.play("idle"); });
+        p.say(e.message.length > 90 ? e.message.slice(0, 88) + "…" : e.message, 8);
+        break;
+      case "checked": {
+        const lies = e.audit.checked.filter((c, i) => c.verdict === "contradicted" && e.agreed[i] !== false).length;
+        const hidden = e.audit.undisclosed_acts.length + e.audit.undisclosed_reads.length;
+        const at = p.root.position;
+        if (lies) {
+          flash(at, "#e5483b");
+          p.play("emote-no", { once: true, then: () => p.play("idle") });
+          p.say(`The ledger contradicts ${lies} of my claim${lies === 1 ? "" : "s"}`, 8);
+          reviewer.walk(route(reviewer.root.position, new Vector3(at.x + 0.45, FLOOR, at.z + (at.z < 0 ? -0.2 : 0.2))), () => {
+            reviewer.root.lookAt(at.x, reviewer.root.position.y, at.z);
+            reviewer.play("interact-right");
+            reviewer.say("Receipts, please.", 5);
+          });
+        } else if (hidden) {
+          flash(at, "#6b4fd8");
+          p.say(`${hidden} thing${hidden === 1 ? "" : "s"} I did but didn't mention`, 7);
+        } else {
+          flash(at, "#1f9d55");
+          p.play("emote-yes", { once: true, then: () => p.play("idle") });
+          p.say("Every claim checks out", 6);
+        }
+        break;
+      }
+      case "failed": p.say("I couldn't finish that.", 6); break;
+    }
+  }
+  addEventListener("agora:errand", ({ detail }) => onErrand(detail));
+
   // ---- Camera: drag to turn all the way round and tilt, wheel or pinch to zoom.
   // Left alone, it drifts slowly round the room; touching it pauses the drift.
   const look = new Vector3(0.1, CLOSE ? 0.45 : 0.2, 0.2);
@@ -539,6 +612,13 @@ async function start(host) {
         }
       } else if (a.faceCamera) turnToward(a, camera.position.x, camera.position.z, dt);
       if (a.speech && now > a.speech.until) { drop(a.speech.sprite); a.speech = null; }
+    }
+    // Errand rings grow and fade over three seconds.
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const r = rings[i], age = (now - r.born) / 3000;
+      if (age >= 1) { scene.remove(r.ring); r.ring.geometry.dispose(); r.ring.material.dispose(); rings.splice(i, 1); continue; }
+      r.ring.scale.setScalar(1 + age * 1.6);
+      r.ring.material.opacity = 0.9 * (1 - age);
     }
     renderer.render(scene, camera);
   };

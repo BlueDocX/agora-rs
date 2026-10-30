@@ -8,6 +8,8 @@ version = "0.1.0"
 dependencies = [
  "agora-core",
  "agora-engine",
+ "agora-muse",
+ "serde_json",
  "tokio",
 ]
 
@@ -17,6 +19,7 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

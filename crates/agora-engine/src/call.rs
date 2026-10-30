@@ -33,21 +33,35 @@ impl std::fmt::Display for CallError {
 
 impl std::error::Error for CallError {}
 
+/// Calls models for one piece of work, routing each to its host and counting the
+/// spend against one budget.
 #[derive(Debug)]
-pub(crate) struct Caller {
+pub struct Caller {
     /// Meta's Model API.
-    pub muse: MuseClient,
+    pub(crate) muse: MuseClient,
     /// Baseten, for the open weights, if configured.
-    pub baseten: Option<MuseClient>,
-    pub budget: Budget,
-    pub journal: Option<Journal>,
+    pub(crate) baseten: Option<MuseClient>,
+    pub(crate) budget: Budget,
+    pub(crate) journal: Option<Journal>,
 }
 
-
-
 impl Caller {
+    /// A caller with no journal (nothing to resume).
+    #[must_use]
+    pub fn new(muse: MuseClient, baseten: Option<MuseClient>, budget: Budget) -> Self {
+        Self { muse, baseten, budget, journal: None }
+    }
+
+    #[must_use]
+    pub fn spend(&self) -> crate::Spend {
+        self.budget.spend()
+    }
+
     /// Replayed replies cost nothing now but count against the cap: the run already
     /// paid for them.
+    ///
+    /// # Errors
+    /// [`CallError`] when the host fails, the budget is spent or the reply is cut off.
     pub async fn call(&self, request: &Request) -> Result<Response, CallError> {
         let claim = self.journal.as_ref().map(|j| (j, j.claim(request)));
         if let Some((journal, (key, n))) = &claim

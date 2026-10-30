@@ -14,6 +14,8 @@
 //! - `GET /` is the office board.
 //!
 //! - `/api/chat` is the office chat: see [`chat`](crate::chat).
+//! - `/api/errands` runs errands whose every claim is checked against a ledger: see
+//!   [`errands`](crate::errands).
 //!
 //! When a token is set, every other `/api` call needs it: as `Authorization: Bearer`, or
 //! as `?token=` on the event stream (a browser `EventSource` can't send headers).
@@ -25,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod chat;
+mod errands;
 
 pub use chat::MAX_CHAT_CHARS;
 
@@ -59,6 +62,9 @@ const FURNITURE_GZ: &[u8] = include_bytes!("../static/models/furniture.glb.gz");
 /// Thumbnails of the eight teammate characters, in office.js's TEAM order, for the
 /// team editor (from the Kenney pack's previews).
 const CAST_PNG: &[u8] = include_bytes!("../static/models/cast.png");
+/// B4's self-report fidelity results (`alibi-spike` writes `bench-out/b4_summary.json`;
+/// the rows behind it are in `bench/`).
+const LEADERBOARD: &str = include_str!("../static/leaderboard.json");
 
 impl HubConfig {
     /// The client for a model's host (by `agora_muse::host_of`), if this office has it.
@@ -160,6 +166,7 @@ struct Hub {
     chat: Mutex<chat::ChatState>,
     /// `None` when the chat can't be budgeted (an unpriced model or a bad cap).
     chat_budget: Option<Arc<Budget>>,
+    errands: Mutex<errands::Errands>,
 }
 
 #[derive(Default)]
@@ -190,7 +197,7 @@ pub fn app(config: HubConfig) -> Router {
             None
         }
     };
-    let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()), chat: Mutex::default(), chat_budget });
+    let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()), chat: Mutex::default(), chat_budget, errands: Mutex::default() });
     Router::new()
         .route("/", get(index))
         .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), Some(OFFICE_JS_GZ)) }))
@@ -198,12 +205,17 @@ pub fn app(config: HubConfig) -> Router {
         .route("/models/cast.png", get(|h: HeaderMap| async move { asset(&h, "image/png", CAST_PNG, None) }))
         .route("/models/furniture.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", FURNITURE, Some(FURNITURE_GZ)) }))
         .route("/api/info", get(info))
+        .route("/api/leaderboard", get(|| async { ([(header::CONTENT_TYPE, "application/json")], LEADERBOARD) }))
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
         .route("/api/models", get(models))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/chat", post(chat::post))
         .route("/api/chat/events", get(chat::events))
+        .route("/api/errands", post(errands::start))
+        .route("/api/errands/{id}/events", get(errands::events))
+        .route("/api/errands/{id}/ask", post(errands::ask))
+        .route("/api/errands/{id}/ledger", get(errands::ledger))
         .with_state(hub)
 }
 

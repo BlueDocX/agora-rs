@@ -131,12 +131,14 @@ impl MuseClient {
                 Ok(res) if res.status().is_success() => {
                     let rate_limit = rate_limit(res.headers());
                     let decode = |e: reqwest::Error| MuseError::Decode(e.to_string());
-                    return match self.api {
-                        Api::Responses => Ok(res.json::<RawResponse>().await.map_err(decode)?.into_response(rate_limit)),
-                        Api::ChatCompletions => {
-                            Ok(res.json::<RawChatResponse>().await.map_err(decode)?.into_response(rate_limit))
-                        }
+                    let mut response = match self.api {
+                        Api::Responses => res.json::<RawResponse>().await.map_err(decode)?.into_response(rate_limit),
+                        Api::ChatCompletions => res.json::<RawChatResponse>().await.map_err(decode)?.into_response(rate_limit),
                     };
+                    if request.json_schema.is_some() {
+                        response.text = json_part(&response.text).to_string();
+                    }
+                    return Ok(response);
                 }
                 Ok(res) => {
                     let status = res.status();
@@ -177,6 +179,25 @@ impl MuseClient {
     }
 }
 
+/// The JSON in a structured reply. Muse sometimes writes a one-line preamble
+/// ("I'll look up Priya first.") before the schema-shaped JSON, in the same reply
+/// (seen live 2026-10-30), so a reply that isn't JSON as a whole is cut to the
+/// first `{` or `[` from which the rest parses as one JSON value. Anything else is
+/// returned unchanged, so the caller's own parse error still says what came back.
+#[must_use]
+pub fn json_part(text: &str) -> &str {
+    let trimmed = text.trim();
+    if serde_json::from_str::<serde::de::IgnoredAny>(trimmed).is_ok() {
+        return trimmed;
+    }
+    trimmed
+        .char_indices()
+        .filter(|&(_, c)| c == '{' || c == '[')
+        .map(|(i, _)| &trimmed[i..])
+        .find(|rest| serde_json::from_str::<serde::de::IgnoredAny>(rest).is_ok())
+        .unwrap_or(text)
+}
+
 fn env_key(var: &'static str) -> Result<String, MuseError> {
     std::env::var(var).ok().filter(|k| !k.is_empty()).ok_or(MuseError::MissingKey(var))
 }
@@ -202,4 +223,17 @@ fn api_message(body: &str) -> String {
         .ok()
         .and_then(|v| v.pointer("/error/message").and_then(|m| m.as_str()).map(str::to_string))
         .unwrap_or_else(|| body.chars().take(300).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_preamble_before_structured_json_is_cut_off() {
+        let raw = "Scouting your lunch invite \u{2014} I'll check {the} contacts.{\"tool\": \"contacts.search\", \"target\": \"Priya\"}";
+        assert_eq!(json_part(raw), "{\"tool\": \"contacts.search\", \"target\": \"Priya\"}");
+        assert_eq!(json_part(" [1, 2] "), "[1, 2]");
+        assert_eq!(json_part("no json here"), "no json here");
+    }
 }
