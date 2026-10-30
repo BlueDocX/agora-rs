@@ -1289,7 +1289,7 @@ function renderErrandChips() {
   }
 }
 function errandAgent() {
-  if (me && company.members.length) return { name: me.member.bot, id: me.member.id, color: me.member.color };
+  if (me?.member && company.members.length) return { name: me.member.bot, id: me.member.id, color: me.member.color };
   const a = findTeam(selected)?.agents?.[0];
   return a ? { name: a.name, id: a.id, color: a.color } : { name: "Scout", id: null, color: "#4285f4" };
 }
@@ -1400,16 +1400,22 @@ function connectCompany() {
     if (e.type === "snapshot") {
       company.members = e.members;
       // A key from an earlier server is no longer valid: forget it.
-      if (me && !e.members.some((m) => m.id === me.member.id && m.bot === me.member.bot)) { me = null; store.set("agora-member", ""); }
+      if (me && !me.member) whoAmI(); // a key handed over by the glasses view, not yet resolved
+      else if (me && !e.members.some((m) => m.id === me.member.id && m.bot === me.member.bot)) { me = null; store.set("agora-member", ""); }
       for (const a of e.activity) companyNote(a, false);
     } else if (e.type === "member") {
       const at = company.members.findIndex((m) => m.id === e.member.id);
       if (at < 0) company.members.push(e.member); else company.members[at] = e.member;
-      if (me && e.member.id === me.member.id) { me.member = e.member; store.set("agora-member", JSON.stringify(me)); }
+      if (me?.member && e.member.id === me.member.id) { me.member = e.member; store.set("agora-member", JSON.stringify(me)); }
     } else if (e.type === "left") company.members = company.members.filter((m) => m.id !== e.id);
     else if (e.type === "activity") companyNote(e.activity, true);
     renderPeople();
   };
+}
+async function whoAmI() {
+  const res = await fetch("/api/company/whoami", { headers: authHeader() }).catch(() => null);
+  if (res?.ok) { me.member = await res.json(); store.set("agora-member", JSON.stringify(me)); renderPeople(); }
+  else if (res?.status === 404) { me = null; store.set("agora-member", ""); renderPeople(); }
 }
 const seenActivity = new Set();
 function companyNote(a, live) {

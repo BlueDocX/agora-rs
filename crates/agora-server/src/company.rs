@@ -271,6 +271,17 @@ pub(crate) async fn change(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
     if body.role == Some(Role::Owner) {
         return error(StatusCode::BAD_REQUEST, "there is one owner");
     }
+    // One lead per area: errands for an area must have one place to go.
+    if let Some(current) = company.members.iter().find(|m| m.id == id) {
+        let role = body.role.unwrap_or(current.role);
+        let new_area = area.clone().unwrap_or_else(|| current.area.clone());
+        if role != Role::Member
+            && !new_area.is_empty()
+            && let Some(other) = company.members.iter().find(|m| m.id != id && m.role != Role::Member && m.area.eq_ignore_ascii_case(&new_area))
+        {
+            return error(StatusCode::CONFLICT, &format!("{} already leads {}", other.name, other.area));
+        }
+    }
     let Some(target) = company.members.iter_mut().find(|m| m.id == id) else { return error(StatusCode::NOT_FOUND, "no such member") };
     if target.role == Role::Owner && body.role.is_some() {
         return error(StatusCode::BAD_REQUEST, "the owner stays the owner");

@@ -156,7 +156,7 @@ impl ErrandRoom {
 
     /// The chain as it stands, checked against the newest head this errand has
     /// streamed (so entries dropped from the end show as broken too).
-    fn chain(&self) -> Chain {
+    pub(crate) fn chain(&self) -> Chain {
         let published = self.lock().history.iter().rev().find_map(|e| match e {
             ErrandEvent::Step { entry } => Some(entry.hash.clone()),
             _ => None,
@@ -181,7 +181,7 @@ impl Hub {
         self.errands.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn errand(&self, id: &str) -> Option<Arc<ErrandRoom>> {
+    pub(crate) fn errand(&self, id: &str) -> Option<Arc<ErrandRoom>> {
         self.errands().rooms.iter().find(|r| r.id == id).cloned()
     }
 
@@ -233,7 +233,9 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
             room.lock().report.get_or_insert(told);
             if let Some((owner_id, _, _)) = &room.people.bot_of {
                 let backed = g.delivered.audit.supported();
-                let how = if g.correction.is_some() {
+                let how = if !room.guard {
+                    "guard off: checked, not corrected".to_string()
+                } else if g.correction.is_some() {
                     "corrected from the ledger".to_string()
                 } else if g.drafts.len() > 1 {
                     format!("rewritten {}x by the guard", g.drafts.len() - 1)
@@ -626,6 +628,8 @@ pub(crate) struct Summary {
     pub steps: usize,
     /// The latest message delivered, and its receipts.
     pub said: Option<SaidSummary>,
+    /// Why the latest turn failed, if it did after the last delivery.
+    pub failed: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -643,6 +647,12 @@ impl ErrandRoom {
     pub(crate) fn summary(&self) -> Summary {
         let inner = self.lock();
         let steps = inner.history.iter().filter(|e| matches!(e, ErrandEvent::Step { .. })).count();
+        // A failure after the last delivery means the latest turn (e.g. a question)
+        // didn't get an answer: say so instead of passing off the old one.
+        let failed = inner.history.iter().rev().take_while(|e| !matches!(e, ErrandEvent::Said { .. })).find_map(|e| match e {
+            ErrandEvent::Failed { reason, .. } => Some(reason.clone()),
+            _ => None,
+        });
         let said = inner.history.iter().rev().find_map(|e| match e {
             ErrandEvent::Said { turn, question, message, correction, check, rounds, .. } => Some(SaidSummary {
                 turn: *turn,
@@ -655,7 +665,7 @@ impl ErrandRoom {
             }),
             _ => None,
         });
-        Summary { id: self.id.clone(), brief: self.brief.clone(), agent: self.agent.clone(), people: self.people.clone(), busy: inner.busy, steps, said }
+        Summary { id: self.id.clone(), brief: self.brief.clone(), agent: self.agent.clone(), people: self.people.clone(), busy: inner.busy, steps, said, failed }
     }
 }
 

@@ -75,12 +75,14 @@
 const $ = (id) => document.getElementById(id);
 const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 // A key handed over in the link (#key=…) joins this device as that person.
-const handed = new URLSearchParams(location.hash.slice(1));
-if (handed.get("key")) { store.set("agora-member", JSON.stringify({ key: handed.get("key"), member: null })); history.replaceState(null, "", location.pathname); }
-let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })();
+// Read the token first (and keep it), then drop the key from the address bar.
 const token = new URLSearchParams(location.search).get("token") || store.get("agora-token");
+if (token) store.set("agora-token", token);
+const handed = new URLSearchParams(location.hash.slice(1));
+if (handed.get("key")) { store.set("agora-member", JSON.stringify({ key: handed.get("key"), member: null })); history.replaceState(null, "", location.pathname + location.search); }
+let me = (() => { try { return JSON.parse(store.get("agora-member") || "null"); } catch { return null; } })();
 const headers = (json) => ({ ...(json ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: "Bearer " + token } : {}), ...(me?.key ? { "X-Agora-Member": me.key } : {}) });
-let members = [], activity = [], watching = null, timer = 0;
+let members = [], activity = [], watching = null, timer = 0, source = null;
 
 // ---- Screens: one level deep, so Back (history.back) always returns home ----
 const SCREENS = ["home", "join", "errand", "result", "activity"];
@@ -122,8 +124,9 @@ function connect() {
   const q = new URLSearchParams();
   if (token) q.set("token", token);
   if (me?.key) q.set("member", me.key);
-  const src = new EventSource("/api/company/events" + (q.size ? "?" + q : ""));
-  src.onmessage = (m) => {
+  source?.close();
+  source = new EventSource("/api/company/events" + (q.size ? "?" + q : ""));
+  source.onmessage = (m) => {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
     if (e.type === "snapshot") { members = e.members; activity = e.activity.slice(-6); }
@@ -144,8 +147,9 @@ function renderWho() {
 async function whoami() {
   // A key handed over without its member: find who it is by asking the company.
   if (!me?.key || me.member) return;
-  const res = await fetch("/api/company/whoami", { headers: headers() });
-  if (res.ok) { me.member = await res.json(); store.set("agora-member", JSON.stringify(me)); } else { me = null; store.set("agora-member", ""); }
+  const res = await fetch("/api/company/whoami", { headers: headers() }).catch(() => null);
+  if (res?.ok) { me.member = await res.json(); store.set("agora-member", JSON.stringify(me)); }
+  else if (res?.status === 404) { me = null; store.set("agora-member", ""); } // only an unknown key is forgotten
   renderWho();
 }
 
@@ -190,7 +194,10 @@ function renderResult(e) {
   $("result-head").textContent = `${e.agent}${e.people.bot_of && e.people.bot_of[0] !== me?.member?.id ? ` · ${e.people.bot_of[1]}'s` : ""}`;
   $("result-brief").textContent = e.brief;
   const s = e.said;
-  $("result-say").textContent = e.busy && !s ? `Working… ${e.steps} step${e.steps === 1 ? "" : "s"} on the ledger` : s ? (s.message || s.correction || "") : "";
+  // What was delivered is the agent's words and, when the guard added one, the
+  // correction from the ledger: both are shown and read out.
+  const told = s ? [s.message, s.correction].filter(Boolean).join("\n\n") : "";
+  $("result-say").textContent = e.failed ? `Couldn't finish: ${e.failed}` : e.busy && !s ? `Working… ${e.steps} step${e.steps === 1 ? "" : "s"} on the ledger` : told;
   const chips = [];
   if (s) {
     chips.push(chip(`${s.backed} backed`, "ok"));
@@ -234,7 +241,7 @@ async function registerTools() {
       description: "What the wearer's latest Agora errand delivered: the bot's checked message and its receipts (claims backed by the ledger, false claims delivered, rewrites).",
       inputSchema: { type: "object", properties: {} },
       annotations: { readOnlyHint: true },
-      async execute() { await refresh(); const e = latest(); if (!e) return { ok: false, next_action: "No errand yet." }; return { ok: true, brief: e.brief, bot: e.agent, working: e.busy, message: e.said?.message, correction: e.said?.correction, claims_backed: e.said?.backed, false_claims_delivered: e.said?.false_delivered, rewrites: e.said?.rewrites }; },
+      async execute() { await refresh(); const e = latest(); if (!e) return { ok: false, next_action: "No errand yet." }; return { ok: true, brief: e.brief, bot: e.agent, working: e.busy, failed: e.failed, message: e.said?.message, correction: e.said?.correction, claims_backed: e.said?.backed, false_claims_delivered: e.said?.false_delivered, rewrites: e.said?.rewrites }; },
     },
     {
       name: "agora_ask_errand",

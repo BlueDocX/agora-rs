@@ -18,6 +18,9 @@ use serde_json::{Value, json};
 use crate::{Hub, authorized, errands, unauthorized};
 
 const PROTOCOL: &str = "2025-06-18";
+/// Versions this server speaks; any other request gets [`PROTOCOL`] back, so the
+/// client can decide whether to go on.
+const SUPPORTED: [&str; 2] = ["2025-06-18", "2025-03-26"];
 
 fn tools() -> Value {
     json!([
@@ -72,8 +75,11 @@ fn arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 async fn call_tool(hub: &Arc<Hub>, headers: &HeaderMap, name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "office_status" => {
-            let company = hub.company();
-            Ok(json!({ "people": company.members_view(), "recent": company.recent(10), "errands": hub.errand_summaries().into_iter().take(5).collect::<Vec<_>>() }))
+            let (people, recent) = {
+                let company = hub.company();
+                (company.members_view(), company.recent(10))
+            };
+            Ok(json!({ "people": people, "recent": recent, "errands": hub.errand_summaries().into_iter().take(5).collect::<Vec<_>>() }))
         }
         "run_errand" => {
             let brief = arg(args, "brief").ok_or("brief is required")?;
@@ -82,10 +88,9 @@ async fn call_tool(hub: &Arc<Hub>, headers: &HeaderMap, name: &str, args: &Value
             call_handler(errands::start(State(Arc::clone(hub)), headers.clone(), Ok(Json(body))).await).await
         }
         "errand_result" => {
-            let all = hub.errand_summaries();
             let found = match arg(args, "errand_id") {
-                Some(id) => all.into_iter().find(|e| e.id == id),
-                None => all.into_iter().next(),
+                Some(id) => hub.errand(id).map(|r| r.summary()),
+                None => hub.errand_summaries().into_iter().next(),
             };
             found.map(|e| json!(e)).ok_or_else(|| "no such errand".to_string())
         }
@@ -96,8 +101,8 @@ async fn call_tool(hub: &Arc<Hub>, headers: &HeaderMap, name: &str, args: &Value
             call_handler(errands::ask(State(Arc::clone(hub)), axum::extract::Path(id), headers.clone(), Ok(Json(body))).await).await.map(|_| json!({ "ok": true, "next": "read the answer with errand_result" }))
         }
         "verify_ledger" => {
-            let id = arg(args, "errand_id").ok_or("errand_id is required")?.to_string();
-            call_handler(errands::ledger(State(Arc::clone(hub)), axum::extract::Path(id), headers.clone()).await).await.map(|v| v["chain"].clone())
+            let id = arg(args, "errand_id").ok_or("errand_id is required")?;
+            hub.errand(id).map(|r| json!(r.chain())).ok_or_else(|| "no such errand".to_string())
         }
         other => Err(format!("no tool called {other}")),
     }
@@ -118,7 +123,7 @@ async fn handle(hub: &Arc<Hub>, headers: &HeaderMap, request: &Value) -> Option<
     let id = id?;
     Some(match method {
         "initialize" => {
-            let asked = request["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL);
+            let asked = request["params"]["protocolVersion"].as_str().filter(|v| SUPPORTED.contains(v)).unwrap_or(PROTOCOL);
             reply(&id, &json!({
                 "protocolVersion": asked,
                 "capabilities": { "tools": { "listChanged": false } },
@@ -140,9 +145,23 @@ async fn handle(hub: &Arc<Hub>, headers: &HeaderMap, request: &Value) -> Option<
     })
 }
 
+/// A request a web page could have sent cross-site: the spec asks servers to check
+/// `Origin`, and requiring a JSON body forces the browser to ask (preflight) first.
+fn cross_site(headers: &HeaderMap) -> bool {
+    let header = |name| headers.get(name).and_then(|v: &axum::http::HeaderValue| v.to_str().ok()).unwrap_or_default();
+    let json = header(axum::http::header::CONTENT_TYPE.as_str()).trim_start().to_ascii_lowercase().starts_with("application/json");
+    let origin = header("origin");
+    let host = header("host");
+    let foreign = !origin.is_empty() && origin.split_once("://").is_none_or(|(_, rest)| rest != host);
+    !json || foreign
+}
+
 pub(crate) async fn post(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
     if !authorized(&hub, &headers, None) {
         return unauthorized();
+    }
+    if cross_site(&headers) {
+        return (StatusCode::FORBIDDEN, Json(failure(&Value::Null, -32600, "send JSON (Content-Type: application/json) from this origin"))).into_response();
     }
     let Ok(message) = serde_json::from_slice::<Value>(&body) else {
         return (StatusCode::BAD_REQUEST, Json(failure(&Value::Null, -32700, "parse error"))).into_response();
@@ -165,4 +184,25 @@ pub(crate) async fn post(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: 
 /// No server-initiated stream: GET is not offered (the spec allows 405).
 pub(crate) async fn get() -> Response {
     StatusCode::METHOD_NOT_ALLOWED.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(*k, v.parse().expect("header"));
+        }
+        h
+    }
+
+    #[test]
+    fn only_same_origin_json_gets_in() {
+        assert!(!cross_site(&headers(&[("content-type", "application/json"), ("host", "127.0.0.1:8080")])), "a non-browser client");
+        assert!(!cross_site(&headers(&[("content-type", "application/json"), ("host", "127.0.0.1:8080"), ("origin", "http://127.0.0.1:8080")])));
+        assert!(cross_site(&headers(&[("content-type", "text/plain"), ("host", "127.0.0.1:8080")])), "a no-preflight form post");
+        assert!(cross_site(&headers(&[("content-type", "application/json"), ("host", "127.0.0.1:8080"), ("origin", "https://evil.example")])));
+    }
 }
