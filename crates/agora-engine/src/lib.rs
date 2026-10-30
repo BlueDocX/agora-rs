@@ -10,7 +10,7 @@ pub mod run;
 pub mod scheduler;
 
 pub use budget::{Budget, BudgetError, OverBudget, Spend};
-pub use call::{CallError, Remote};
+pub use call::CallError;
 pub use events::{EventSender, ReviewedBy, RunEvent, TaskView};
 pub use journal::{Journal, JournalError, RunRecord};
 pub use planner::{Planned, PlannerError, Task};

@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use agora_engine::{Journal, Outcome, Remote, RunConfig, run};
+use agora_engine::{Journal, Outcome, RunConfig, run};
 use agora_muse::MuseClient;
 
 /// The variable parsed, or `default` if unset. A value that doesn't parse is an
@@ -34,16 +34,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model: env_or("AGORA_MODEL", "muse-spark-1.3".to_string())?,
         max_parallel: env_or("AGORA_PARALLEL", 4)?,
         cap_usd: env_or("AGORA_CAP_USD", f64::INFINITY)?,
-        reviewer: match env_or("AGORA_REVIEWER", String::new())?.as_str() {
+        reviewer_model: match env_or("AGORA_REVIEWER", String::new())?.as_str() {
             "" | "meta" => None,
-            "baseten" => Some(Remote {
-                client: MuseClient::baseten_from_env()?,
-                model: // Baseten's docs say `meta-models/muse-spark-open`; with a hackathon key that
-                // id answers 403 "check the api-key", and only the dated id works (checked
-                // live 2026-10-30).
-                env_or("AGORA_REVIEWER_MODEL", "meta-models/muse-spark-open-1026".to_string())?,
-            }),
+            // Baseten's docs say `meta-models/muse-spark-open`; with a hackathon key that id
+            // answers 403 "check the api-key", and only the dated id works (checked live
+            // 2026-10-30).
+            "baseten" => Some(env_or("AGORA_REVIEWER_MODEL", "meta-models/muse-spark-open-1026".to_string())?),
             other => return Err(format!("AGORA_REVIEWER={other:?}: use \"baseten\" or leave it unset").into()),
+        },
+        // Baseten is required for AGORA_REVIEWER=baseten (so its key error shows), and
+        // otherwise optional.
+        baseten: if std::env::var("AGORA_REVIEWER").is_ok_and(|r| r.trim() == "baseten") {
+            Some(MuseClient::baseten_from_env()?)
+        } else {
+            MuseClient::baseten_from_env().ok()
         },
         events: None,
         team: None,
@@ -55,10 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // whatever the environment says now.
             let (journal, record) = Journal::resume(&path, run_id)?;
             config.model = record.model;
-            config.reviewer = match record.reviewer {
-                Some(model) => Some(Remote { client: MuseClient::baseten_from_env()?, model }),
-                None => None,
-            };
+            config.reviewer_model = record.reviewer;
             if std::env::var_os("AGORA_TEAM").is_some() {
                 eprintln!("note: AGORA_TEAM is ignored on resume; the run keeps its own team");
             }
@@ -74,7 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("AGORA_TEAM={id:?}: use one of {}", ids.join(", "))
                 })?),
             };
-            let reviewer = config.reviewer.as_ref().map(|r| r.model.as_str());
+            config.check_hosts()?; // before a run record is written
+            let reviewer = config.reviewer_model.as_deref();
             (Journal::start(&path, &brief, &config.model, reviewer, config.team.as_ref())?, brief)
         }
         _ => return Err("usage: agora-run \"<brief>\" | agora-run --resume <run-id>".into()),
@@ -82,8 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("run {} (journal {})", journal.run_id(), path.display());
     let report = run(muse, &config, &brief, Some(journal)).await?;
 
-    if let Some(r) = &config.reviewer {
-        eprintln!("reviewer: {} (open weights, Baseten)", r.model);
+    if let Some(m) = &config.reviewer_model {
+        eprintln!("reviewer: {m}");
     }
     eprintln!("plan: {} tasks (planner attempts: {})", report.planned.tasks.len(), report.planned.attempts);
     for (task, outcome) in report.planned.tasks.iter().zip(&report.outcomes) {

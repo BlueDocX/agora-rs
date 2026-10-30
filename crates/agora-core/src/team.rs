@@ -19,6 +19,13 @@ pub struct Agent {
     /// How it works: added to its instructions on every task.
     #[serde(default)]
     pub skills: String,
+    /// The model it works on; `None` = the run's model. (Checked against the hosts
+    /// the office has when a run starts.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Which character plays it in the 3D office; `None` = picked by seat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +79,11 @@ impl Team {
             }
             text_ok("an agent role", &a.role, 1, 80)?;
             text_ok("an agent's skills", &a.skills, 0, 600)?;
+            for (what, value) in [("model", &a.model), ("character", &a.character)] {
+                if value.as_ref().is_some_and(|v| v.is_empty() || v.len() > 64 || v.chars().any(char::is_control)) {
+                    return Err(format!("agent \"{}\" has an unusable {what} name", a.name));
+                }
+            }
             let hex = a.color.strip_prefix('#').unwrap_or("");
             if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(format!("agent \"{}\" needs a color like #4285f4", a.name));
@@ -112,6 +124,8 @@ fn team(id: &str, name: &str, kind: &str, description: &str, agents: &[(&str, &s
                 role: role.into(),
                 color: color.into(),
                 skills: skills.into(),
+                model: None,
+                character: None,
             })
             .collect(),
     }

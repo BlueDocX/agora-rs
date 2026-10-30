@@ -61,7 +61,8 @@ async fn hub(token: Option<&str>) -> String {
         model: "muse-spark-1.3".into(),
         cap_usd: 1.0,
         max_parallel: 2,
-        reviewer: None,
+        reviewer_model: None,
+        baseten: None,
         journal: None,
         token: token.map(str::to_string),
         max_active: 2,
@@ -163,7 +164,8 @@ async fn simultaneous_starts_cannot_both_take_the_last_slot() {
         model: "muse-spark-1.3".into(),
         cap_usd: 1.0,
         max_parallel: 2,
-        reviewer: None,
+        reviewer_model: None,
+        baseten: None,
         journal: None,
         token: None,
         max_active: 1,
@@ -267,4 +269,26 @@ async fn chat_needs_the_token_when_one_is_set() {
     assert_eq!(http.get(format!("{base}/api/chat/events")).send().await.unwrap().status(), 401);
     let ok = http.get(format!("{base}/api/chat/events?token=s3cret")).send().await.unwrap();
     assert_eq!(ok.status(), 200);
+}
+
+#[tokio::test]
+async fn the_office_lists_its_models_and_refuses_ones_it_cannot_run() {
+    let base = hub(None).await;
+    let http = reqwest::Client::new();
+    let models: Value = http.get(format!("{base}/api/models")).send().await.unwrap().json().await.unwrap();
+    let find = |id: &str| models.as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    assert_eq!(find("muse-wonder-1.0")["available"], true);
+    // No Baseten key in this hub: the open weights are listed but unavailable.
+    assert_eq!(find("meta-models/muse-spark-open-1026")["available"], false);
+
+    let start = |body: Value| http.post(format!("{base}/api/runs")).json(&body).send();
+    let refused = start(json!({"brief": "a note", "model": "meta-models/muse-spark-open-1026"})).await.unwrap();
+    assert_eq!(refused.status(), 400);
+    assert!(refused.json::<Value>().await.unwrap()["error"].as_str().unwrap().contains("API key"));
+    assert_eq!(start(json!({"brief": "a note", "model": "gpt-5"})).await.unwrap().status(), 400);
+    let mut team = agora_core::preset("agora").unwrap();
+    team.agents[0].model = Some("meta-models/muse-spark-open-1026".into());
+    assert_eq!(start(json!({"brief": "a note", "team": team})).await.unwrap().status(), 400);
+    team.agents[0].model = Some("muse-wonder-1.0".into());
+    assert_eq!(start(json!({"brief": "a note", "team": team, "reviewer_model": "muse-spark-1.3-contributor"})).await.unwrap().status(), 201);
 }

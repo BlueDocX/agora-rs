@@ -10,12 +10,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agora_core::Team;
-use agora_muse::{Effort, Message, MuseClient, MuseError, Request, Role};
+use agora_muse::{Effort, Host, Message, MuseClient, MuseError, Request, Role, host_of};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::budget::{Budget, BudgetError, Spend};
-use crate::call::{CallError, Caller, Remote, Route};
+use crate::call::{CallError, Caller};
 use crate::events::{EventSender, ReviewedBy, RunEvent, TaskView, emit};
 use crate::journal::Journal;
 use crate::planner::{self, Planned, PlannerError, Task};
@@ -33,14 +33,15 @@ ambiguous or cannot be judged from the text.";
 
 #[derive(Debug, Clone)]
 pub struct RunConfig {
-    /// Planner and workers.
+    /// The planner, and every worker whose agent doesn't name its own model.
     pub model: String,
     pub max_parallel: usize,
     /// Spending cap in USD; `f64::INFINITY` for none.
     pub cap_usd: f64,
-    /// Review on a different model and host (e.g. open weights on Baseten).
-    /// `None` = the reviewer uses `model`.
-    pub reviewer: Option<Remote>,
+    /// The reviewer's model (e.g. the open weights on Baseten). `None` = `model`.
+    pub reviewer_model: Option<String>,
+    /// Baseten, for models it serves. `None` = those models can't be used.
+    pub baseten: Option<MuseClient>,
     /// Live progress for watchers. `None` = nobody is watching.
     pub events: Option<EventSender>,
     /// Who does the work: each task goes to one member, who works in its role.
@@ -69,6 +70,8 @@ impl std::fmt::Display for TaskError {
 #[derive(Debug)]
 pub enum RunError {
     Budget(BudgetError),
+    /// A model the run would use has no host configured (e.g. Baseten without a key).
+    NoHost(String),
     /// `max_parallel` must be at least 1.
     NoWorkers,
     Plan(PlannerError),
@@ -78,6 +81,7 @@ impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Budget(e) => write!(f, "{e}"),
+            Self::NoHost(m) => write!(f, "model \"{m}\" needs a host this office doesn't have (is its API key set?)"),
             Self::NoWorkers => write!(f, "max_parallel must be at least 1"),
             Self::Plan(e) => write!(f, "{e}"),
         }
@@ -215,8 +219,14 @@ struct Ctx {
 }
 
 impl Ctx {
-    async fn call(&self, route: Route, request: Request) -> Result<agora_muse::Response, TaskError> {
-        self.caller.call(route, &request).await.map_err(TaskError::Call)
+    async fn call(&self, request: Request) -> Result<agora_muse::Response, TaskError> {
+        self.caller.call(&request).await.map_err(TaskError::Call)
+    }
+
+    /// The model task `i` runs on: its agent's own, or the run's.
+    fn worker_model(&self, i: usize) -> &str {
+        let agent = self.team.as_ref().zip(self.tasks[i].agent.as_deref()).and_then(|(t, a)| t.agent(a));
+        agent.and_then(|a| a.model.as_deref()).unwrap_or(&self.model)
     }
 
     fn task_prompt(&self, i: usize) -> String {
@@ -263,7 +273,7 @@ impl Ctx {
         // whitespace runs inside the JSON (seen live on Baseten); cap the damage.
         .max_output_tokens(8_000)
         .cache_key("agora-verifier");
-        let response = self.call(Route::Reviewer, request).await?;
+        let response = self.call(request).await?;
         // Decoding is constrained to the schema, so a parse failure is an API fault.
         serde_json::from_str(&response.text).map_err(|e| TaskError::Call(CallError::Model(MuseError::Decode(e.to_string()))))
     }
@@ -364,8 +374,8 @@ impl Ctx {
         let (mut drafts, mut reviews, mut model_rejections) = (0, 0, 0);
         loop {
             drafts += 1;
-            let request = Request::new(&self.model, input.clone()).effort(Effort::Low).cache_key("agora-worker");
-            let draft = self.call(Route::Main, request).await?.text;
+            let request = Request::new(self.worker_model(i), input.clone()).effort(Effort::Low).cache_key("agora-worker");
+            let draft = self.call(request).await?.text;
             let words = agora_core::checks::word_count(&draft);
             self.emit(RunEvent::Drafted { task: task.clone(), draft: drafts, words, spent_usd: self.spent() });
             let (failed, used) = self.check(i, &draft).await?;
@@ -401,6 +411,30 @@ impl Ctx {
     }
 }
 
+impl RunConfig {
+    /// Every model the run may call (planner, reviewer, each agent's own), each
+    /// checked to have a host this config can reach. Call it before journaling a run.
+    ///
+    /// # Errors
+    /// [`RunError::NoHost`] for the first model without a reachable host.
+    pub fn check_hosts(&self) -> Result<Vec<&str>, RunError> {
+        let mut models: Vec<&str> = vec![&self.model];
+        models.extend(self.reviewer_model.as_deref());
+        models.extend(self.team.iter().flat_map(|t| &t.agents).filter_map(|a| a.model.as_deref()));
+        models.sort_unstable();
+        models.dedup();
+        let reachable = |m: &str| match host_of(m) {
+            Some(Host::Meta) => true,
+            Some(Host::Baseten) => self.baseten.is_some(),
+            None => false,
+        };
+        match models.iter().find(|m| !reachable(m)) {
+            Some(m) => Err(RunError::NoHost((*m).to_string())),
+            None => Ok(models),
+        }
+    }
+}
+
 /// Plan the brief, run every task, and return what happened.
 ///
 /// With a `journal`, every completed reply is stored as it arrives, and a run
@@ -414,9 +448,10 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     if config.max_parallel == 0 {
         return Err(RunError::NoWorkers);
     }
-    let reviewer_model = config.reviewer.as_ref().map_or(config.model.clone(), |r| r.model.clone());
-    let budget = Budget::new(&[&config.model, &reviewer_model], config.cap_usd).map_err(RunError::Budget)?;
-    let caller = Caller { muse, reviewer: config.reviewer.as_ref().map(|r| r.client.clone()), budget, journal };
+    let reviewer_model = config.reviewer_model.clone().unwrap_or_else(|| config.model.clone());
+    let models = config.check_hosts()?;
+    let budget = Budget::new(&models, config.cap_usd).map_err(RunError::Budget)?;
+    let caller = Caller { muse, baseten: config.baseten.clone(), budget, journal };
     if let Some(team) = &config.team {
         emit(config.events.as_ref(), RunEvent::Staffed { team: team.clone() });
     }

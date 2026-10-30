@@ -5,9 +5,11 @@
 //!   are kept in memory; every run is also in the journal).
 //! - `GET /api/runs/{id}/events` streams the run as Server-Sent Events: everything
 //!   that already happened, then each new event live, ending when the run does.
-//! - `GET /api/info` names the models and the per-run cap, and `GET /api/teams` lists
-//!   the preset teams (no token needed: nothing secret, and the page shows them
-//!   before anyone types a token).
+//! - `GET /api/info` names the default models and the per-run cap, `GET /api/models`
+//!   lists the models this office can run on, and `GET /api/teams` the preset teams
+//!   (no token needed: nothing secret, and the page shows them before anyone types
+//!   a token).
+//! - A run can pick its `model` and `reviewer_model`; an agent can name its own `model`.
 //! - A run can name a team: `"team": "<preset id>"`, or a whole team of one's own.
 //! - `GET /` is the office board.
 //!
@@ -27,8 +29,8 @@ mod chat;
 pub use chat::MAX_CHAT_CHARS;
 
 use agora_core::Team;
-use agora_engine::{Budget, Journal, Remote, RunConfig, RunEvent, run};
-use agora_muse::MuseClient;
+use agora_engine::{Budget, Journal, RunConfig, RunEvent, run};
+use agora_muse::{Host, MuseClient, host_of, price_for};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -54,6 +56,34 @@ const PEOPLE: &[u8] = include_bytes!("../static/models/people.glb");
 const PEOPLE_GZ: &[u8] = include_bytes!("../static/models/people.glb.gz");
 const FURNITURE: &[u8] = include_bytes!("../static/models/furniture.glb");
 const FURNITURE_GZ: &[u8] = include_bytes!("../static/models/furniture.glb.gz");
+/// Thumbnails of the eight teammate characters, in office.js's TEAM order, for the
+/// team editor (from the Kenney pack's previews).
+const CAST_PNG: &[u8] = include_bytes!("../static/models/cast.png");
+
+impl HubConfig {
+    /// The client for a model's host (by `agora_muse::host_of`), if this office has it.
+    #[must_use]
+    pub fn client_for(&self, model: &str) -> Option<&MuseClient> {
+        match host_of(model)? {
+            Host::Meta => Some(&self.muse),
+            Host::Baseten => self.baseten.as_ref(),
+        }
+    }
+
+    /// A model a run (or an agent) may use here: priced, with its host set up.
+    ///
+    /// # Errors
+    /// Why not, in words a person can act on.
+    pub fn check_model(&self, model: &str) -> Result<(), String> {
+        if price_for(model).is_none() {
+            return Err(format!("\"{model}\" is not a model this office can price, so it can't run here"));
+        }
+        if self.client_for(model).is_none() {
+            return Err(format!("\"{model}\" needs a host this office doesn't have (its API key isn't set)"));
+        }
+        Ok(())
+    }
+}
 
 /// How the hub runs briefs.
 #[derive(Debug, Clone)]
@@ -62,7 +92,10 @@ pub struct HubConfig {
     pub model: String,
     pub cap_usd: f64,
     pub max_parallel: usize,
-    pub reviewer: Option<Remote>,
+    /// The default reviewer model (`None` = `model`). A run can pick others.
+    pub reviewer_model: Option<String>,
+    /// Baseten, for the open weights. `None` = models it serves are unavailable.
+    pub baseten: Option<MuseClient>,
     /// Journal every run here (so it can be resumed from the CLI). `None` = don't.
     pub journal: Option<PathBuf>,
     /// Required as `Authorization: Bearer <token>` to start a run. `None` = open
@@ -148,7 +181,9 @@ impl Hub {
 }
 
 pub fn app(config: HubConfig) -> Router {
-    let chat_budget = match Budget::new(&[&config.model], config.chat_cap_usd) {
+    // Agents may chat on any model in the catalog, so the chat budget prices them all.
+    let priced: Vec<&str> = agora_muse::MODELS.iter().map(|m| m.id).chain([config.model.as_str()]).collect();
+    let chat_budget = match Budget::new(&priced, config.chat_cap_usd) {
         Ok(budget) => Some(Arc::new(budget)),
         Err(e) => {
             eprintln!("chat is off: {e}");
@@ -158,11 +193,13 @@ pub fn app(config: HubConfig) -> Router {
     let hub = Arc::new(Hub { config, state: Mutex::new(HubState::default()), chat: Mutex::default(), chat_budget });
     Router::new()
         .route("/", get(index))
-        .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), OFFICE_JS_GZ) }))
-        .route("/models/people.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", PEOPLE, PEOPLE_GZ) }))
-        .route("/models/furniture.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", FURNITURE, FURNITURE_GZ) }))
+        .route("/office.js", get(|h: HeaderMap| async move { asset(&h, "text/javascript; charset=utf-8", OFFICE_JS.as_bytes(), Some(OFFICE_JS_GZ)) }))
+        .route("/models/people.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", PEOPLE, Some(PEOPLE_GZ)) }))
+        .route("/models/cast.png", get(|h: HeaderMap| async move { asset(&h, "image/png", CAST_PNG, None) }))
+        .route("/models/furniture.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", FURNITURE, Some(FURNITURE_GZ)) }))
         .route("/api/info", get(info))
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
+        .route("/api/models", get(models))
         .route("/api/runs", post(start).get(list))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/chat", post(chat::post))
@@ -172,7 +209,7 @@ pub fn app(config: HubConfig) -> Router {
 
 /// The gzipped copy (about a quarter of the size) when the browser accepts it.
 /// Cached briefly: the file only changes with a new server build.
-fn asset(headers: &HeaderMap, content_type: &'static str, plain: &'static [u8], gzipped: &'static [u8]) -> Response {
+fn asset(headers: &HeaderMap, content_type: &'static str, plain: &'static [u8], gzipped: Option<&'static [u8]>) -> Response {
     let gzip = headers
         .get(header::ACCEPT_ENCODING)
         .and_then(|v| v.to_str().ok())
@@ -186,10 +223,9 @@ fn asset(headers: &HeaderMap, content_type: &'static str, plain: &'static [u8], 
         (header::CACHE_CONTROL, "public, max-age=300"),
         (header::VARY, "Accept-Encoding"),
     ];
-    if gzip {
-        (common, [(header::CONTENT_ENCODING, "gzip")], gzipped).into_response()
-    } else {
-        (common, plain).into_response()
+    match gzipped {
+        Some(gz) if gzip => (common, [(header::CONTENT_ENCODING, "gzip")], gz).into_response(),
+        _ => (common, plain).into_response()
     }
 }
 
@@ -228,6 +264,22 @@ struct StartRun {
     brief: String,
     #[serde(default)]
     team: Option<TeamChoice>,
+    /// The planner's (and default workers') model; `None` = the office default.
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    reviewer_model: Option<String>,
+}
+
+impl Hub {
+    /// The client for a model's host, if the office has that host.
+    fn client_for(&self, model: &str) -> Option<&MuseClient> {
+        self.config.client_for(model)
+    }
+
+    fn check_model(&self, model: &str) -> Result<(), String> {
+        self.config.check_model(model)
+    }
 }
 
 /// A preset by id, or a team someone made (checked before it runs).
@@ -275,6 +327,13 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
         Ok(team) => team,
         Err(why) => return error(StatusCode::BAD_REQUEST, &why),
     };
+    let model = body.model.unwrap_or_else(|| hub.config.model.clone());
+    let reviewer_model = body.reviewer_model.or_else(|| hub.config.reviewer_model.clone());
+    let chosen = [Some(&model), reviewer_model.as_ref()].into_iter().flatten();
+    let agents = team.iter().flat_map(|t| &t.agents).filter_map(|a| a.model.as_ref());
+    if let Some(why) = chosen.chain(agents).find_map(|m| hub.check_model(m).err()) {
+        return error(StatusCode::BAD_REQUEST, &why);
+    }
     let config = &hub.config;
     {
         let mut state = hub.state();
@@ -286,8 +345,8 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
     let release = || hub.state().starting -= 1;
     let journal = match &config.journal {
         Some(path) => {
-            let (path, b, model, t) = (path.clone(), brief.clone(), config.model.clone(), team.clone());
-            let reviewer = config.reviewer.as_ref().map(|r| r.model.clone());
+            let (path, b, model, t) = (path.clone(), brief.clone(), model.clone(), team.clone());
+            let reviewer = reviewer_model.clone();
             // SQLite is blocking I/O: keep it off the async workers.
             match tokio::task::spawn_blocking(move || Journal::start(&path, &b, &model, reviewer.as_deref(), t.as_ref())).await {
                 Ok(Ok(j)) => Some(j),
@@ -334,10 +393,11 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
         forward.close(); // every sender is gone: the run is over
     });
     let run_config = RunConfig {
-        model: config.model.clone(),
+        model,
         max_parallel: config.max_parallel,
         cap_usd: config.cap_usd,
-        reviewer: config.reviewer.clone(),
+        reviewer_model,
+        baseten: config.baseten.clone(),
         events: Some(tx.clone()),
         team,
     };
@@ -358,6 +418,7 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
 #[derive(Serialize)]
 struct Info<'a> {
     model: &'a str,
+    /// The default reviewer model; `None` = the same as the writer's.
     reviewer: Option<&'a str>,
     /// `None` when runs have no spending cap.
     cap_usd: Option<f64>,
@@ -365,8 +426,22 @@ struct Info<'a> {
 
 async fn info(State(hub): State<Arc<Hub>>) -> Response {
     let c = &hub.config;
-    Json(Info { model: &c.model, reviewer: c.reviewer.as_ref().map(|r| r.model.as_str()), cap_usd: c.cap_usd.is_finite().then_some(c.cap_usd) })
+    Json(Info { model: &c.model, reviewer: c.reviewer_model.as_deref(), cap_usd: c.cap_usd.is_finite().then_some(c.cap_usd) })
         .into_response()
+}
+
+#[derive(Serialize)]
+struct ModelChoice {
+    #[serde(flatten)]
+    info: agora_muse::ModelInfo,
+    /// Whether this office has the model's host set up.
+    available: bool,
+}
+
+async fn models(State(hub): State<Arc<Hub>>) -> Response {
+    let list: Vec<ModelChoice> =
+        agora_muse::MODELS.iter().map(|m| ModelChoice { info: *m, available: hub.client_for(m.id).is_some() }).collect();
+    Json(list).into_response()
 }
 
 #[derive(Serialize)]

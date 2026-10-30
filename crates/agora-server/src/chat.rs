@@ -198,8 +198,11 @@ async fn converse(hub: Arc<Hub>, team: Team, addressed: Addressed, budget: Arc<a
         Addressed::Agents(ids) => ids.iter().map(|&i| Voice::Agent(&team.agents[i])).collect(),
         Addressed::Lead => vec![Voice::Lead { summing_up: false }],
     };
-    let model = hub.config.model.clone();
     for voice in voices {
+        let model = match voice {
+            Voice::Agent(a) => a.model.clone().unwrap_or_else(|| hub.config.model.clone()),
+            Voice::Lead { .. } => hub.config.model.clone(),
+        };
         let (kind, agent, color) = match voice {
             Voice::Agent(a) => (Kind::Agent, Some(a.id.clone()), a.color.clone()),
             Voice::Lead { .. } => (Kind::Lead, None, LEAD_COLOR.to_string()),
@@ -207,7 +210,11 @@ async fn converse(hub: Arc<Hub>, team: Team, addressed: Addressed, budget: Arc<a
         hub.announce(ChatEvent::Typing { from: voice.name().to_string(), agent: agent.clone(), color: color.clone() });
         let history = hub.chat().messages.clone();
         let request = chat::request(&model, &team, voice, &history, &context);
-        match chat::reply(&hub.config.muse, &budget, &request).await {
+        let Some(client) = hub.client_for(&model) else {
+            hub.post(Kind::Notice, "Office", None, PERSON_COLOR, format!("{} couldn't answer: no host for model \"{model}\"", voice.name()));
+            continue;
+        };
+        match chat::reply(client, &budget, &request).await {
             Ok(text) if !text.is_empty() => hub.post(kind, voice.name(), agent, &color, text),
             Ok(_) => {}
             Err(e) => {

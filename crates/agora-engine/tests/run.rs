@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agora_engine::{CallError, Journal, Outcome, Remote, ReviewedBy, RunConfig, RunEvent, TaskError, run};
+use agora_engine::{CallError, Journal, Outcome, ReviewedBy, RunConfig, RunError, RunEvent, TaskError, run};
 use agora_muse::MuseClient;
 use axum::Json;
 use axum::routing::post;
@@ -115,7 +115,15 @@ fn fail(criterion: &str) -> Value {
 }
 
 fn config(cap_usd: f64) -> RunConfig {
-    RunConfig { model: "muse-spark-1.3".into(), max_parallel: 4, cap_usd, reviewer: None, events: None, team: None }
+    RunConfig {
+        model: "muse-spark-1.3".into(),
+        max_parallel: 4,
+        cap_usd,
+        reviewer_model: None,
+        baseten: None,
+        events: None,
+        team: None,
+    }
 }
 
 fn client(base: String) -> MuseClient {
@@ -375,7 +383,7 @@ async fn resuming_does_not_reset_the_budget() {
 }
 
 #[tokio::test]
-async fn reviews_go_to_the_reviewer_host_and_everything_else_to_meta() {
+async fn each_call_goes_to_the_host_that_serves_its_model() {
     // The "Meta" mock refuses reviews; the "open weights" mock only accepts them.
     let (meta, meta_seen) = mock(Script {
         plan: Arc::new(|_| plan_of(&[task("a", &[])])),
@@ -389,9 +397,12 @@ async fn reviews_go_to_the_reviewer_host_and_everything_else_to_meta() {
         worker_status: "completed",
     })
     .await;
-    // The same model name on both hosts: routing is by role, so nothing gets mixed up.
-    let reviewer = Remote { client: client(open), model: "muse-spark-1.3".into() };
-    let config = RunConfig { reviewer: Some(reviewer), ..config(1.0) };
+    // The reviewer's model is Baseten's (by the catalog); everything else is Meta's.
+    let config = RunConfig {
+        reviewer_model: Some("meta-models/muse-spark-open-1026".into()),
+        baseten: Some(client(open)),
+        ..config(1.0)
+    };
     let report = run(client(meta), &config, "brief", None).await.unwrap();
 
     assert!(report.outcomes[0].is_done());
@@ -503,4 +514,36 @@ async fn a_team_run_gives_each_task_to_a_member_who_works_in_its_role() {
     for m in plan["input"].as_array().unwrap() {
         assert!(m["role"] != "system" || !m["content"].as_str().unwrap().contains("copywriter"), "{m}");
     }
+}
+
+#[tokio::test]
+async fn an_agent_works_on_its_own_model_and_a_missing_host_stops_the_run_first() {
+    let mut team = agora_core::preset("creative-studio").unwrap();
+    team.agents[1].model = Some("meta-models/muse-spark-open-1026".into()); // the copywriter, on Baseten
+    let script = Script {
+        plan: Arc::new(|_| {
+            let mut tagline = task("tagline", &[]);
+            tagline["agent"] = json!("copywriter");
+            let mut look = task("look", &[]);
+            look["agent"] = json!("art-director");
+            plan_of(&[tagline, look])
+        }),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "completed",
+    };
+    let (meta, meta_seen) = mock(script.clone()).await;
+    let (open, open_seen) = mock(script).await;
+
+    // Without a Baseten client the run refuses up front, before any call.
+    let no_host = RunConfig { team: Some(team.clone()), ..config(1.0) };
+    let err = run(client(meta.clone()), &no_host, "brief", None).await.unwrap_err();
+    assert!(matches!(err, RunError::NoHost(ref m) if m == "meta-models/muse-spark-open-1026"), "{err}");
+    assert_eq!(meta_seen.lock().unwrap().plan_requests.len(), 0, "nothing was called");
+
+    let config = RunConfig { team: Some(team), baseten: Some(client(open)), ..config(1.0) };
+    let report = run(client(meta), &config, "brief", None).await.unwrap();
+    assert!(report.outcomes.iter().all(Outcome::is_done));
+    // The copywriter's task went to Baseten; the art director's stayed on Meta.
+    assert_eq!(open_seen.lock().unwrap().worker_prompts.keys().collect::<Vec<_>>(), ["tagline"]);
+    assert_eq!(meta_seen.lock().unwrap().worker_prompts.keys().collect::<Vec<_>>(), ["look"]);
 }

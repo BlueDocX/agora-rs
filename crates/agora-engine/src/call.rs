@@ -2,7 +2,7 @@
 //! already completed, otherwise check the budget, call, charge, refuse a reply that
 //! did not finish, and journal it before anything acts on it.
 
-use agora_muse::{MuseClient, MuseError, Request, Response};
+use agora_muse::{Host, MuseClient, MuseError, Request, Response, host_of};
 
 use crate::budget::{Budget, OverBudget};
 use crate::journal::{Journal, JournalError};
@@ -15,6 +15,8 @@ pub enum CallError {
     /// It is still charged.
     Unfinished { status: String },
     Journal(JournalError),
+    /// The model is served by a host this run has no client for.
+    NoHost(String),
 }
 
 impl std::fmt::Display for CallError {
@@ -24,41 +26,29 @@ impl std::fmt::Display for CallError {
             Self::OverBudget(o) => write!(f, "budget spent (${:.4} of ${:.4})", o.spent_usd, o.cap_usd),
             Self::Unfinished { status } => write!(f, "the model's reply did not finish (status \"{status}\")"),
             Self::Journal(e) => write!(f, "{e}"),
+            Self::NoHost(m) => write!(f, "no host is configured for model \"{m}\""),
         }
     }
 }
 
 impl std::error::Error for CallError {}
 
-/// A model served by its own host (e.g. Muse Spark Open on Baseten).
-#[derive(Debug, Clone)]
-pub struct Remote {
-    pub client: MuseClient,
-    pub model: String,
-}
-
-/// Which host a call goes to. The caller says so explicitly: a call is never routed
-/// by comparing model names, so the same model on two hosts can't be mixed up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Route {
-    /// Meta's Model API: planner and workers.
-    Main,
-    /// The reviewer's host, if one is configured; otherwise Meta's Model API.
-    Reviewer,
-}
-
 #[derive(Debug)]
 pub(crate) struct Caller {
+    /// Meta's Model API.
     pub muse: MuseClient,
-    pub reviewer: Option<MuseClient>,
+    /// Baseten, for the open weights, if configured.
+    pub baseten: Option<MuseClient>,
     pub budget: Budget,
     pub journal: Option<Journal>,
 }
 
+
+
 impl Caller {
     /// Replayed replies cost nothing now but count against the cap: the run already
     /// paid for them.
-    pub async fn call(&self, route: Route, request: &Request) -> Result<Response, CallError> {
+    pub async fn call(&self, request: &Request) -> Result<Response, CallError> {
         let claim = self.journal.as_ref().map(|j| (j, j.claim(request)));
         if let Some((journal, (key, n))) = &claim
             && let Some(response) = journal.replay(key, *n).map_err(CallError::Journal)?
@@ -67,9 +57,10 @@ impl Caller {
             return Ok(response);
         }
         self.budget.check().map_err(CallError::OverBudget)?;
-        let client = match (route, &self.reviewer) {
-            (Route::Reviewer, Some(reviewer)) => reviewer,
-            _ => &self.muse,
+        let client = match host_of(&request.model) {
+            Some(Host::Meta) => &self.muse,
+            Some(Host::Baseten) => self.baseten.as_ref().ok_or_else(|| CallError::NoHost(request.model.clone()))?,
+            None => return Err(CallError::NoHost(request.model.clone())),
         };
         let response = client.respond(request).await.map_err(CallError::Model)?;
         self.budget.charge(&request.model, &response);

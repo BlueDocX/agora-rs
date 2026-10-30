@@ -338,7 +338,8 @@ async function start(host) {
       const cushion = own(chair, "carpet", entry.color);
       deskLayer.add(group);
 
-      const person = actor(TEAM[i % TEAM.length]);
+      // The character picked for the agent in the team editor, or one by seat.
+      const person = actor(TEAM.includes(entry.character) ? entry.character : TEAM[i % TEAM.length]);
       const seat = new Vector3(x, FLOOR + SEAT_Y, out * (ROW_Z + 0.36));
       const stand = new Vector3(x, FLOOR, out * AISLE);
       person.root.position.copy(stand);
@@ -426,7 +427,7 @@ async function start(host) {
     switch (e.type) {
       case "staffed":
         staffed = true;
-        build(e.team.agents.map((a) => ({ key: a.id, title: a.name, color: a.color })));
+        build(e.team.agents.map((a) => ({ key: a.id, title: a.name, color: a.color, character: a.character })));
         break;
       case "planned":
         if (!staffed) build(e.tasks.map((t, i) => ({ key: t.id, title: t.title, color: PALETTE[i % PALETTE.length] })));

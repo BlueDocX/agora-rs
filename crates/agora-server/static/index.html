@@ -149,37 +149,87 @@
   .team-pick { display: flex; gap: 8px; align-items: center; }
   select { flex: 1; min-width: 0; font: 600 13px var(--sans); color: var(--ink); background: var(--stone); border: 1px solid var(--line); border-radius: 999px; padding: 10px 14px; }
   .card .owner { font: 600 11px var(--mono); color: var(--muted); margin-top: 3px; }
-  dialog#teams { width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 48px); border: 0; border-radius: 28px; padding: 0;
-                 background: var(--paper); color: var(--ink); box-shadow: 0 32px 64px -12px rgba(23,21,15,.25); }
-  dialog::backdrop { background: rgba(23,21,15,.35); backdrop-filter: blur(4px); }
-  .tm { display: grid; grid-template-columns: 250px minmax(0, 1fr); height: min(640px, calc(100vh - 48px)); }
-  .tm-list { background: var(--stone); padding: 20px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .tm-list .label { padding: 12px 12px 6px; }
-  .tm-list .item { display: block; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 14px; padding: 9px 12px; color: var(--ink); }
-  .tm-list .item.on, .tm-list .item:hover { background: var(--paper); }
-  .tm-list .item b { display: block; font-size: 14px; } .tm-list .item span { font-size: 11.5px; color: var(--muted); }
-  .tm-list .new { margin: 10px 12px 0; justify-content: center; }
-  .tm-edit { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-  .tm-edit .head { display: flex; align-items: center; gap: 12px; }
-  .tm-edit h3 { margin: 0; font-size: 22px; font-weight: 800; }
-  .tm-edit .close { margin-left: auto; border: 0; background: var(--stone); border-radius: 50%; width: 34px; height: 34px; font-size: 18px; color: var(--muted); }
-  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .field { display: flex; flex-direction: column; gap: 6px; } .field.wide { grid-column: 1 / -1; }
-  .tm-edit input:not([type=color]), .tm-edit textarea { font: 14px/1.4 var(--sans); font-style: normal; color: var(--ink); background: var(--stone);
-                 border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; min-height: 0; width: 100%; }
-  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-  .agent { border: 1px solid var(--line); border-radius: 18px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: #fff; }
-  .agent .top { display: flex; gap: 8px; align-items: center; }
-  .agent .top b { font-size: 15px; }
-  .agent input[type=color] { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: none; flex: none; }
-  .agent textarea { min-height: 64px; resize: vertical; }
-  .agent .x { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 18px; }
-  .agent .face { width: 26px; height: 26px; border-radius: 50%; flex: none; }
-  .agent p { margin: 0; font-size: 13px; color: #55503f; }
-  .tm-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-top: 6px; }
-  .tm-actions .err { color: var(--bad); font-size: 13px; }
-
-  @media (max-width: 720px) { .tm { grid-template-columns: 1fr; height: calc(100vh - 48px); } .tm-list { max-height: 170px; } .fields { grid-template-columns: 1fr; } }
+  dialog#teams { width: min(1080px, calc(100vw - 24px)); height: min(740px, calc(100vh - 32px)); max-height: none; border: 0; border-radius: 28px;
+                 padding: 0; background: var(--paper); color: var(--ink); box-shadow: 0 40px 80px -24px rgba(23,21,15,.4); overflow: hidden; }
+  dialog::backdrop { background: rgba(23,21,15,.42); backdrop-filter: blur(6px); }
+  .tm { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; }
+  .tm-list { background: var(--stone); border-right: 1px solid var(--line); padding: 22px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+  .tm-list h4 { margin: 0 8px 6px; font-size: 19px; font-weight: 800; }
+  .tm-list .label { padding: 14px 10px 6px; }
+  .tm-list .item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid transparent; background: transparent;
+                   border-radius: 16px; padding: 9px 10px; color: var(--ink); }
+  .tm-list .item:hover { background: rgba(252,250,244,.7); }
+  .tm-list .item.on { background: var(--paper); border-color: var(--line); box-shadow: 0 2px 8px -4px rgba(23,21,15,.12); }
+  .tm-list .item .t { flex: 1; min-width: 0; }
+  .tm-list .item b { display: block; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tm-list .item small { display: block; font-size: 11.5px; color: var(--muted); }
+  .dots { display: flex; padding-left: 4px; flex: none; }
+  .dots i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--stone); margin-left: -5px; }
+  .tm-list .item.on .dots i { border-color: var(--paper); }
+  .tm-list .new { margin-top: 14px; justify-content: center; }
+  .tm-main { display: flex; flex-direction: column; min-height: 0; }
+  .tm-head { display: flex; align-items: flex-start; gap: 14px; padding: 24px 28px 18px; border-bottom: 1px solid var(--line); }
+  .tm-head .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .tm-head .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .tm-head .tag2 { font: 800 9.5px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--stone);
+                   border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; }
+  .tm-head .tag2.mine { color: #8a6d0b; background: #fbf4d5; border-color: #f2e09b; }
+  input.inline, textarea.inline { border: 0; background: transparent; outline: none; color: var(--ink); padding: 2px 0; width: 100%; font-family: var(--sans);
+                   border-bottom: 2px solid transparent; border-radius: 0; min-height: 0; font-style: normal; resize: none; }
+  input.inline:hover, textarea.inline:hover { border-bottom-color: var(--line); }
+  input.inline:focus, textarea.inline:focus { border-bottom-color: var(--butter); }
+  .tm-head h3, .tm-head input.title { margin: 0; font: 800 26px/1.2 var(--sans); }
+  .tm-head input.kind { font: 800 10px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); width: 200px; }
+  .tm-head .desc, .tm-head textarea.desc { font: 14px/1.45 var(--sans); color: #55503f; margin: 0; }
+  .close { border: 0; background: var(--stone); border-radius: 50%; width: 38px; height: 38px; font-size: 20px; color: var(--muted); flex: none; }
+  .close:hover { background: var(--line); color: var(--ink); }
+  .tm-body { flex: 1; overflow-y: auto; padding: 22px 28px 26px; }
+  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 14px; }
+  .agent { position: relative; background: #fff; border: 1px solid var(--line); border-radius: 22px; padding: 16px 16px 16px 20px;
+           display: flex; flex-direction: column; gap: 12px; box-shadow: 0 2px 10px -6px rgba(23,21,15,.12); }
+  .agent::before { content: ""; position: absolute; left: 0; top: 20px; bottom: 20px; width: 4px; border-radius: 0 4px 4px 0; background: var(--c); }
+  .agent .who { display: flex; gap: 12px; align-items: center; }
+  .avatar { width: 58px; height: 58px; border-radius: 18px; flex: none; background-color: color-mix(in srgb, var(--c) 16%, #fff);
+            background-image: url(/models/cast.png); background-size: 800% 100%; border: 2px solid color-mix(in srgb, var(--c) 40%, #fff); }
+  .agent .who .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .agent .nm { font: 700 16px var(--sans); }
+  .agent .rl { font: 13px var(--sans); color: #55503f; }
+  .agent input.nm:focus { border-bottom-color: var(--c); }
+  .agent .x { border: 0; background: var(--stone); width: 30px; height: 30px; border-radius: 50%; color: var(--muted); font-size: 16px; flex: none; align-self: flex-start; }
+  .agent .x:hover { background: #fde2df; color: var(--bad); }
+  .opt { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+  .opt > .label { width: 70px; flex: none; }
+  .swatches { display: flex; gap: 7px; flex-wrap: wrap; }
+  .swatches button { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); padding: 0; }
+  .swatches button.on { box-shadow: 0 0 0 2px var(--ink); }
+  .people { display: flex; gap: 3px; flex-wrap: wrap; }
+  .people button { width: 27px; height: 27px; border-radius: 8px; border: 1px solid var(--line); background-color: var(--stone); padding: 0;
+                   background-image: url(/models/cast.png); background-size: 800% 100%; }
+  .people button:hover { background-color: #fff; }
+  .people button.on { border: 2px solid var(--ink); background-color: #fff; }
+  .agent select { font: 600 12.5px var(--sans); border-radius: 12px; padding: 8px 10px; flex: 1; }
+  .agent textarea.how { font: 13px/1.45 var(--sans); font-style: normal; background: var(--stone); border: 1px solid var(--line); border-radius: 14px;
+                        padding: 9px 12px; min-height: 58px; resize: vertical; width: 100%; }
+  .agent textarea.how:focus { border-color: var(--butter-deep); }
+  .agent .skill { font-size: 13px; color: #55503f; margin: 0; line-height: 1.45; }
+  .chip2 { font: 600 11px var(--mono); background: var(--stone); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+  .add-agent { border: 2px dashed var(--line); border-radius: 22px; background: transparent; color: var(--muted); font: 800 11px var(--sans);
+               letter-spacing: .1em; text-transform: uppercase; min-height: 140px; }
+  .add-agent:hover { border-color: var(--butter-deep); color: var(--ink); background: #fffdf6; }
+  .tm-foot { display: flex; align-items: center; gap: 10px; padding: 14px 28px; border-top: 1px solid var(--line); background: var(--paper); flex-wrap: wrap; }
+  .tm-foot .grow { flex: 1; }
+  .tm-foot .err { color: var(--bad); font-size: 13px; }
+  .linkbtn { border: 0; background: none; color: var(--bad); font: 700 12.5px var(--sans); padding: 8px 4px; }
+  .linkbtn:hover { text-decoration: underline; }
+  .models { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .models label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .models select { border-radius: 14px; font-size: 12.5px; width: 100%; min-width: 0; text-overflow: ellipsis; }
+  @media (max-width: 760px) {
+    .tm { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    .tm-list { max-height: 168px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .agents { grid-template-columns: 1fr; }
+    .tm-head, .tm-body, .tm-foot { padding-left: 16px; padding-right: 16px; }
+  }
   @media (max-width: 1180px) {
     body { height: auto; }
     main { grid-template-columns: 1fr; }
@@ -258,6 +308,12 @@
       <button class="pill ghost" id="editteam" type="button">Edit</button>
     </div>
     <p class="note" id="teamdesc"></p>
+    <div class="sect"><span class="label">Models</span></div>
+    <div class="models">
+      <label><span class="label">Writer</span><select id="modelsel" aria-label="Writer model"></select></label>
+      <label><span class="label">Reviewer</span><select id="reviewsel" aria-label="Reviewer model"></select></label>
+    </div>
+    <p class="note" id="modelnote"></p>
     <div class="sect"><span class="label">User brief</span></div>
     <form id="form">
       <textarea id="brief" maxlength="4000" placeholder="No active brief. Tell the office what to deliver…" required></textarea>
@@ -277,7 +333,7 @@
     <pre id="deliverable" class="empty">Appears when the run finishes.</pre>
   </section>
 </main>
-<dialog id="teams" aria-label="Manage teams"><div class="tm"><nav class="tm-list" id="tmlist"></nav><div class="tm-edit" id="tmedit"></div></div></dialog>
+<dialog id="teams" aria-label="Manage teams"><div class="tm"><nav class="tm-list" id="tmlist"></nav><div class="tm-main" id="tmedit"></div></div></dialog>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -502,12 +558,40 @@ async function refreshRuns() {
   if (tab === "runs") renderFeed();
 }
 
+// ---- Models: the office's catalog; the writer and reviewer picks are remembered here ----
+let models = [], info = null;
+const modelLabel = (id) => models.find((m) => m.id === id)?.label || id;
+function modelOptions(select, value, { teamDefault = false, sameAsWriter = false } = {}) {
+  select.replaceChildren();
+  if (teamDefault) { const o = el("option", null, "Team default (the writer model)"); o.value = ""; select.append(o); }
+  if (sameAsWriter) { const o = el("option", null, "Same as writer"); o.value = ""; select.append(o); }
+  for (const m of models) {
+    const o = el("option", null, m.label + (m.available ? "" : " (needs its API key)"));
+    o.value = m.id; o.disabled = !m.available; o.title = m.about;
+    select.append(o);
+  }
+  select.value = value ?? "";
+}
+function renderModels() {
+  const usable = (id) => models.some((m) => m.id === id && m.available);
+  const writer = usable(store.get("agora-model")) ? store.get("agora-model") : info?.model;
+  const saved = store.get("agora-reviewer");
+  // "" = same as the writer: the office's default when it doesn't set a reviewer.
+  const reviewer = saved === "same" ? "" : usable(saved) ? saved : info?.reviewer ?? "";
+  modelOptions($("modelsel"), writer);
+  modelOptions($("reviewsel"), reviewer, { sameAsWriter: true });
+  $("model").textContent = modelLabel(writer || "—");
+  $("reviewer").textContent = reviewer ? modelLabel(reviewer) : "same as writer";
+  $("modelnote").textContent = models.find((m) => m.id === $("modelsel").value)?.about || "";
+}
+$("modelsel").onchange = () => { store.set("agora-model", $("modelsel").value); renderModels(); };
+$("reviewsel").onchange = () => { store.set("agora-reviewer", $("reviewsel").value || "same"); renderModels(); };
+
 async function loadInfo() {
   try {
-    const info = await (await fetch("/api/info")).json();
-    $("model").textContent = info.model;
-    $("reviewer").textContent = info.reviewer ? info.reviewer.replace(/^meta-models\//, "") : info.model;
+    [info, models] = await Promise.all([(await fetch("/api/info")).json(), (await fetch("/api/models")).json()]);
     $("captag").textContent = info.cap_usd == null ? "No cap" : `Cap $${info.cap_usd.toFixed(2)} / run`;
+    renderModels();
   } catch { $("model").textContent = "—"; $("reviewer").textContent = "—"; }
 }
 
@@ -530,7 +614,8 @@ $("form").onsubmit = async (ev) => {
     if (selected && !teamForRun()) throw new Error("The teams couldn't be loaded; try again in a moment.");
     const res = await fetch("/api/runs", { method: "POST",
       headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ brief: $("brief").value, team: teamForRun() }) });
+      body: JSON.stringify({ brief: $("brief").value, team: teamForRun(),
+        model: $("modelsel").value || undefined, reviewer_model: $("reviewsel").value || undefined }) });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || res.statusText);
     $("formnote").textContent = ""; await refreshRuns(); watch(body.id);
@@ -599,10 +684,19 @@ function normalized(t) {
     let id = slug(a.name) || `agent-${i + 1}`, n = 2;
     while (used.has(id)) id = `${slug(a.name) || "agent"}-${n++}`;
     used.add(id);
-    return { id, name: a.name.trim(), role: a.role.trim(), color: a.color, skills: (a.skills || "").trim() };
+    const out = { id, name: a.name.trim(), role: a.role.trim(), color: a.color, skills: (a.skills || "").trim() };
+    if (a.model) out.model = a.model;
+    if (a.character) out.character = a.character;
+    return out;
   });
   return { id: t.id, name: t.name.trim(), kind: (t.kind || "").trim(), description: (t.description || "").trim(), agents };
 }
+
+// The characters who can play an agent, in the office's order (and cast.png's).
+const CAST = ["character-female-b", "character-male-a", "character-female-e", "character-male-f",
+  "character-female-c", "character-male-b", "character-female-f", "character-male-e"];
+const castOf = (a, i) => (CAST.includes(a.character) ? a.character : CAST[i % CAST.length]);
+const castAt = (node, who) => { node.style.backgroundPosition = `${(CAST.indexOf(who) * 100) / (CAST.length - 1)}% 0`; };
 
 function openTeams(id) {
   editing = id || selected;
@@ -616,117 +710,155 @@ function useTeam(id) {
   renderTeamPicker(); $("teams").close();
 }
 
+function button(text, cls, fn, parent) {
+  const b = el("button", cls, text);
+  b.type = "button"; b.onclick = fn;
+  parent?.append(b);
+  return b;
+}
+
 function renderTeams() {
+  // The list: presets, then yours; each with its people's colors.
   const list = $("tmlist");
-  list.replaceChildren();
+  list.replaceChildren(el("h4", null, "Teams"));
   const section = (label, teams) => {
     list.append(el("div", "label", label));
     for (const t of teams) {
-      const b = el("button", "item" + (t.id === editing ? " on" : ""));
-      b.type = "button";
-      b.append(el("b", null, t.name), el("span", null, `${t.kind || "Team"} · ${t.agents.length} agents`));
-      b.onclick = () => openTeams(t.id);
-      list.append(b);
+      const b = button("", "item" + (t.id === editing ? " on" : ""), () => openTeams(t.id), list);
+      const dots = el("span", "dots");
+      t.agents.slice(0, 6).forEach((a) => { const i = el("i"); i.style.background = a.color; dots.append(i); });
+      const txt = el("span", "t");
+      txt.append(el("b", null, t.name), el("small", null, `${t.kind || "Team"} · ${t.agents.length} agents`));
+      b.append(dots, txt);
     }
   };
   section("Presets", presets);
   if (custom.length) section("Your teams", custom);
-  const add = el("button", "pill butter new", "+ New team");
-  add.type = "button";
-  add.onclick = () => {
-    const t = { id: randomId(), name: "My team", kind: "Custom", description: "", agents: [{ id: "writer", name: "Writer", role: "Writes the deliverable", color: PALETTE[0], skills: "" }] };
+  button("+ New team", "pill butter new", () => {
+    const t = { id: randomId(), name: "My team", kind: "Custom", description: "",
+      agents: [{ id: "writer", name: "Writer", role: "Writes the deliverable", color: PALETTE[0], skills: "", character: CAST[0] }] };
     custom.push(t); saveCustom(); renderTeamPicker(); openTeams(t.id);
-  };
-  list.append(add);
+  }, list);
 
   const box = $("tmedit");
   box.replaceChildren();
   const team = draft || findTeam(editing);
   if (!team) return;
-  const head = el("div", "head");
-  const close = el("button", "close", "×"); close.type = "button"; close.setAttribute("aria-label", "Close"); close.onclick = () => $("teams").close();
-  head.append(el("h3", null, draft ? "Edit team" : team.name), close);
-  box.append(head);
-  const actions = el("div", "tm-actions");
-  const button = (text, cls, fn) => { const b = el("button", "pill " + cls, text); b.type = "button"; b.onclick = fn; actions.append(b); return b; };
+  const editable = !!draft;
 
-  if (!draft) {
-    // A preset: read-only; duplicate it to change it.
-    if (team.description) box.append(el("p", "note", team.description));
-    const grid = el("div", "agents");
-    for (const a of team.agents) {
-      const card = el("div", "agent"), top = el("div", "top"), face = el("span", "face");
-      face.style.background = a.color;
-      top.append(face, el("b", null, a.name));
-      card.append(top, el("p", null, a.role));
-      if (a.skills) card.append(el("p", "note", a.skills));
-      grid.append(card);
-    }
-    box.append(grid, actions);
-    button("Use this team", "butter", () => useTeam(team.id));
-    button("Duplicate and edit", "ghost", () => {
-      const copy = normalized({ ...structuredClone(team), id: randomId(), name: Array.from(team.name + " (copy)").slice(0, 40).join("") });
-      custom.push(copy); saveCustom(); renderTeamPicker(); openTeams(copy.id);
-    });
-    return;
-  }
-
-  const fields = el("div", "fields");
-  const field = (label, key, wide, max) => {
-    const f = el("label", "field" + (wide ? " wide" : ""));
-    const input = el("input"); input.value = draft[key] || ""; input.maxLength = max;
-    input.oninput = () => { draft[key] = input.value; };
-    f.append(el("span", "label", label), input);
-    fields.append(f);
+  // Header: name, kind, description (edited in place for your own teams).
+  const head = el("div", "tm-head"), titles = el("div", "titles"), meta = el("div", "meta");
+  const inline = (tag, cls, key, max, placeholder) => {
+    const n = el(tag, "inline " + cls);
+    n.value = draft[key] || ""; n.maxLength = max; n.placeholder = placeholder;
+    if (tag === "textarea") n.rows = 1;
+    n.oninput = () => { draft[key] = n.value; };
+    return n;
   };
-  field("Team name", "name", false, 40);
-  field("Kind of work", "kind", false, 40);
-  field("Description", "description", true, 200);
-  box.append(fields);
+  if (editable) {
+    meta.append(el("span", "tag2 mine", "Your team"), inline("input", "kind", "kind", 40, "Kind of work"));
+    titles.append(meta, inline("input", "title", "name", 40, "Team name"), inline("textarea", "desc", "description", 200, "What this team is good at (optional)"));
+  } else {
+    meta.append(el("span", "tag2", "Preset"), el("span", "tag2", team.kind || "Team"));
+    titles.append(meta, el("h3", null, team.name));
+    if (team.description) titles.append(el("p", "desc", team.description));
+  }
+  const close = button("×", "close", () => $("teams").close());
+  close.setAttribute("aria-label", "Close");
+  head.append(titles, close);
 
-  const grid = el("div", "agents");
-  draft.agents.forEach((a, i) => {
-    const card = el("div", "agent"), top = el("div", "top");
-    const color = el("input"); color.type = "color"; color.value = a.color; color.setAttribute("aria-label", "Color");
-    color.oninput = () => { a.color = color.value; };
-    const name = el("input"); name.value = a.name; name.placeholder = "Name"; name.maxLength = 40;
+  // The people.
+  const body = el("div", "tm-body"), grid = el("div", "agents");
+  team.agents.forEach((a, i) => {
+    const card = el("div", "agent");
+    card.style.setProperty("--c", a.color);
+    const who = el("div", "who"), avatar = el("span", "avatar"), txt = el("div", "txt");
+    castAt(avatar, castOf(a, i));
+    who.append(avatar, txt);
+    card.append(who);
+    if (!editable) {
+      txt.append(el("div", "nm", a.name), el("div", "rl", a.role));
+      if (a.skills) card.append(el("p", "skill", a.skills));
+      const opt = el("div", "opt");
+      opt.append(el("span", "label", "Model"), el("span", "chip2", a.model ? modelLabel(a.model) : "Team default"));
+      card.append(opt);
+      grid.append(card);
+      return;
+    }
+    const name = el("input", "inline nm"); name.value = a.name; name.placeholder = "Name"; name.maxLength = 40;
     name.oninput = () => { a.name = name.value; };
-    const x = el("button", "x", "×"); x.type = "button"; x.setAttribute("aria-label", `Remove ${a.name}`);
-    x.onclick = () => { draft.agents.splice(i, 1); renderTeams(); };
-    top.append(color, name, x);
-    const role = el("input"); role.value = a.role; role.placeholder = "Role, e.g. Writes the press release"; role.maxLength = 80;
+    const role = el("input", "inline rl"); role.value = a.role; role.placeholder = "Role, e.g. Writes the press release"; role.maxLength = 80;
     role.oninput = () => { a.role = role.value; };
-    const skills = el("textarea"); skills.value = a.skills || ""; skills.placeholder = "How it works (optional): style, rules, what to avoid"; skills.maxLength = 600;
-    skills.oninput = () => { a.skills = skills.value; };
-    card.append(top, role, skills);
+    txt.append(name, role);
+    const x = button("×", "x", () => { draft.agents.splice(i, 1); renderTeams(); });
+    x.setAttribute("aria-label", `Remove ${a.name || "this agent"}`);
+    who.append(x);
+
+    const row = (label, content) => { const r = el("div", "opt"); r.append(el("span", "label", label), content); card.append(r); };
+    const swatches = el("div", "swatches");
+    for (const c of PALETTE) {
+      const b = button("", c === a.color ? "on" : "", () => { a.color = c; renderTeams(); }, swatches);
+      b.style.background = c; b.setAttribute("aria-label", `Color ${c}`);
+    }
+    row("Color", swatches);
+    const people = el("div", "people");
+    CAST.forEach((c) => {
+      const b = button("", c === castOf(a, i) ? "on" : "", () => { a.character = c; renderTeams(); }, people);
+      castAt(b, c); b.setAttribute("aria-label", `Character ${CAST.indexOf(c) + 1}`);
+    });
+    row("Character", people);
+    const pick = el("select");
+    modelOptions(pick, a.model || "", { teamDefault: true });
+    pick.onchange = () => { a.model = pick.value || undefined; };
+    row("Model", pick);
+    const how = el("textarea", "how"); how.value = a.skills || ""; how.maxLength = 600;
+    how.placeholder = "How they work (optional): style, rules, what to avoid";
+    how.oninput = () => { a.skills = how.value; };
+    card.append(how);
     grid.append(card);
   });
-  box.append(grid, actions);
-  const err = el("span", "err");
-  if (draft.agents.length < 6) button("+ Add agent", "ghost", () => {
-    draft.agents.push({ id: "", name: "", role: "", color: PALETTE[draft.agents.length % PALETTE.length], skills: "" });
-    renderTeams();
-  });
-  const save = () => {
-    const why = problem(draft);
-    err.textContent = why;
-    if (why) return false;
-    const team = normalized(draft);
-    const i = custom.findIndex((t) => t.id === draft.id);
-    if (i < 0) custom.push(team); else custom[i] = team; // gone meanwhile (another tab): keep it
-    draft = structuredClone(team);
-    saveCustom(); renderTeamPicker();
-    return true;
-  };
-  button("Save", "ink", () => { if (save()) renderTeams(); });
-  button("Save and use", "butter", () => { if (save()) useTeam(draft.id); });
-  button("Delete", "ghost", () => {
-    if (!confirm(`Delete ${draft.name || "this team"}?`)) return;
-    custom = custom.filter((t) => t.id !== draft.id); saveCustom();
-    if (selected === draft.id) selected = presets[0]?.id || "";
-    renderTeamPicker(); openTeams(selected);
-  });
-  actions.append(err);
+  if (editable && draft.agents.length < 6) {
+    grid.append(button("+ Add agent", "add-agent", () => {
+      const n = draft.agents.length;
+      draft.agents.push({ id: "", name: "", role: "", color: PALETTE[n % PALETTE.length], skills: "", character: CAST[n % CAST.length] });
+      renderTeams();
+    }));
+  }
+  body.append(grid);
+
+  // Footer: what you can do with it.
+  const foot = el("div", "tm-foot");
+  if (!editable) {
+    foot.append(el("span", "note", "Presets can't be changed; duplicate one to make it yours."), el("span", "grow"));
+    button("Duplicate and edit", "pill ghost", () => {
+      const copy = normalized({ ...structuredClone(team), id: randomId(), name: Array.from(team.name + " (copy)").slice(0, 40).join("") });
+      custom.push(copy); saveCustom(); renderTeamPicker(); openTeams(copy.id);
+    }, foot);
+    button("Use this team", "pill butter", () => useTeam(team.id), foot);
+  } else {
+    const err = el("span", "err");
+    const save = () => {
+      const why = problem(draft);
+      err.textContent = why;
+      if (why) return false;
+      const saved = normalized(draft);
+      const i = custom.findIndex((t) => t.id === draft.id);
+      if (i < 0) custom.push(saved); else custom[i] = saved; // gone meanwhile (another tab): keep it
+      draft = structuredClone(saved);
+      saveCustom(); renderTeamPicker();
+      return true;
+    };
+    button("Delete team", "linkbtn", () => {
+      if (!confirm(`Delete ${draft.name || "this team"}?`)) return;
+      custom = custom.filter((t) => t.id !== draft.id); saveCustom();
+      if (selected === draft.id) selected = presets[0]?.id || "";
+      renderTeamPicker(); openTeams(selected);
+    }, foot);
+    foot.append(err, el("span", "grow"));
+    button("Save", "pill ghost", () => { if (save()) renderTeams(); }, foot);
+    button("Save and use", "pill butter", () => { if (save()) useTeam(draft.id); }, foot);
+  }
+  box.append(head, body, foot);
 }
 
 // ---- Chat: the whole office talks here; the team answers in character ----
