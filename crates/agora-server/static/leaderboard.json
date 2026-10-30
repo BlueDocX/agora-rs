@@ -251,6 +251,7 @@
     "model": "muse-wonder-1.0",
     "messages": 60,
     "claims": 416,
-    "contradicted": 0
+    "contradicted": 1,
+    "note": "a statement about what a file listing found, parsed as a denial; the message is accurate"
   }
 }

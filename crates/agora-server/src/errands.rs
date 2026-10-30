@@ -203,6 +203,16 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
             Guarded { drafts: vec![check.clone()], delivered: check, correction: None }
         })
     };
+    // If the guard can't run, the person still gets the ledger's own account (and
+    // the errand can still be asked about), never the agent's unchecked words.
+    let guarded = guarded.or_else(|e| {
+        if room.guard {
+            room.push(ErrandEvent::Failed { turn, reason: format!("the guard couldn't check the message ({e}); delivering the ledger's account instead") });
+            Ok(guard::withheld(&entries))
+        } else {
+            Err(e)
+        }
+    });
     match guarded {
         Ok(g) => {
             let told = match &g.correction {
@@ -217,7 +227,7 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
                 message: g.delivered.message.clone(),
                 correction: g.correction,
                 finished,
-                rounds: g.drafts.len() - 1,
+                rounds: g.drafts.len().saturating_sub(1),
                 check: g.delivered,
                 chain: room.chain(),
                 spent_usd: room.caller.spend().cost_usd,

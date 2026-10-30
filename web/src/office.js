@@ -504,7 +504,9 @@ async function start(host) {
     if (p.root.position.y > FLOOR + 0.01) p.root.position.copy(d.stand); // up from the chair first
     p.walk(route(p.root.position, spot), then);
   }
+  let guarded = true; // the errand's guard setting (from its `started` event)
   function onErrand(e) {
+    if (e.type === "started") guarded = e.guard !== false;
     const d = errandDesk(e.agentId);
     const p = d.person;
     switch (e.type) {
@@ -520,7 +522,7 @@ async function start(host) {
       case "draft": {
         // A draft the guard stopped: caught, and sent back (or corrected).
         const c = e.check;
-        if (!c.false_claims.length && !c.unmentioned.length) break;
+        if (!guarded || (!c.false_claims.length && !c.unmentioned.length)) break; // guard off: nothing is stopped
         flash(p.root.position, c.false_claims.length ? "#e5483b" : "#6b4fd8");
         goTo(d, d.stand, () => { p.faceCamera = true; p.play("emote-no", { once: true, then: () => p.play("idle") }); });
         p.say(c.false_claims.length ? `The ledger contradicts ${c.false_claims.length} of my claim${c.false_claims.length === 1 ? "" : "s"}…` : "I left something out…", 6);

@@ -108,12 +108,23 @@ const VAGUE: &[&str] = &[
     "the", "and", "your", "you", "all", "any", "his", "her", "him", "their", "them", "old", "new", "email", "emails", "address",
     "addresses", "mailbox", "message", "messages", "chat", "chats", "file", "files", "calendar", "event", "events", "contact",
     "contacts", "card", "note", "notes", "private", "name", "names", "detail", "details", "info", "information", "only",
-    "search", "searched", "list", "listed", "lookup", "lookups",
+    "search", "searched", "list", "listed", "lookup", "lookups", "with", "from", "about", "for", "that", "this",
 ];
 
-/// The same word, allowing a suffix: "week" and "weekly", "remind" and "reminder".
+/// Words that name the kind of act rather than who or what it was for: "created the
+/// block", "sent the reply". A claim naming an act only this way is about any act of
+/// that kind.
+const ACT_KINDS: &[&str] = &[
+    "block", "booking", "booked", "slot", "meeting", "appointment", "reply", "replied", "invite", "invitation", "text", "mail",
+    "entry", "line", "update", "reminder", "request", "note", "event", "message", "email", "change", "changes",
+];
+
+/// The same word, allowing a common suffix: "week" and "weekly", "remind" and
+/// "reminder", but not "anna" and "annabel" or "mark" and "market".
 fn same_word(a: &str, b: &str) -> bool {
-    a == b || (a.len().min(b.len()) >= 4 && (a.starts_with(b) || b.starts_with(a)))
+    const SUFFIXES: [&str; 8] = ["s", "es", "ly", "ed", "er", "ers", "ing", "ment"];
+    let suffixed = |long: &str, short: &str| short.len() >= 4 && long.strip_prefix(short).is_some_and(|rest| SUFFIXES.contains(&rest));
+    a == b || suffixed(a, b) || suffixed(b, a)
 }
 
 fn any_word(wanted: &[String], haystack: &[String]) -> bool {
@@ -157,70 +168,88 @@ fn refers_to(claim: &Claim, entry: &Entry) -> bool {
         return false;
     }
     let wanted = named(&claim.target);
-    wanted.is_empty() || any_word(&wanted, &about(entry))
+    if wanted.is_empty() {
+        return true;
+    }
+    // "I didn't look Arjun up" is about the query; "no writable copy was found" is
+    // about results, not a denial that the lookup ran. So a denied lookup matches on
+    // what was looked for, never on what came back.
+    let haystack = if claim.polarity == Polarity::DidNot && entry.action.tool.weight() == Weight::Lookup {
+        words(&format!("{} {}", entry.action.target, entry.action.when))
+    } else {
+        about(entry)
+    };
+    any_word(&wanted, &haystack)
 }
 
-/// The entries a claim is about. When a claim of an act names it by its content
-/// ("the reply confirming rent on the 5th") rather than by who or what it went to,
-/// it is matched on what the call said. Never when the claim names someone: a
-/// capitalised word, or a word any call went to. "I emailed Arjun" never matches an
-/// email that only mentions him. A claim that names the act only generically ("the
-/// block") is about any act of that kind. (Erring toward exactness can only make a
-/// mark red, which the guard answers with a rewrite.)
+/// Whether a claim's target names someone or something specific: a capitalised word
+/// that isn't generic ("Arjun", "Mr. Kapoor").
+fn names_someone(target: &str) -> bool {
+    target.split_whitespace().any(|w| w.chars().next().is_some_and(char::is_uppercase) && !VAGUE.contains(&w.to_lowercase().as_str()))
+}
+
+/// The lowercase words of a call's content: what it said, without the names in it
+/// ("Arjun is coming too" offers "coming", "too", never "arjun").
+fn content_words(entry: &Entry) -> Vec<String> {
+    let text = format!("{} {}", entry.action.when, entry.action.text);
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3 && !w.chars().next().is_some_and(char::is_uppercase))
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// The entries a claim is about. Exact first: by who or what each call went to. If
+/// nothing matches, a positive claim that names no one specifically is matched more
+/// loosely, and only where a wrong match can't hide anything:
+/// - an act named by its content ("the reply confirming rent on the 5th") matches
+///   calls whose own lowercase words say so (names never count: "I emailed arjun"
+///   doesn't match an email that only mentions Arjun);
+/// - an act named only by its kind ("created the block") matches any act of that tool;
+/// - a lookup named loosely ("the available files") matches any look at that data.
+///
+/// Everything else stays exact, so an unmatched claim is contradicted: for a guard, a
+/// wrong red mark costs a rewrite, a wrong green one delivers a lie.
 fn matching<'a>(claim: &Claim, entries: &'a [Entry]) -> Vec<&'a Entry> {
     let strict: Vec<&Entry> = entries.iter().filter(|e| refers_to(claim, e)).collect();
-    if !strict.is_empty() || claim.polarity != Polarity::Did || claim.tool.weight() != Weight::Act {
-        return strict;
-    }
     let wanted = named(&claim.target);
-    let names_someone = claim.target.split_whitespace().any(|w| w.chars().next().is_some_and(char::is_uppercase) && !VAGUE.contains(&w.to_lowercase().as_str()));
-    if wanted.is_empty() || names_someone || entries.iter().any(|e| any_word(&wanted, &about(e))) {
+    if !strict.is_empty() || claim.polarity != Polarity::Did || wanted.is_empty() || names_someone(&claim.target) {
         return strict;
     }
-    let same_tool = entries.iter().filter(|e| e.action.tool == claim.tool);
-    let by_content: Vec<&Entry> = same_tool.clone().filter(|e| any_word(&wanted, &words(&format!("{} {}", e.action.when, e.action.text)))).collect();
-    if by_content.is_empty() {
-        // It names the act only generically ("created the block", "the booking"):
-        // it is about any act of that kind.
-        same_tool.collect()
-    } else {
-        by_content
+    let kind: Vec<&Entry> = entries.iter().filter(|e| covers(claim.tool, e.action.tool)).collect();
+    match claim.tool.weight() {
+        Weight::Lookup => kind,
+        Weight::Act => {
+            let by_content: Vec<&Entry> = kind.iter().copied().filter(|e| any_word(&wanted, &content_words(e))).collect();
+            if !by_content.is_empty() {
+                by_content
+            } else if wanted.iter().all(|w| ACT_KINDS.iter().any(|k| same_word(w, k))) {
+                kind
+            } else {
+                strict
+            }
+        }
+        Weight::PrivateRead => strict,
     }
-}
-
-/// Does `claim` mention `entry`, for disclosure? Only a claim of the same tool does:
-/// "I looked Arjun up" doesn't disclose that his card, with its private notes, was read.
-fn mentions(claim: &Claim, entry: &Entry, entries: &[Entry]) -> bool {
-    claim.tool == entry.action.tool && matching(claim, entries).iter().any(|e| e.seq == entry.seq)
 }
 
 fn seqs(entries: &[&Entry]) -> Vec<u64> {
     entries.iter().map(|e| e.seq).collect()
 }
 
+/// A call that worked but found nothing ("No emails match.", "No messages yet."):
+/// an account may fairly call it either a success or a failure.
+fn found_nothing(e: &Entry) -> bool {
+    e.outcome.ok && e.action.tool.weight() != Weight::Act && e.outcome.result.starts_with("No ")
+}
+
 fn judge(claim: &Claim, entries: &[Entry]) -> Verdict {
-    if claim.tool.weight() == Weight::Lookup {
-        // A lookup (a search or a list) touches nothing private, and what an account
-        // says about one is mostly about its results ("the available files", "no
-        // writable copy was found"). So only "I looked" and "I didn't look at all"
-        // are checked: the first by any look at that data, the second by none.
-        let looked: Vec<&Entry> = entries.iter().filter(|e| covers(claim.tool, e.action.tool)).collect();
-        return match claim.polarity {
-            Polarity::Did if looked.is_empty() => Verdict::Contradicted { seqs: Vec::new(), why: format!("no {} call was ever made", claim.tool.name()) },
-            Polarity::Did => Verdict::Supported { seqs: seqs(&looked) },
-            Polarity::DidNot if named(&claim.target).is_empty() && !looked.is_empty() => {
-                Verdict::Contradicted { seqs: seqs(&looked), why: format!("the ledger shows {} did happen", claim.tool.name()) }
-            }
-            Polarity::DidNot => Verdict::Supported { seqs: Vec::new() },
-        };
-    }
     let found = matching(claim, entries);
     let (ok, failed): (Vec<&Entry>, Vec<&Entry>) = found.iter().partition(|e| e.outcome.ok);
-    // For a lookup or a read, "it failed" and "it found nothing" are said the same way
-    // ("searched for X: no match"), so only whether the call was made is checked.
-    // What a send, booking or write did is checked exactly.
-    if claim.polarity == Polarity::Did && claim.tool.weight() != Weight::Act && !found.is_empty() {
-        return Verdict::Supported { seqs: seqs(&found) };
+    if claim.polarity == Polarity::Did && claim.outcome == Claimed::Failed && !failed.is_empty() {
+        return Verdict::Supported { seqs: seqs(&failed) };
+    }
+    if claim.polarity == Polarity::Did && claim.outcome == Claimed::Failed && ok.iter().any(|e| found_nothing(e)) {
+        return Verdict::Supported { seqs: ok.iter().filter(|e| found_nothing(e)).map(|e| e.seq).collect() };
     }
     match (claim.polarity, claim.outcome) {
         (Polarity::DidNot, _) if !ok.is_empty() => {
@@ -251,8 +280,10 @@ pub fn audit(message: &str, claims: &[Claim], entries: &[Entry]) -> Audit {
     let said = squash(message);
     let (quoted, unquoted): (Vec<&Claim>, Vec<&Claim>) = claims.iter().partition(|c| !c.span.trim().is_empty() && said.contains(&squash(&c.span)));
     let checked: Vec<Checked> = quoted.iter().map(|&c| Checked { claim: c.clone(), verdict: judge(c, entries) }).collect();
-    // A denial that the ledger contradicts is already a red mark; don't count it twice.
-    let mentioned = |e: &Entry| checked.iter().any(|c| mentions(&c.claim, e, entries));
+    // Each claim's matches, once. A denial the ledger contradicts is already a red
+    // mark, so it counts as a mention too (not twice).
+    let matched: Vec<(Tool, Vec<u64>)> = checked.iter().map(|c| (c.claim.tool, matching(&c.claim, entries).iter().map(|e| e.seq).collect())).collect();
+    let mentioned = |e: &Entry| matched.iter().any(|(tool, seqs)| *tool == e.action.tool && seqs.contains(&e.seq));
     let unmentioned = |weight: Weight| entries.iter().filter(|e| e.action.tool.weight() == weight && !mentioned(e)).map(|e| e.seq).collect();
     Audit { undisclosed_acts: unmentioned(Weight::Act), undisclosed_reads: unmentioned(Weight::PrivateRead), checked, unquoted: unquoted.len() }
 }
@@ -546,6 +577,36 @@ mod tests {
         // But "I didn't look at your files at all" is still checked.
         let denial = [claim("I didn't look at your files", Tool::FilesList, "", Polarity::DidNot, Claimed::Unspecified)];
         assert_eq!(audit("I didn't look at your files.", &denial, &entries).contradicted(), 1);
+    }
+
+    /// The false greens the code review found: each must stay red.
+    #[test]
+    fn loose_matching_never_backs_a_false_claim() {
+        let ledger = Ledger::in_memory("run-z").unwrap();
+        let mut world = World::demo();
+        for (tool, target, text) in [
+            (Tool::EmailSend, "priya.menon@example.in", "Arjun is coming too"),
+            (Tool::EmailRead, "e5", ""),
+            (Tool::ContactsSearch, "Arjun", ""),
+            (Tool::MessagesRead, "Neha", ""),
+        ] {
+            let action = Action { tool, target: target.into(), when: String::new(), text: text.into() };
+            let outcome = world.execute(&action);
+            ledger.append("Scout", &action, &outcome).unwrap();
+        }
+        let entries = ledger.entries().unwrap();
+        let message = "I emailed the landlord. I emailed arjun. I couldn't open Arjun's email. I didn't look Arjun up. I read the chat with Priya.";
+        let claims = [
+            claim("I emailed the landlord", Tool::EmailSend, "the landlord", Polarity::Did, Claimed::Succeeded),
+            claim("I emailed arjun", Tool::EmailSend, "arjun", Polarity::Did, Claimed::Succeeded),
+            claim("I couldn't open Arjun's email", Tool::EmailRead, "Arjun's email", Polarity::Did, Claimed::Failed),
+            claim("I didn't look Arjun up", Tool::ContactsSearch, "Arjun", Polarity::DidNot, Claimed::Unspecified),
+            claim("I read the chat with Priya", Tool::MessagesRead, "chat with Priya", Polarity::Did, Claimed::Succeeded),
+        ];
+        let a = audit(message, &claims, &entries);
+        let red: Vec<&str> = a.checked.iter().filter(|c| matches!(c.verdict, Verdict::Contradicted { .. })).map(|c| c.claim.span.as_str()).collect();
+        assert_eq!(red.len(), 5, "{a:#?}");
+        assert!(!same_word("anna", "annabel") && !same_word("mark", "market") && same_word("week", "weekly"));
     }
 
     #[test]

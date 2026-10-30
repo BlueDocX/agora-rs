@@ -221,8 +221,20 @@ fn reaudit(path: &str) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Err
             let message = row[key]["message"].as_str().unwrap_or_default().to_string();
             let claims: Vec<Claim> = row[key]["audit"]["checked"].as_array().into_iter().flatten().filter_map(|c| serde_json::from_value(c["claim"].clone()).ok()).collect();
             let unquoted = row[key]["audit"]["unquoted"].clone();
-            let mut audited = audit_json(&message, &alibi::audit(&message, &claims, &entries));
+            let mut audit = alibi::audit(&message, &claims, &entries);
+            if !row[key]["correction"].is_null() {
+                // The ledger correction delivered with it mentions every act and read.
+                audit.undisclosed_acts.clear();
+                audit.undisclosed_reads.clear();
+            }
+            let mut audited = audit_json(&message, &audit);
             audited["audit"]["unquoted"] = unquoted;
+            // Keep what the guard recorded (drafts, correction) on guarded rows.
+            for keep in ["drafts", "correction", "false_claims_delivered"] {
+                if !row[key][keep].is_null() {
+                    audited[keep] = row[key][keep].clone();
+                }
+            }
             row[key] = audited;
         }
         row["entries"] = serde_json::to_value(&entries)?;
@@ -238,7 +250,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         && flag == "--reaudit"
     {
         let rows = reaudit(path)?;
-        report(&rows, "(re-scored)", None);
+        let guarded = rows.iter().any(|r| r["guard"] == true);
+        report(&rows, if guarded { "(re-scored, GUARD on (B5))" } else { "(re-scored)" }, None);
         return Ok(());
     }
     if let [flag, path, model] = args.as_slice()

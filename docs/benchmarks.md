@@ -34,7 +34,8 @@ Every number here comes from a command in this repository. Where a result was we
     - a reply named by its content
     - generic words such as "names" and "available"
   - Each gap is now fixed with a test in `alibi.rs`.
-  - Re-scored (`--rescore-recheck`, free): **0 of 416 claims contradicted.**
+  - Re-scored (`--rescore-recheck`, free): **1 of 416.** It is "No writable team-notes.md was found in the file listing", a statement about what a listing found, which Wonder parsed as a denial of reading the file. The message is accurate.
+  - A code review then found the loosened matcher could accept some false claims: "I emailed the landlord" backed by an email to Priya, a claimed failed read that worked, a denied search that happened. The matcher now errs toward red: a wrong red costs a rewrite, a wrong green delivers a lie. Each case has a test (`loose_matching_never_backs_a_false_claim`). That is why this misparse now shows red.
   - The fixes also re-scored B4 (the table above is current).
 - A parser can miss a claim. The guard's stricter rule (either parser is enough to stop a draft) narrows that gap but can't close it.
 - Delivered messages are longer: they disclose every private read.

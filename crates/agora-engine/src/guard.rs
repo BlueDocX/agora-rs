@@ -96,6 +96,10 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, entries: &[En
         unmentioned.retain(|seq| theirs.contains(seq));
     }
     unmentioned.sort_unstable();
+    // Show as "not mentioned" exactly what the guard counts as not mentioned.
+    let mut audit = audit;
+    audit.undisclosed_acts.retain(|seq| unmentioned.contains(seq));
+    audit.undisclosed_reads.retain(|seq| unmentioned.contains(seq));
     Checked { message: message.to_string(), audit, agreed, false_claims, unmentioned }
 }
 
@@ -156,6 +160,8 @@ pub fn correction(entries: &[Entry]) -> String {
     }
 }
 
+const ABBREVIATIONS: [&str; 6] = ["mr.", "mrs.", "ms.", "dr.", "e.g.", "i.e."];
+
 /// `message` without the sentences that hold any of `spans`.
 #[must_use]
 pub fn without(message: &str, spans: &[String]) -> String {
@@ -178,7 +184,15 @@ pub fn without(message: &str, spans: &[String]) -> String {
     let mut chars = message.chars().peekable();
     while let Some(c) = chars.next() {
         sentence.push(c);
-        let ends = matches!(c, '.' | '!' | '?') && chars.peek().is_none_or(|n| n.is_whitespace()) || c == '\n';
+        // "Mr. Shah" doesn't end a sentence.
+        let abbreviation = c == '.'
+            && ABBREVIATIONS.iter().any(|a| {
+                let cut = sentence.len().saturating_sub(a.len());
+                sentence.is_char_boundary(cut)
+                    && sentence[cut..].eq_ignore_ascii_case(a)
+                    && sentence[..cut].chars().next_back().is_none_or(|p| !p.is_alphanumeric())
+            });
+        let ends = matches!(c, '.' | '!' | '?') && !abbreviation && chars.peek().is_none_or(|n| n.is_whitespace()) || c == '\n';
         if ends {
             // Keep the whitespace that follows with this sentence.
             while let Some(&n) = chars.peek() {
@@ -255,9 +269,13 @@ pub async fn deliver(
     // say what happened from the ledger. The kept text is judged with the claims
     // already parsed (a claim whose quote was removed drops out).
     let claims: Vec<Claim> = last.audit.checked.iter().map(|c| c.claim.clone()).collect();
-    let mut delivered = judge(&without(&last.message, &last.false_claims), &claims, None, entries);
+    let kept = without(&last.message, &last.false_claims);
+    // Every false claim either parser found must be gone (one spanning two sentences
+    // can survive `without`): if any is still there, deliver the correction alone.
+    let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let survived = last.false_claims.iter().any(|span| squash(&kept).contains(&squash(span)));
+    let mut delivered = judge(if survived { "" } else { &kept }, &claims, None, entries);
     if !delivered.false_claims.is_empty() {
-        // A false claim that spans two sentences survived: deliver the correction alone.
         delivered = judge("", &[], None, entries);
     }
     // The correction lists every act and private read, so nothing is left unmentioned.
@@ -265,6 +283,14 @@ pub async fn deliver(
     delivered.audit.undisclosed_acts.clear();
     delivered.audit.undisclosed_reads.clear();
     Ok(Guarded { delivered, drafts, correction: Some(correction(entries)) })
+}
+
+/// What to deliver when the guard itself can't run (a checker or rewrite call
+/// failed): nothing the agent wrote, only the ledger's account. Never unchecked text.
+#[must_use]
+pub fn withheld(entries: &[Entry]) -> Guarded {
+    let delivered = judge("", &[], None, entries);
+    Guarded { drafts: Vec::new(), delivered, correction: Some(correction(entries)) }
 }
 
 #[cfg(test)]
@@ -312,6 +338,8 @@ mod tests {
         let kept = without(message, &["emailed Arjun".into(), "did not read any of your chats".into()]);
         assert_eq!(kept, "Done! I texted Priya about Saturday. Anything else?");
         assert_eq!(without("Booked it.\nTexted Priya.", &["emailed".into()]), "Booked it.\nTexted Priya.");
+        // An abbreviation doesn't split a sentence, so its false claim is removed whole.
+        assert_eq!(without("I emailed Mr. Shah today. Done.", &["emailed Mr. Shah".into()]), "Done.");
     }
 
     #[test]
