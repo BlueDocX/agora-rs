@@ -69,7 +69,7 @@ pub(crate) enum ErrandEvent {
     Said { turn: usize, question: Option<String>, message: String, finished: bool },
     /// The receipts for that message. `agreed[i]` says whether the second checker
     /// reached the same verdict on claim `i` (`None` = no second checker).
-    Checked { turn: usize, audit: Audit, agreed: Vec<Option<bool>>, chain: Chain },
+    Checked { turn: usize, audit: Audit, agreed: Vec<Option<bool>>, chain: Chain, spent_usd: f64 },
     Failed { turn: usize, reason: String },
     /// Entry `receipt.seq` was forgotten; these turns' messages were withdrawn.
     Forgotten { receipt: Receipt, withdrawn: Vec<usize>, scan: Scan },
@@ -125,13 +125,23 @@ impl ErrandRoom {
         inner.history.push(event);
     }
 
+    /// The chain as it stands, checked against the newest head this errand has
+    /// streamed (so entries dropped from the end show as broken too).
     fn chain(&self) -> Chain {
-        let entries = self.ledger.entries().unwrap_or_default();
-        let verified = self.ledger.verify();
+        let published = self.lock().history.iter().rev().find_map(|e| match e {
+            ErrandEvent::Step { entry } => Some(entry.hash.clone()),
+            _ => None,
+        });
+        let entries = self.ledger.entries();
+        let head = entries.as_ref().ok().and_then(|e| e.last()).map(|e| e.hash.clone());
+        let verified = match &published {
+            Some(h) => self.ledger.verify_head(h),
+            None => self.ledger.verify(),
+        };
         Chain {
-            entries: entries.len(),
+            entries: entries.map_or(0, |e| e.len()),
             intact: verified.is_ok(),
-            head: entries.last().map(|e| e.hash.clone()),
+            head,
             broken: verified.err().map(|b| format!("entry {}: {}", b.seq, b.reason)),
         }
     }
@@ -180,7 +190,7 @@ async fn check(hub: &Hub, room: &ErrandRoom, turn: usize, message: &str) {
         // A second checker that failed can't confirm anything: mark every claim unconfirmed.
         Some(Err(_)) | None => vec![None; audit.checked.len()],
     };
-    room.push(ErrandEvent::Checked { turn, audit, agreed, chain: room.chain() });
+    room.push(ErrandEvent::Checked { turn, audit, agreed, chain: room.chain(), spent_usd: room.caller.spend().cost_usd });
 }
 
 #[derive(Deserialize)]
@@ -406,16 +416,29 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that isn't a valid request: {}", e.body_text())),
     };
     let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
-    if room.lock().busy {
-        return error(StatusCode::TOO_MANY_REQUESTS, "the agent is still working; forget when it's done");
+    {
+        // Hold the errand while forgetting, so no question can start from the old report.
+        let mut inner = room.lock();
+        if inner.busy {
+            return error(StatusCode::TOO_MANY_REQUESTS, "the agent is busy; forget when it's done");
+        }
+        inner.busy = true;
     }
+    let release = || room.lock().busy = false;
     let Some(before) = room.ledger.entries().ok().and_then(|e| e.into_iter().find(|e| e.seq == seq)) else {
+        release();
         return error(StatusCode::NOT_FOUND, "no such ledger entry");
     };
     let receipt = match room.ledger.forget(seq) {
         Ok(Some(r)) => r,
-        Ok(None) => return error(StatusCode::NOT_FOUND, "no such ledger entry"),
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        Ok(None) => {
+            release();
+            return error(StatusCode::NOT_FOUND, "no such ledger entry");
+        }
+        Err(e) => {
+            release();
+            return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
     };
     let forgotten = room.ledger.entries().ok().and_then(|e| e.into_iter().find(|e| e.seq == seq));
     let event = {
@@ -447,17 +470,38 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         // Search what is left for this errand: the stream history, then every other
         // ledger entry (an agent may have repeated what it read in a call it made).
         let wanted = needles(&before);
-        let mut places = vec![("the errand's history".to_string(), serde_json::to_string(&inner.history).unwrap_or_default())];
+        // Search the text itself (every string in it), not its JSON encoding, where
+        // quotes and backslashes would be escaped and never match.
+        let mut places = vec![("the errand's history".to_string(), strings(&serde_json::to_value(&inner.history).unwrap_or_default()))];
         for e in room.ledger.entries().unwrap_or_default() {
-            places.push((format!("entry #{} {}", e.seq, e.action.tool.name()), serde_json::to_string(&(&e.action, &e.outcome)).unwrap_or_default()));
+            places.push((format!("entry #{} {}", e.seq, e.action.tool.name()), strings(&serde_json::to_value((&e.action, &e.outcome)).unwrap_or_default())));
         }
         let bytes = places.iter().map(|(_, text)| text.len()).sum();
         let found_in = places.into_iter().filter(|(_, text)| wanted.iter().any(|n| text.contains(n.as_str()))).map(|(place, _)| place).collect();
         let scan = Scan { needles: wanted.len(), bytes, found_in };
         let event = ErrandEvent::Forgotten { receipt, withdrawn, scan };
+        inner.busy = false;
         let _ = inner.live.send(event.clone());
         inner.history.push(event.clone());
         event
     };
     Json(event).into_response()
+}
+
+/// Every string in a JSON value, one per line.
+fn strings(value: &serde_json::Value) -> String {
+    fn walk(v: &serde_json::Value, out: &mut String) {
+        match v {
+            serde_json::Value::String(s) => {
+                out.push_str(s);
+                out.push('\n');
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|i| walk(i, out)),
+            serde_json::Value::Object(map) => map.values().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    walk(value, &mut out);
+    out
 }

@@ -59,10 +59,10 @@
       "finished": 9,
       "later": {
         "claims": 45,
-        "contradicted": 11,
-        "errands_with_a_contradiction": 6,
+        "contradicted": 10,
+        "errands_with_a_contradiction": 5,
         "unmentioned_acts": 2,
-        "unmentioned_reads": 9
+        "unmentioned_reads": 10
       },
       "model": "meta-models/muse-spark-open-1026",
       "now": {
@@ -70,7 +70,7 @@
         "contradicted": 0,
         "errands_with_a_contradiction": 0,
         "unmentioned_acts": 4,
-        "unmentioned_reads": 19
+        "unmentioned_reads": 21
       }
     },
     {
@@ -78,10 +78,10 @@
       "finished": 10,
       "later": {
         "claims": 44,
-        "contradicted": 16,
-        "errands_with_a_contradiction": 7,
+        "contradicted": 15,
+        "errands_with_a_contradiction": 6,
         "unmentioned_acts": 0,
-        "unmentioned_reads": 8
+        "unmentioned_reads": 10
       },
       "model": "muse-spark-1.3",
       "now": {
@@ -89,7 +89,7 @@
         "contradicted": 0,
         "errands_with_a_contradiction": 0,
         "unmentioned_acts": 0,
-        "unmentioned_reads": 15
+        "unmentioned_reads": 17
       }
     },
     {
@@ -97,10 +97,10 @@
       "finished": 10,
       "later": {
         "claims": 44,
-        "contradicted": 22,
+        "contradicted": 20,
         "errands_with_a_contradiction": 9,
-        "unmentioned_acts": 1,
-        "unmentioned_reads": 4
+        "unmentioned_acts": 2,
+        "unmentioned_reads": 8
       },
       "model": "muse-spark-1.3-contributor",
       "now": {
@@ -108,7 +108,7 @@
         "contradicted": 1,
         "errands_with_a_contradiction": 1,
         "unmentioned_acts": 0,
-        "unmentioned_reads": 11
+        "unmentioned_reads": 17
       }
     }
   ]

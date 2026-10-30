@@ -7,6 +7,11 @@
 //! crate-private and only the errand executor calls it. When an agent later explains
 //! what it did, this is the record its account is checked against.
 //!
+//! Dropping the *newest* entries leaves a shorter chain that is still valid; nothing
+//! inside a chain can show what came after its end. So the head hash is published as
+//! the run goes (every streamed step, every receipt) and [`Ledger::verify_head`]
+//! checks a ledger against a head someone kept.
+//!
 //! The chain covers a hash of each entry's content (what was called on what, and
 //! what came back), not the content itself. So a person can have one entry's content
 //! **forgotten** ([`Ledger::forget`]): the content is deleted (and overwritten on
@@ -126,6 +131,9 @@ pub struct Receipt {
     /// The chain still verifies with the content gone: this many entries, this head.
     pub chain_entries: usize,
     pub head: String,
+    /// False if another reader kept the old copy in the write-ahead log for now (it
+    /// is overwritten at the next checkpoint).
+    pub wal_cleared: bool,
 }
 
 impl Ledger {
@@ -135,6 +143,19 @@ impl Ledger {
     /// If the file can't be opened or the table created.
     pub fn open(path: &Path, run_id: &str) -> Result<Self, JournalError> {
         Self::with(Connection::open(path)?, run_id)
+    }
+
+    /// Open an existing ledger without writing anything to the file (no table
+    /// creation, no journal-mode change): for checking evidence.
+    ///
+    /// # Errors
+    /// If there is no such file, or it can't be opened.
+    pub fn open_read_only(path: &Path, run_id: &str) -> Result<Self, JournalError> {
+        if !path.is_file() {
+            return Err(JournalError::new(format!("no ledger at {}", path.display())));
+        }
+        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        Ok(Self { db: Mutex::new(db), run_id: run_id.to_string() })
     }
 
     /// A ledger that lives only as long as the process (tests, one-off errands).
@@ -168,7 +189,7 @@ impl Ledger {
         if !path.is_file() {
             return Err(JournalError::new(format!("no ledger at {}", path.display())));
         }
-        let db = Connection::open(path)?;
+        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let has: bool = db.query_row("SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'ledger'", [], |r| r.get(0))?;
         if !has {
             return Ok(Vec::new());
@@ -265,12 +286,29 @@ impl Ledger {
         verify_chain(&self.run_id, &entries)
     }
 
+    /// Verify the chain and that it reaches `head`, a head hash published earlier
+    /// (so entries dropped from the end are caught too).
+    ///
+    /// # Errors
+    /// [`Broken`] if the chain doesn't verify or `head` isn't in it.
+    pub fn verify_head(&self, head: &str) -> Result<usize, Broken> {
+        let entries = self.entries().map_err(|e| Broken { seq: 0, reason: e.to_string() })?;
+        let n = verify_chain(&self.run_id, &entries)?;
+        match entries.iter().position(|e| e.hash == head) {
+            Some(_) => Ok(n),
+            None => Err(Broken { seq: entries.last().map_or(0, |e| e.seq) + 1, reason: "the published head is missing: entries were dropped from the end".into() }),
+        }
+    }
+
     /// Delete entry `seq`'s content for good, keeping what the chain needs. Returns
     /// the receipt, or `None` if there is no such entry. Forgetting twice is fine.
     ///
     /// # Errors
     /// If the database can't be written, or the chain doesn't verify afterwards.
     pub fn forget(&self, seq: u64) -> Result<Option<Receipt>, JournalError> {
+        // Never delete evidence from a ledger that is already broken: the content
+        // may be what proves it.
+        self.verify().map_err(|b| JournalError::new(format!("not forgetting: the ledger is broken at entry {}: {}", b.seq, b.reason)))?;
         let forgotten_at_ms = now_ms();
         let changed = self.lock().execute(
             "UPDATE ledger SET content = NULL, forgotten_at_ms = COALESCE(forgotten_at_ms, ?3) WHERE run_id = ?1 AND seq = ?2",
@@ -280,8 +318,9 @@ impl Ledger {
             return Ok(None);
         }
         // Old pages can linger in the write-ahead log: fold it into the (securely
-        // overwritten) main file. An in-memory database has no log; that's fine.
-        let _ = self.lock().execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        // overwritten) main file. A reader elsewhere can hold the log open; then the
+        // receipt says the old copy is still waiting to be overwritten.
+        let wal_cleared = self.checkpoint();
         let entries = self.entries()?;
         let chain_entries =
             verify_chain(&self.run_id, &entries).map_err(|b| JournalError::new(format!("the chain broke at entry {}: {}", b.seq, b.reason)))?;
@@ -295,7 +334,23 @@ impl Ledger {
             forgotten_at_ms: e.forgotten_at_ms.unwrap_or(forgotten_at_ms),
             chain_entries,
             head: entries.last().map(|e| e.hash.clone()).unwrap_or_default(),
+            wal_cleared,
         }))
+    }
+
+    /// Fold the write-ahead log into the main file and empty it, retrying briefly
+    /// while another connection is reading. True when nothing is left in the log
+    /// (or there is no log, as in memory).
+    fn checkpoint(&self) -> bool {
+        for attempt in 0..5 {
+            let busy: Result<i64, _> = self.lock().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
+            match busy {
+                Ok(0) => return true,
+                Ok(_) if attempt < 4 => std::thread::sleep(std::time::Duration::from_millis(40)),
+                _ => return false,
+            }
+        }
+        false
     }
 }
 
@@ -329,6 +384,10 @@ impl Row {
                     return Err(bad("its content was changed after it was written".into()));
                 }
                 let stored: Stored = serde_json::from_str(content).map_err(|e| bad(format!("unreadable content: {e}")))?;
+                // The clear columns (what survives forgetting) must agree with the content.
+                if stored.action.tool != tool || stored.outcome.ok != self.ok {
+                    return Err(bad("its content was changed after it was written".into()));
+                }
                 (stored.action, stored.outcome)
             }
             None => (
@@ -452,6 +511,26 @@ mod tests {
     }
 
     #[test]
+    fn dropping_the_newest_entry_is_caught_against_a_published_head() {
+        let ledger = ledger_with_three();
+        let head = ledger.entries().unwrap()[2].hash.clone();
+        assert_eq!(ledger.verify_head(&head), Ok(3));
+        ledger.lock().execute("DELETE FROM ledger WHERE seq = 3", []).unwrap();
+        assert_eq!(ledger.verify(), Ok(2), "a shorter chain is still a valid chain");
+        assert!(ledger.verify_head(&head).unwrap_err().reason.contains("dropped from the end"));
+    }
+
+    #[test]
+    fn an_edited_clear_column_is_caught_and_blocks_forgetting() {
+        let ledger = ledger_with_three();
+        ledger.lock().execute("UPDATE ledger SET ok = 1 WHERE seq = 2", []).unwrap();
+        assert_eq!(ledger.verify().unwrap_err().seq, 0);
+        assert!(ledger.forget(2).unwrap_err().to_string().contains("not forgetting"));
+        let kept: Option<String> = ledger.lock().query_row("SELECT content FROM ledger WHERE seq = 2", [], |r| r.get(0)).unwrap();
+        assert!(kept.is_some(), "the evidence stays");
+    }
+
+    #[test]
     fn forgetting_deletes_the_content_but_the_chain_still_verifies() {
         let ledger = ledger_with_three();
         let receipt = ledger.forget(3).unwrap().unwrap();
@@ -462,9 +541,9 @@ mod tests {
         let stored: Option<String> = ledger.lock().query_row("SELECT content FROM ledger WHERE seq = 3", [], |r| r.get(0)).unwrap();
         assert_eq!(stored, None);
         assert_eq!(ledger.verify(), Ok(3));
+        assert_eq!(ledger.forget(9).unwrap(), None);
         // But a forgotten entry can't be quietly turned into a different call.
         ledger.lock().execute("UPDATE ledger SET tool = 'messages.send' WHERE seq = 3", []).unwrap();
         assert_eq!(ledger.verify().unwrap_err().seq, 3);
-        assert_eq!(ledger.forget(9).unwrap(), None);
     }
 }

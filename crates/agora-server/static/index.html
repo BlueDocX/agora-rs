@@ -47,7 +47,9 @@
   .key input { border: 0; background: transparent; font: 500 12px var(--mono); color: var(--ink); width: 150px; padding: 9px 0; outline: none; }
 
   /* Three panels */
-  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr) 340px; gap: 12px; padding: 0 12px 12px; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr) 340px; gap: 12px; padding: 0 12px 12px; transition: grid-template-columns .25s; }
+  /* Receipts need room: the Alibi tab widens the log column. */
+  main.wide { grid-template-columns: 420px minmax(0, 1fr) 320px; }
   .panel { background: var(--paper); border: 1px solid rgba(23,21,15,.06); border-radius: 28px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
   /* Logs */
@@ -276,7 +278,7 @@
   }
   @media (max-width: 1180px) {
     body { height: auto; }
-    main { grid-template-columns: 1fr; }
+    main, main.wide { grid-template-columns: 1fr; }
     .office { order: -1; }
     #office3d { flex: none; height: 420px; } /* fixed: the page has no height to share out here */
     .logs { max-height: 420px; order: 1; } /* office, then the brief, then logs */
@@ -651,6 +653,7 @@ async function loadInfo() {
 
 document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
   tab = b.dataset.tab;
+  document.querySelector("main").classList.toggle("wide", tab === "alibi");
   document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
   if (tab === "runs") refreshRuns();
   renderFeed();
@@ -1055,7 +1058,7 @@ function forgottenItem(e) {
   const box = el("div", "ab-forgot");
   const r = e.receipt, when = new Date(r.at_ms).toLocaleTimeString();
   box.append(el("b", null, `Forgotten: entry #${r.seq} (${r.tool} at ${when})`), document.createElement("br"),
-    `Content deleted. Its hash stays: ${short(r.content_hash)}`, document.createElement("br"),
+    `Content deleted${r.wal_cleared ? " and overwritten on disk" : " (the old copy on disk is overwritten at the next checkpoint)"}. Its hash stays: ${short(r.content_hash)}`, document.createElement("br"),
     `Hash chain still verifies: ${r.chain_entries} entries, head ${short(r.head)}`, document.createElement("br"),
     `${e.withdrawn.length} message${e.withdrawn.length === 1 ? "" : "s"} written after it withdrawn`, document.createElement("br"),
     `Searched this errand's records (${(e.scan.bytes / 1024).toFixed(1)} KB) for ${e.scan.needles} piece${e.scan.needles === 1 ? "" : "s"} of it: `
@@ -1130,11 +1133,11 @@ function summaryItems(check, steps) {
   const disputed = checked.filter((c, i) => c.verdict === "contradicted" && check.agreed[i] === false).length;
   const hidden = [...check.audit.undisclosed_acts, ...check.audit.undisclosed_reads].sort((a, b) => a - b);
   const sum = el("li", "ab-sum");
-  sum.append(el("span", "s-ok", `${checked.length - lies - disputed} backed`));
+  if (checked.length) sum.append(el("span", "s-ok", `${checked.length - lies - disputed} backed`));
   if (lies) sum.append(el("span", "s-bad", `${lies} contradicted`));
   if (disputed) sum.append(el("span", "s-dis", `${disputed} disputed`));
   if (hidden.length) sum.append(el("span", "s-hid", `${hidden.length} not mentioned`));
-  out.push(sum);
+  if (sum.childElementCount) out.push(sum);
   if (hidden.length) {
     const box = el("li");
     const inner = el("div", "ab-hidden");
@@ -1148,7 +1151,8 @@ function summaryItems(check, steps) {
   }
   const c = check.chain;
   out.push(el("li", "ab-chain" + (c.intact ? "" : " broken"),
-    c.intact ? `Ledger: ${c.entries} entries · hash chain intact · head ${short(c.head)}` : `Ledger tampered: ${c.broken}`));
+    (c.intact ? `Ledger: ${c.entries} entries · hash chain intact · head ${short(c.head)}` : `Ledger tampered: ${c.broken}`)
+      + ` · errand cost $${(check.spent_usd ?? 0).toFixed(4)}`));
   return out;
 }
 function renderAlibi(feed) {
@@ -1221,7 +1225,7 @@ function watchErrand(id, skip = 0) {
     else dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
     // Forgetting rewrites the errand's history on the server: fetch it again.
     // (Once per forgetting: the replay after reconnecting includes the same event.)
-    const key = e.type === "forgotten" ? `${errand.id}:${e.receipt.seq}:${e.receipt.forgotten_at_ms}` : null;
+    const key = e.type === "forgotten" ? `${errand.id}:${errand.events.length}` : null; // its place in the history
     if (key && !refetched.has(key)) { refetched.add(key); const open = errand.open; watchErrand(errand.id, errand.events.length); errand.open = open; return; }
     if (tab === "alibi") renderFeed();
   };

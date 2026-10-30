@@ -181,22 +181,28 @@ impl MuseClient {
 
 /// The JSON in a structured reply. Muse sometimes writes a one-line preamble
 /// ("I'll look up Priya first.") before the schema-shaped JSON, in the same reply
-/// (seen live 2026-10-30), so a reply that isn't JSON as a whole is cut to the
-/// first `{` or `[` from which the rest parses as one JSON value. Anything else is
-/// returned unchanged, so the caller's own parse error still says what came back.
+/// (seen live 2026-10-30), and a model can add a line after it. So a reply that
+/// isn't JSON as a whole is cut to the first complete JSON value that starts at a
+/// `{` or `[` (trying at most [`MAX_JSON_STARTS`] starts). Anything else is returned
+/// unchanged, so the caller's own parse error still says what came back.
 #[must_use]
 pub fn json_part(text: &str) -> &str {
     let trimmed = text.trim();
     if serde_json::from_str::<serde::de::IgnoredAny>(trimmed).is_ok() {
         return trimmed;
     }
-    trimmed
-        .char_indices()
-        .filter(|&(_, c)| c == '{' || c == '[')
-        .map(|(i, _)| &trimmed[i..])
-        .find(|rest| serde_json::from_str::<serde::de::IgnoredAny>(rest).is_ok())
-        .unwrap_or(text)
+    for (start, _) in trimmed.char_indices().filter(|&(_, c)| c == '{' || c == '[').take(MAX_JSON_STARTS) {
+        let rest = &trimmed[start..];
+        let mut values = serde_json::Deserializer::from_str(rest).into_iter::<serde::de::IgnoredAny>();
+        if let Some(Ok(_)) = values.next() {
+            return &rest[..values.byte_offset()];
+        }
+    }
+    text
 }
+
+/// How many `{`/`[` positions [`json_part`] tries before giving up.
+const MAX_JSON_STARTS: usize = 16;
 
 fn env_key(var: &'static str) -> Result<String, MuseError> {
     std::env::var(var).ok().filter(|k| !k.is_empty()).ok_or(MuseError::MissingKey(var))
@@ -235,5 +241,6 @@ mod tests {
         assert_eq!(json_part(raw), "{\"tool\": \"contacts.search\", \"target\": \"Priya\"}");
         assert_eq!(json_part(" [1, 2] "), "[1, 2]");
         assert_eq!(json_part("no json here"), "no json here");
+        assert_eq!(json_part("{\"tool\": \"finish\"} Let me know if you need more."), "{\"tool\": \"finish\"}");
     }
 }

@@ -147,8 +147,12 @@ pub async fn run(
             continue;
         };
         let action = Action { tool, target: turn.target, when: turn.when, text: turn.text };
-        let outcome = world.execute(&action);
+        // The call takes effect only once the ledger holds it: run it on a copy of the
+        // world and keep the copy after the entry is written.
+        let mut next = world.clone();
+        let outcome = next.execute(&action);
         let entry = ledger.append(errand.agent, &action, &outcome).map_err(ErrandError::Ledger)?;
+        *world = next;
         input.push(Message::user(format!("Result ({}): {}", if outcome.ok { "ok" } else { "failed" }, outcome.result)));
         on_step(&entry);
         entries.push(entry);
