@@ -263,3 +263,99 @@ mod tests {
         assert_eq!(a, def_hash("create_issue", "Open an issue", &json!({ "type": "object" }), &json!({})));
     }
 }
+
+/// Signing in to servers that need OAuth (Slack, Google, Sentry, Linear…), on the
+/// SDK's OAuth 2.1 client: discovery, then a pre-registered client if the owner gave
+/// one, else the server's client metadata documents or dynamic registration; PKCE;
+/// refresh. What comes back is sealed by the caller and handed to [`oauth_token`].
+pub mod oauth {
+    use rmcp::transport::auth::{AuthorizationManager, AuthorizationRequest, CredentialStore, InMemoryCredentialStore, OAuthClientConfig, OAuthState, StoredCredentials};
+    use serde_json::{Value, json};
+
+    use crate::Error;
+
+    fn failed(e: impl std::fmt::Display) -> Error {
+        Error::Refused(format!("sign-in failed: {e}"))
+    }
+
+    /// A sign-in waiting for the person to come back from the provider.
+    pub struct Pending {
+        state: OAuthState,
+        store: InMemoryCredentialStore,
+        redirect: String,
+        client_secret: Option<String>,
+        /// Where to send the person.
+        pub authorize_url: String,
+        /// The `state` the provider will hand back (it keys the pending sign-in).
+        pub csrf: String,
+    }
+
+    async fn manager(url: &str, allow_local: bool) -> Result<AuthorizationManager, Error> {
+        let made = if allow_local { AuthorizationManager::new_allowing_private_addresses(url).await } else { AuthorizationManager::new(url).await };
+        made.map_err(failed)
+    }
+
+    /// Start signing in to the server at `url`; the provider sends the person back to
+    /// `redirect`. `client`: a client the owner registered with the provider (Slack and
+    /// Google need one); `None` = the server's own registration.
+    ///
+    /// # Errors
+    /// When the server's sign-in can't be discovered or started.
+    pub async fn begin(url: &str, redirect: &str, client: Option<(String, Option<String>)>, allow_local: bool) -> Result<Pending, Error> {
+        crate::checked(&crate::Server { url: url.to_string(), token: None, allow_local })?;
+        let store = InMemoryCredentialStore::default();
+        let mut m = manager(url, allow_local).await?;
+        m.set_credential_store(store.clone());
+        let mut state = OAuthState::Unauthorized(m);
+        let mut request = AuthorizationRequest::new(redirect.to_string());
+        request.client_name = Some("Agora".into());
+        let client_secret = client.as_ref().and_then(|(_, s)| s.clone());
+        if let Some((id, secret)) = client {
+            request = request.with_preregistered_client(id);
+            request.client_secret = secret;
+        }
+        state.start_authorization(request).await.map_err(failed)?;
+        let authorize_url = state.get_authorization_url().await.map_err(failed)?;
+        let csrf = reqwest::Url::parse(&authorize_url).ok().and_then(|u| u.query_pairs().find(|(k, _)| k == "state").map(|(_, v)| v.into_owned())).ok_or_else(|| failed("the provider's sign-in URL has no state"))?;
+        Ok(Pending { state, store, redirect: redirect.to_string(), client_secret, authorize_url, csrf })
+    }
+
+    /// Finish with what the provider sent back: the credentials, as JSON to seal.
+    ///
+    /// # Errors
+    /// When the code can't be exchanged.
+    pub async fn finish(mut pending: Pending, code: &str) -> Result<String, Error> {
+        pending.state.handle_callback(code, &pending.csrf).await.map_err(failed)?;
+        let stored = pending.store.load().await.map_err(failed)?.ok_or_else(|| failed("no credentials came back"))?;
+        Ok(json!({ "stored": stored, "client_secret": pending.client_secret, "redirect": pending.redirect }).to_string())
+    }
+
+    /// A current access token for the server at `url`, refreshing it if it's (nearly)
+    /// expired. Answers the token, and the credentials again if they changed (seal and
+    /// keep those instead).
+    ///
+    /// # Errors
+    /// When the credentials can't be read, or the token can't be refreshed (sign in again).
+    pub async fn token(url: &str, sealed_json: &str, allow_local: bool) -> Result<(String, Option<String>), Error> {
+        let mut saved: Value = serde_json::from_str(sealed_json).map_err(failed)?;
+        let stored: StoredCredentials = serde_json::from_value(saved["stored"].clone()).map_err(failed)?;
+        let store = InMemoryCredentialStore::default();
+        store.save(stored.clone()).await.map_err(failed)?;
+        let mut m = manager(url, allow_local).await?;
+        m.set_credential_store(store.clone());
+        if let Ok(token) = m.get_access_token().await {
+            return Ok((token, None));
+        }
+        // It needs a refresh: that takes the provider's metadata and the client.
+        let metadata = m.resolve_metadata().await.map_err(failed)?.metadata;
+        m.set_metadata(metadata);
+        let mut config = OAuthClientConfig::new(stored.client_id.clone(), saved["redirect"].as_str().unwrap_or_default());
+        config.client_secret = saved["client_secret"].as_str().map(str::to_string);
+        config.scopes.clone_from(&stored.granted_scopes);
+        m.configure_client(config).map_err(failed)?;
+        let token = m.get_access_token().await.map_err(|e| Error::Refused(format!("sign in again: {e}")))?;
+        let fresh = store.load().await.map_err(failed)?.ok_or_else(|| failed("the refreshed credentials are gone"))?;
+        saved["stored"] = serde_json::to_value(fresh).map_err(failed)?;
+        Ok((token, Some(saved.to_string())))
+    }
+}

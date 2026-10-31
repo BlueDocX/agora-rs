@@ -102,6 +102,9 @@ pub(crate) struct Connector {
     /// The token, sealed (hex of nonce and ciphertext); never sent back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// OAuth credentials (tokens, refresh token, client), sealed; never sent back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<String>,
     pub tools: Vec<ToolPolicy>,
     pub added_ms: u64,
     #[serde(default)]
@@ -115,13 +118,14 @@ struct View<'a> {
     name: &'a str,
     url: &'a str,
     has_token: bool,
+    signed_in: bool,
     paused: bool,
     tools: &'a [ToolPolicy],
 }
 
 impl Connector {
     fn view(&self) -> View<'_> {
-        View { id: &self.id, name: &self.name, url: &self.url, has_token: self.token.is_some(), paused: self.paused, tools: &self.tools }
+        View { id: &self.id, name: &self.name, url: &self.url, has_token: self.token.is_some(), signed_in: self.oauth.is_some(), paused: self.paused, tools: &self.tools }
     }
 }
 
@@ -247,8 +251,21 @@ fn merge(tools: &mut Vec<ToolPolicy>, fresh: Vec<agora_mcp::ToolDef>) -> Vec<Str
     changed
 }
 
+/// A sign-in waiting for the person to come back from the provider.
+struct SigningIn {
+    name: String,
+    url: String,
+    at_ms: u64,
+    pending: agora_mcp::oauth::Pending,
+}
+
+/// How long a sign-in may take.
+const SIGN_IN_MS: u64 = 15 * 60 * 1000;
+
 pub(crate) struct Connectors {
     list: Vec<Connector>,
+    /// Sign-ins under way, by the `state` the provider will hand back.
+    signing_in: BTreeMap<String, SigningIn>,
     sealer: Sealer,
     store: Option<Store>,
     /// Whether servers on private addresses may be connected (a laptop office).
@@ -258,7 +275,7 @@ pub(crate) struct Connectors {
 impl Connectors {
     pub fn new(loaded: &[(String, String)], key: Option<&Path>, store: Option<Store>, allow_local: bool) -> Self {
         let list = loaded.iter().find(|(k, _)| k == "connectors").and_then(|(_, v)| serde_json::from_str(v).ok()).unwrap_or_default();
-        Self { list, sealer: Sealer::new(key), store, allow_local }
+        Self { list, signing_in: BTreeMap::new(), sealer: Sealer::new(key), store, allow_local }
     }
 
     fn save(&self) {
@@ -272,9 +289,33 @@ impl Connectors {
         self.list.iter().filter(|c| !c.paused).flat_map(|c| c.tools.iter().filter(|t| t.class != Class::Off).map(move |t| format!("{}.{}", c.id, t.name))).collect()
     }
 
-    fn server(&self, c: &Connector) -> agora_mcp::Server {
-        agora_mcp::Server { url: c.url.clone(), token: c.token.as_deref().and_then(|t| self.sealer.open(t)), allow_local: self.allow_local }
-    }
+}
+
+/// The server to call for connector `id`, with a current token: its own, or (for a
+/// signed-in one) a fresh access token, refreshed if it had (nearly) expired; the
+/// refreshed credentials are sealed and kept.
+async fn server_of(hub: &Hub, id: &str) -> Result<agora_mcp::Server, String> {
+    let (url, token, oauth, allow_local) = {
+        let c = hub.connectors();
+        let x = c.list.iter().find(|x| x.id == id).ok_or("no such connector")?;
+        (x.url.clone(), x.token.as_deref().and_then(|t| c.sealer.open(t)), x.oauth.as_deref().and_then(|t| c.sealer.open(t)), c.allow_local)
+    };
+    let token = match oauth {
+        None => token,
+        Some(creds) => {
+            let (access, renewed) = agora_mcp::oauth::token(&url, &creds, allow_local).await.map_err(|e| e.to_string())?;
+            if let Some(renewed) = renewed {
+                let mut c = hub.connectors();
+                let sealed = c.sealer.seal(&renewed);
+                if let Some(x) = c.list.iter_mut().find(|x| x.id == id) {
+                    x.oauth = Some(sealed);
+                }
+                c.save();
+            }
+            Some(access)
+        }
+    };
+    Ok(agora_mcp::Server { url, token, allow_local })
 }
 
 /// The owner decides about connected tools, once someone owns the office.
@@ -296,6 +337,114 @@ pub(crate) fn routes() -> axum::Router<Arc<Hub>> {
         .route("/api/connectors/{id}/refresh", post(refresh))
         .route("/api/connectors/{id}/pause", post(pause))
         .route("/api/connectors/{id}/tools/{tool}", patch(set_tool))
+        .route("/api/connectors/oauth", post(sign_in))
+        .route("/api/connectors/oauth/callback", get(signed_in))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SignIn {
+    name: String,
+    url: String,
+    /// A client the owner registered with the provider (Slack and Google need one).
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    client_secret: Option<String>,
+}
+
+/// Where the provider sends the person back: this office's own callback, on the host
+/// they reached it by (HTTPS unless it's this machine).
+fn callback_url(headers: &HeaderMap) -> String {
+    let host = headers.get(axum::http::header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("127.0.0.1");
+    let local = host.starts_with("127.0.0.1") || host.starts_with("localhost") || host.starts_with("[::1]");
+    format!("{}://{host}/api/connectors/oauth/callback", if local { "http" } else { "https" })
+}
+
+/// `POST /api/connectors/oauth {name, url, client_id?, client_secret?}`: start signing in
+/// to a server that needs OAuth. Answers `{authorize_url}`: send the owner there.
+async fn sign_in(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Json<SignIn>, JsonRejection>) -> Response {
+    if !authorized(&hub, &headers) {
+        return unauthorized();
+    }
+    if !may_manage(&hub, &headers) {
+        return error(StatusCode::FORBIDDEN, "only the office's owner can connect tools");
+    }
+    let Json(body) = match body {
+        Ok(b) => b,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that isn't a valid sign-in: {}", e.body_text())),
+    };
+    let id = slug(&body.name);
+    if id.is_empty() || RESERVED.contains(&id.as_str()) || hub.connectors().list.iter().any(|x| x.id == id) {
+        return error(StatusCode::BAD_REQUEST, "pick another name: it must have letters or digits, not be a sandbox tool's, and not be taken");
+    }
+    let client = body.client_id.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).map(|c| (c, body.client_secret.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())));
+    let allow_local = hub.connectors().allow_local;
+    let pending = match agora_mcp::oauth::begin(body.url.trim(), &callback_url(&headers), client, allow_local).await {
+        Ok(p) => p,
+        Err(e) => return error(StatusCode::BAD_GATEWAY, &e.to_string()),
+    };
+    let authorize_url = pending.authorize_url.clone();
+    let mut c = hub.connectors();
+    let now = crate::now_ms();
+    c.signing_in.retain(|_, s| now.saturating_sub(s.at_ms) < SIGN_IN_MS);
+    c.signing_in.insert(pending.csrf.clone(), SigningIn { name: body.name.trim().chars().take(40).collect(), url: body.url.trim().to_string(), at_ms: now, pending });
+    Json(serde_json::json!({ "authorize_url": authorize_url })).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Callback {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+fn page(title: &str, text: &str) -> Response {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    axum::response::Html(format!(
+        "<!doctype html><meta charset=utf-8><title>{t}</title><body style=\"font:16px system-ui;max-width:520px;margin:12vh auto;padding:0 20px\"><h2>{t}</h2><p>{x}</p><p>You can close this tab and go back to the office.</p>",
+        t = esc(title),
+        x = esc(text)
+    ))
+    .into_response()
+}
+
+/// `GET /api/connectors/oauth/callback?code&state`: the provider sends the owner back
+/// here. The one-time `state` is what proves the sign-in is the office's own (the
+/// office's cookie isn't sent on a redirect from another site).
+async fn signed_in(State(hub): State<Arc<Hub>>, axum::extract::Query(q): axum::extract::Query<Callback>) -> Response {
+    let Some(state) = q.state else { return page("Sign-in failed", "The provider didn't say which sign-in this is.") };
+    let Some(waiting) = hub.connectors().signing_in.remove(&state) else { return page("Sign-in failed", "This sign-in isn't waiting any more (it finished, or took over 15 minutes). Start again from the office.") };
+    if crate::now_ms().saturating_sub(waiting.at_ms) > SIGN_IN_MS {
+        return page("Sign-in failed", "This sign-in took over 15 minutes. Start again from the office.");
+    }
+    let Some(code) = q.code else { return page("Sign-in cancelled", &q.error.unwrap_or_else(|| "The provider sent no code.".into())) };
+    let creds = match agora_mcp::oauth::finish(waiting.pending, &code).await {
+        Ok(c) => c,
+        Err(e) => return page("Sign-in failed", &e.to_string()),
+    };
+    let allow_local = hub.connectors().allow_local;
+    let tools = match agora_mcp::oauth::token(&waiting.url, &creds, allow_local).await {
+        Ok((access, _)) => agora_mcp::list_tools(&agora_mcp::Server { url: waiting.url.clone(), token: Some(access), allow_local }).await,
+        Err(e) => Err(e),
+    };
+    let tools = match tools {
+        Ok(t) => t,
+        Err(e) => return page("Signed in, but the tools couldn't be listed", &e.to_string()),
+    };
+    let mut c = hub.connectors();
+    let id = slug(&waiting.name);
+    if c.list.iter().any(|x| x.id == id) {
+        return page("Sign-in failed", &format!("a connector called {id} was added meanwhile"));
+    }
+    let sealed = c.sealer.seal(&creds);
+    let n = tools.len();
+    c.list.push(Connector { id, name: waiting.name.clone(), url: waiting.url, token: None, oauth: Some(sealed), tools: tools.into_iter().map(policy).collect(), added_ms: crate::now_ms(), paused: false });
+    c.save();
+    drop(c);
+    page(&format!("{} is connected", waiting.name), &format!("{n} tools came in, all off. Turn on the ones you want in the office's Tools."))
 }
 
 pub(crate) async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
@@ -343,7 +492,7 @@ pub(crate) async fn add(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: R
     };
     let mut c = hub.connectors();
     let sealed = token.as_deref().map(|t| c.sealer.seal(t));
-    let connector = Connector { id, name: body.name.trim().chars().take(40).collect(), url: server.url, token: sealed, tools: tools.into_iter().map(policy).collect(), added_ms: crate::now_ms(), paused: false };
+    let connector = Connector { id, name: body.name.trim().chars().take(40).collect(), url: server.url, token: sealed, oauth: None, tools: tools.into_iter().map(policy).collect(), added_ms: crate::now_ms(), paused: false };
     c.list.push(connector);
     c.save();
     let added = c.list.last().map(|x| serde_json::to_value(x.view()).unwrap_or_default());
@@ -366,12 +515,11 @@ pub(crate) async fn refresh(State(hub): State<Arc<Hub>>, UrlPath(id): UrlPath<St
 
 /// List `id`'s tools again and merge: answers the tools that were on and changed.
 async fn recheck(hub: &Hub, id: &str) -> Result<Vec<String>, String> {
-    let server = {
-        let c = hub.connectors();
-        let connector = c.list.iter().find(|x| x.id == id).ok_or("no such connector")?;
-        c.server(connector)
-    };
-    let fresh = agora_mcp::list_tools(&server).await.map_err(|e| e.to_string())?;
+    recheck_with(hub, id, &server_of(hub, id).await?).await
+}
+
+async fn recheck_with(hub: &Hub, id: &str, server: &agora_mcp::Server) -> Result<Vec<String>, String> {
+    let fresh = agora_mcp::list_tools(server).await.map_err(|e| e.to_string())?;
     let mut c = hub.connectors();
     let connector = c.list.iter_mut().find(|x| x.id == id).ok_or("no such connector")?;
     let changed = merge(&mut connector.tools, fresh);
@@ -496,17 +644,20 @@ impl OfficeGateway {
     /// `only`: the tools an agent may use (`None` = every tool that's on).
     pub async fn prepare(hub: &Hub, approver: Arc<dyn Approver>, only: Option<&[String]>) -> Self {
         let active: Vec<String> = hub.connectors().list.iter().filter(|c| !c.paused && c.tools.iter().any(|t| t.class != Class::Off)).map(|c| c.id.clone()).collect();
-        let mut unreachable = Vec::new();
+        // A connector that can't be reached (or signed in to) has no tools this time.
+        let mut servers = BTreeMap::new();
         for id in &active {
-            if recheck(hub, id).await.is_err() {
-                unreachable.push(id.clone());
+            if let Ok(server) = server_of(hub, id).await
+                && recheck_with(hub, id, &server).await.is_ok()
+            {
+                servers.insert(id.clone(), server);
             }
         }
         let c = hub.connectors();
         let mut tools = Vec::new();
         let mut routes = BTreeMap::new();
-        for connector in c.list.iter().filter(|x| !x.paused && !unreachable.contains(&x.id)) {
-            let server = c.server(connector);
+        for connector in c.list.iter().filter(|x| !x.paused) {
+            let Some(server) = servers.get(&connector.id) else { continue };
             for t in &connector.tools {
                 let Some(weight) = t.class.weight() else { continue };
                 let id = format!("{}.{}", connector.id, t.name);

@@ -663,9 +663,14 @@
       <div class="chips" id="tlcatalog"></div>
       <label for="tlname">Name</label><input id="tlname" maxlength="40" required placeholder="e.g. GitHub">
       <label for="tlurl">MCP server URL (https://)</label><input id="tlurl" required placeholder="https://…/mcp" spellcheck="false">
-      <label for="tltoken">Token, if it needs one (kept sealed; never shown again)</label><input id="tltoken" type="password" autocomplete="off" spellcheck="false">
+      <label for="tltoken">Token, if it takes one (kept sealed; never shown again)</label><input id="tltoken" type="password" autocomplete="off" spellcheck="false">
+      <details id="tlclient"><summary>Your own OAuth client (Slack, Google and HubSpot need one)</summary>
+        <label for="tlcid">Client ID</label><input id="tlcid" autocomplete="off" spellcheck="false">
+        <label for="tlcsecret">Client secret</label><input id="tlcsecret" type="password" autocomplete="off" spellcheck="false">
+        <p class="note">Register the redirect URL <code id="tlredirect"></code> with the provider.</p>
+      </details>
       <p class="note" id="tlnote"></p>
-      <div class="row"><button class="pill butter" id="tlgo">Connect</button></div>
+      <div class="row"><button class="pill ghost" id="tloauth" type="button">Sign in instead</button><button class="pill butter" id="tlgo">Connect</button></div>
     </form>
   </nav>
   <div class="tl-main" id="tlmain"><p class="note">Pick a connector, or connect one. Every tool starts off: you decide what each may do.</p></div>
@@ -2006,10 +2011,15 @@ function approvalCard(e, events) {
   return li;
 }
 
-// Official remote MCP servers that take a token (checked against each vendor's docs,
-// 2026-11-01). Servers that need OAuth (Slack, Google, Sentry, HubSpot, Asana) aren't
-// listed until the office can sign in to them.
+// Official remote MCP servers (checked against each vendor's docs, 2026-11-01): those
+// that take a token, and those you sign in to (OAuth; some need your own client).
 const CATALOG = [
+  { name: "Slack", url: "https://mcp.slack.com/mcp", oauth: true, hint: "signing in with a Slack app of yours (its client ID and secret)" },
+  { name: "Gmail", url: "https://gmailmcp.googleapis.com/mcp/v1", oauth: true, hint: "signing in with your Google Cloud OAuth client (Workspace Developer Preview)" },
+  { name: "Google Calendar", url: "https://calendarmcp.googleapis.com/mcp/v1", oauth: true, hint: "signing in with your Google Cloud OAuth client (Workspace Developer Preview)" },
+  { name: "Sentry", url: "https://mcp.sentry.dev/mcp", oauth: true, hint: "signing in to Sentry" },
+  { name: "Asana", url: "https://mcp.asana.com/v2/mcp", oauth: true, hint: "signing in to Asana" },
+  { name: "HubSpot", url: "https://mcp.hubspot.com", oauth: true, hint: "signing in with a HubSpot MCP auth app of yours" },
   { name: "GitHub", url: "https://api.githubcopilot.com/mcp/", hint: "a fine-grained personal access token, limited to the repositories it may touch" },
   { name: "Linear", url: "https://mcp.linear.app/mcp", hint: "a Linear API key (a read-only key makes every tool read-only)" },
   { name: "Notion", url: "https://mcp.notion.com/mcp", hint: "a Notion MCP token (Business or Enterprise; a workspace owner creates it)" },
@@ -2035,14 +2045,17 @@ function renderTools() {
     const b = el("button", "tl-conn" + (toolsPick === c.id ? " on" : ""));
     b.type = "button";
     const on = c.tools.filter((t) => t.class !== "off").length;
-    b.append(el("b", null, c.name), el("small", null, `${c.paused ? "Paused · " : ""}${on} of ${c.tools.length} tools on · ${c.has_token ? "token sealed" : "no token"}`));
+    b.append(el("b", null, c.name), el("small", null, `${c.paused ? "Paused · " : ""}${on} of ${c.tools.length} tools on · ${c.signed_in ? "signed in" : c.has_token ? "token sealed" : "no token"}`));
     b.onclick = () => { toolsPick = c.id; renderTools(); };
     return b;
   }));
   $("tlcatalog").replaceChildren(...CATALOG.map((p) => {
     const b = el("button", null, p.name);
     b.type = "button"; b.title = `Needs ${p.hint}`;
-    b.onclick = () => { $("tlname").value = p.name; $("tlurl").value = p.url; $("tlnote").textContent = `${p.name} needs ${p.hint}.`; $("tltoken").focus(); };
+    b.onclick = () => {
+      $("tlname").value = p.name; $("tlurl").value = p.url; $("tlnote").textContent = `${p.name} needs ${p.hint}.`;
+      if (p.oauth) $("tloauth").focus(); else $("tltoken").focus();
+    };
     return b;
   }));
   const c = connectors.find((x) => x.id === toolsPick);
@@ -2100,6 +2113,24 @@ async function connectorCall(url, method, body, noteEl = $("tlnote")) {
 }
 $("toolsbtn").onclick = () => { $("tools").showModal(); renderTools(); loadConnectors(); };
 $("tlclose").onclick = () => $("tools").close();
+$("tlredirect").textContent = `${location.origin}/api/connectors/oauth/callback`;
+// Sign in (OAuth): the provider's page opens; the connector appears once it's done.
+$("tloauth").onclick = async () => {
+  $("tlnote").textContent = "Starting the sign-in…";
+  const res = await fetch("/api/connectors/oauth", { method: "POST", headers: JSON_HEADERS,
+    body: JSON.stringify({ name: $("tlname").value, url: $("tlurl").value, client_id: $("tlcid").value || undefined, client_secret: $("tlcsecret").value || undefined }) }).catch(() => null);
+  const body = await res?.json().catch(() => ({}));
+  if (!res?.ok) { $("tlnote").textContent = body?.error || "Couldn't start the sign-in."; return; }
+  window.open(body.authorize_url, "_blank", "noopener");
+  $("tlnote").textContent = "Finish signing in on the provider's page. This updates when you're back.";
+  $("tlcsecret").value = "";
+  const id = $("tlname").value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  for (let i = 0; i < 300; i++) { // up to 15 minutes, like the sign-in itself
+    await new Promise((r) => setTimeout(r, 3000));
+    await loadConnectors();
+    if (connectors.some((c) => c.id === id)) { toolsPick = id; renderTools(); $("tlnote").textContent = "Signed in. Its tools came in off: turn on the ones you want."; return; }
+  }
+};
 $("tlconnect").onsubmit = async (ev) => {
   ev.preventDefault();
   $("tlgo").disabled = true; $("tlnote").textContent = "Connecting and listing its tools…";

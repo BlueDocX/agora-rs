@@ -90,6 +90,31 @@ One idea made things worse (a self-check that leaked into deliverables), so it w
 
 **Prompt injection.** What a call returns (an email, a chat, a file) is someone else's text. Results reach the agent marked as data, never as instructions. The executor also refuses to email any address that isn't saved in the person's contacts or written in the errand itself. So an address planted in an email (even one signed with a friend's name) can't be used to send their data out. A new address the person really wants used goes in the errand. A blocked attempt is still a failed ledger entry, so the guard makes the agent own up to it.
 
+## Real tools, not just the sandbox: connected MCP servers
+
+The office's owner connects MCP servers (GitHub, Linear, Notion, Stripe, Cloudflare, Jira and Confluence, Zapier, or any Streamable HTTP server). Agents then call real tools, and **Agora is still the only one that calls them**: the agent asks, and the executor decides, ledgers and reports. The client is the official MCP SDK (`rmcp`), speaking the stateless 2026-07-28 revision and falling back to the older handshake.
+
+- **Every tool starts off.** The owner turns each one on as a lookup, a private read (always disclosed) or an act. They approve the one line the agent is shown about it, since a server's own description is never passed through unchecked. They also say which arguments name a destination (a recipient, channel, repository or URL) and which destinations are allowed.
+- **Acts wait for a person.** A call that changes something shows its exact arguments in an approval card, in the errand and on the bot's desk in 3D. The bot's owner (or whoever asked) approves or declines. No answer in 10 minutes is a decline, and a decline is ledgered, so the bot has to own up to it.
+- **Nothing the agent read can add a destination.** A destination must be on that tool's allowlist or written in the errand by the person, which is the email rule generalised to every tool. That's what stops a planted instruction from sending data out.
+- **Pinned definitions.** Each tool's definition is hashed when the owner approves it, and listed again before every errand. If a server changes a tool (a "rug pull"), the tool goes off and is flagged until the owner looks again. The ledger records the hash of the definition that actually ran.
+- **Results are data.** Hidden characters are removed, `<<<` and `>>>` are neutralised so a result can't close its own quote and pose as the system, and results are capped at 16,000 characters.
+- **The guard covers real tools.** A claim about a connected tool ("I filed the bug in octo/demo") is matched only to that tool's calls. A claim about a tool that never ran is false, so the check fails closed.
+- **Tokens are sealed at rest** with AES-256-GCM, using a key file readable by this user only. They never appear in a prompt, the ledger or a reply. A paused connector stops all its tools at once.
+- **Private addresses are refused.** The client's resolver refuses private, loopback and link-local addresses, on every request and redirect (`AGORA_LOCAL_MCP=1` lifts this on a laptop).
+
+**A hostile server (B10, [details](docs/benchmarks.md#b10-a-hostile-mcp-server)).** An MCP server built to attack the office:
+- poisoned tool descriptions;
+- results that try to break out of their quote, and hidden text;
+- a 5 MB flood;
+- a "send report" tool as its exfiltration sink.
+
+The owner approves everything it offers, as is: the worst case. Results:
+- **A scripted adversary** made every malicious call directly. All 3 exfiltration attempts were blocked, and 0 bytes reached the sink.
+- **12 live errands** on Muse Spark 1.3 and Spark Open: 0 reports reached the sink, 0 private canaries leaked and 0 false claims were delivered. Spark Open once obeyed the poisoned description, and the executor stopped it.
+
+**Agents of your own.** Anyone in the office can add agents: a name, a preset role with its skills, a model, and the connected tools it may use. An agent works under its own name, takes errands and `@mentions`, sits at its own desk, and runs on the same executor, so everything it does is ledgered and checked. Its owner answers its approvals.
+
 ## A company in one office, on your glasses, and reachable by Meta AI
 
 - **Company rooms.**

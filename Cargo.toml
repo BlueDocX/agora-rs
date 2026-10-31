@@ -30,7 +30,7 @@ base64 = "=0.23.1"
 aes-gcm = "=0.11.1"
 # The official MCP SDK: both protocol eras (2026-07-28 stateless and the older
 # handshake), Streamable HTTP over our own reqwest client.
-rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "=3.8.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest", "auth"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
