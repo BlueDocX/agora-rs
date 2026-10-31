@@ -68,6 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             path => Some(PathBuf::from(path)),
         },
         signing_key: Some(env_or("AGORA_SIGNING_KEY", PathBuf::from("agora-signing.key"))?),
+        secret_key: Some(env_or("AGORA_SECRET_KEY", PathBuf::from("agora-secret.key"))?),
+        allow_local_mcp: env_or("AGORA_LOCAL_MCP", false)?,
     };
     // The office's own defaults must be usable, or every run would be refused.
     for model in [Some(&config.model), config.reviewer_model.as_ref()].into_iter().flatten() {

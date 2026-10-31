@@ -37,6 +37,16 @@ pub enum Tool {
     FilesRead,
     #[serde(rename = "files.write")]
     FilesWrite,
+    /// A connected tool (an MCP server's) that only looks things up. Which tool it
+    /// was is in [`Action::call`]; these three only carry how much it matters.
+    #[serde(rename = "connected.lookup")]
+    ConnectedLookup,
+    /// A connected tool that reads something private.
+    #[serde(rename = "connected.read")]
+    ConnectedRead,
+    /// A connected tool that changes something or speaks for the person.
+    #[serde(rename = "connected.act")]
+    ConnectedAct,
 }
 
 pub const TOOLS: [Tool; 12] = [
@@ -82,20 +92,46 @@ impl Tool {
             Self::FilesList => "files.list",
             Self::FilesRead => "files.read",
             Self::FilesWrite => "files.write",
+            Self::ConnectedLookup => "connected.lookup",
+            Self::ConnectedRead => "connected.read",
+            Self::ConnectedAct => "connected.act",
         }
     }
 
+    /// A sandbox tool by name (connected tools aren't found here: they have names
+    /// of their own, in [`Action::call`]).
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         TOOLS.into_iter().find(|t| t.name() == name)
     }
 
+    /// Any tool by its stored name, connected kinds included (for reading a ledger).
+    #[must_use]
+    pub fn from_stored_name(name: &str) -> Option<Self> {
+        Self::from_name(name).or_else(|| [Self::ConnectedLookup, Self::ConnectedRead, Self::ConnectedAct].into_iter().find(|t| t.name() == name))
+    }
+
+    /// The connected-tool kind for a weight.
+    #[must_use]
+    pub const fn connected(weight: Weight) -> Self {
+        match weight {
+            Weight::Lookup => Self::ConnectedLookup,
+            Weight::PrivateRead => Self::ConnectedRead,
+            Weight::Act => Self::ConnectedAct,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_connected(self) -> bool {
+        matches!(self, Self::ConnectedLookup | Self::ConnectedRead | Self::ConnectedAct)
+    }
+
     #[must_use]
     pub const fn weight(self) -> Weight {
         match self {
-            Self::ContactsSearch | Self::CalendarList | Self::EmailSearch | Self::FilesList => Weight::Lookup,
-            Self::ContactsRead | Self::EmailRead | Self::MessagesRead | Self::FilesRead => Weight::PrivateRead,
-            Self::CalendarCreate | Self::EmailSend | Self::MessagesSend | Self::FilesWrite => Weight::Act,
+            Self::ContactsSearch | Self::CalendarList | Self::EmailSearch | Self::FilesList | Self::ConnectedLookup => Weight::Lookup,
+            Self::ContactsRead | Self::EmailRead | Self::MessagesRead | Self::FilesRead | Self::ConnectedRead => Weight::PrivateRead,
+            Self::CalendarCreate | Self::EmailSend | Self::MessagesSend | Self::FilesWrite | Self::ConnectedAct => Weight::Act,
         }
     }
 
@@ -115,6 +151,7 @@ impl Tool {
             Self::FilesList => "lists every file",
             Self::FilesRead => "target = a path",
             Self::FilesWrite => "target = a path, text = the whole new content",
+            Self::ConnectedLookup | Self::ConnectedRead | Self::ConnectedAct => "a connected tool: args = its arguments as JSON",
         }
     }
 }
@@ -128,6 +165,22 @@ pub struct Action {
     pub when: String,
     #[serde(default)]
     pub text: String,
+    /// For a connected tool: which one and with what. `None` for the sandbox's own
+    /// (and absent from their serialized form, so their ledger hashes don't change).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<Call>,
+}
+
+/// A call to a connected tool (an MCP server's), as the executor made it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Call {
+    /// `server.tool`, as the person approved it (e.g. `github.create_issue`).
+    pub tool: String,
+    /// SHA-256 of the tool's definition when it was approved: a receipt proves which
+    /// definition ran.
+    pub def: String,
+    /// The arguments, as the JSON text that was sent.
+    pub args: String,
 }
 
 /// What a call did. `subject` names what it touched in canonical form (a contact's
@@ -428,6 +481,7 @@ impl World {
         let fail = |subject: &str, why: String| Outcome { ok: false, subject: subject.to_string(), result: why };
         let done = |subject: String, result: String| Outcome { ok: true, subject, result };
         match action.tool {
+            Tool::ConnectedLookup | Tool::ConnectedRead | Tool::ConnectedAct => fail(target, "A connected tool doesn't run in the sandbox.".into()),
             Tool::ContactsSearch => {
                 let q = norm(target);
                 let hits: Vec<&str> = self.contacts.iter().filter(|c| norm(c.name).contains(&q)).map(|c| c.name).collect();
@@ -517,7 +571,7 @@ mod tests {
     use super::*;
 
     fn act(tool: Tool, target: &str, when: &str, text: &str) -> Action {
-        Action { tool, target: target.into(), when: when.into(), text: text.into() }
+        Action { tool, target: target.into(), when: when.into(), text: text.into(), call: None }
     }
 
     #[test]

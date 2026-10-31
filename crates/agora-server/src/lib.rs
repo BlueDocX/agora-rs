@@ -43,6 +43,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod attach;
 mod chat;
 mod company;
+mod connectors;
 mod errands;
 mod mcp;
 mod office;
@@ -146,6 +147,11 @@ pub struct HubConfig {
     pub state: Option<PathBuf>,
     /// The office's Ed25519 key for signing ledger heads. `None` = a new key each start.
     pub signing_key: Option<PathBuf>,
+    /// The key that seals connector tokens at rest. `None` = a key for this run only.
+    pub secret_key: Option<PathBuf>,
+    /// Let connectors reach servers on private addresses (a laptop office only:
+    /// never on a shared server, where it would open the office's own network).
+    pub allow_local_mcp: bool,
 }
 
 impl HubConfig {
@@ -167,6 +173,8 @@ impl HubConfig {
             hosts: Vec::new(),
             state: None,
             signing_key: None,
+            secret_key: None,
+            allow_local_mcp: false,
         }
     }
 }
@@ -228,6 +236,7 @@ struct Hub {
     chat_budget: Option<Arc<Budget>>,
     errands: Mutex<errands::Errands>,
     company: Mutex<company::Company>,
+    connectors: connectors::Shared,
     signer: Arc<Signer>,
     store: Option<store::Store>,
     /// Seconds of audio transcribed while the server runs.
@@ -240,6 +249,12 @@ struct Hub {
     today: std::sync::atomic::AtomicUsize,
     /// What the office remembers across days: see `agora_engine::memory`.
     memory: Arc<agora_engine::memory::Memory>,
+}
+
+impl Hub {
+    pub(crate) fn connectors(&self) -> std::sync::MutexGuard<'_, connectors::Connectors> {
+        self.connectors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 impl Hub {
@@ -316,6 +331,7 @@ pub fn app(config: HubConfig) -> Router {
         agora_engine::memory::Memory::in_memory()
     });
     let Ok(memory) = memory else { panic!("SQLite can't open even an in-memory database") };
+    let connectors = connectors::Connectors::new(&loaded.kv, config.secret_key.as_deref(), store.clone(), config.allow_local_mcp);
     let today = loaded.kv.iter().find(|(k, _)| k == "day").and_then(|(_, v)| v.parse().ok()).unwrap_or(0usize);
     let hub = Arc::new(Hub {
         config,
@@ -324,6 +340,7 @@ pub fn app(config: HubConfig) -> Router {
         chat_budget,
         errands: Mutex::default(),
         company: Mutex::new(company),
+        connectors: Mutex::new(connectors),
         signer: Arc::new(signer),
         store,
         transcribed_s: std::sync::atomic::AtomicU64::new(0),
@@ -370,12 +387,9 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/errands/{id}/ledger", get(errands::ledger))
         .route("/api/errands/{id}/forget", post(errands::forget))
         .route("/api/errands/{id}/receipt", get(errands::receipt))
-        .route("/api/office", get(office::view))
-        .route("/api/office/day", post(office::next_day))
-        .route("/api/memory/ask", post(office::ask))
-        .route("/api/memory/facts/{id}", axum::routing::delete(office::delete_fact))
-        .route("/api/memory/facts/{id}/keep", post(office::keep_fact))
-        .route("/api/memory/facts/{id}/restore", post(office::restore_fact))
+        .route("/api/errands/{id}/approvals/{approval}", post(errands::decide))
+        .merge(connectors::routes())
+        .merge(office::routes())
         .route("/api/transcribe", post(voice::transcribe).layer(DefaultBodyLimit::max(voice::MAX_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)))
         .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard_host))
         .layer(middleware::from_fn(access_log))
@@ -400,6 +414,11 @@ async fn signed_in(State(hub): State<Arc<Hub>>, request: Request, next: Next) ->
         return unauthorized();
     }
     next.run(request).await
+}
+
+/// Milliseconds since 1970.
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Refuse requests that don't name this server (see the module notes on DNS rebinding).

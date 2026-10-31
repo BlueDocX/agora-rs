@@ -48,6 +48,18 @@ struct View {
     growth: Vec<[usize; 5]>,
 }
 
+/// The office's day and memory routes.
+pub(crate) fn routes() -> axum::Router<Arc<Hub>> {
+    use axum::routing::{delete, get, post};
+    axum::Router::new()
+        .route("/api/office", get(view))
+        .route("/api/office/day", post(next_day))
+        .route("/api/memory/ask", post(ask))
+        .route("/api/memory/facts/{id}", delete(delete_fact))
+        .route("/api/memory/facts/{id}/keep", post(keep_fact))
+        .route("/api/memory/facts/{id}/restore", post(restore_fact))
+}
+
 pub(crate) async fn view(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     if !authorized(&hub, &headers) {
         return unauthorized();
@@ -61,7 +73,7 @@ pub(crate) async fn view(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Res
 }
 
 /// The owner decides about the office's days and memory, once someone owns it.
-fn may_run_office(hub: &Hub, headers: &HeaderMap) -> Option<String> {
+pub(crate) fn may_run_office(hub: &Hub, headers: &HeaderMap) -> Option<String> {
     let me = hub.member(headers);
     let anyone = hub.company().members_view().is_empty();
     match me {

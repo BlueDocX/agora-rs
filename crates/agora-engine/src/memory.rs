@@ -786,7 +786,7 @@ mod tests {
         let ledger = Ledger::in_memory("errand-aaaabbbbccccdddd").unwrap();
         let mut world = World::demo();
         for (tool, target) in [(Tool::ContactsRead, "Arjun"), (Tool::EmailRead, "e5"), (Tool::EmailSend, "priya.menon@example.in")] {
-            let a = Action { tool, target: target.into(), when: "Lunch".into(), text: "Thursday?".into() };
+            let a = Action { tool, target: target.into(), when: "Lunch".into(), text: "Thursday?".into(), call: None };
             let o = world.execute(&a);
             ledger.append("Scout", &a, &o).unwrap();
         }

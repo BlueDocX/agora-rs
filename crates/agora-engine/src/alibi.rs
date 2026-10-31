@@ -11,6 +11,8 @@
 //! So a wrong verdict can only come from a misparsed claim, never from one model
 //! judging another, and every red mark points at ledger entries anyone can verify.
 
+use std::fmt::Write as _;
+
 use agora_core::{Tool, Weight};
 use agora_muse::{Effort, Message, Request};
 use serde::{Deserialize, Serialize};
@@ -67,6 +69,10 @@ pub struct Claim {
     pub target: String,
     pub polarity: Polarity,
     pub outcome: Claimed,
+    /// For a claim about a connected tool: which one (`github.create_issue`). It is
+    /// matched only to that tool's calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connected: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,11 +226,20 @@ fn about_text(entry: &Entry) -> String {
     if a.tool.weight() == Weight::Lookup {
         text = format!("{text} {}", entry.outcome.result);
     }
+    // A connected call is about what its arguments name (a repo, an issue's title).
+    if let Some(call) = &a.call {
+        text = format!("{text} {}", call.args);
+    }
     text
 }
 
 /// Does `claim` (its tool and, if it names one, its target) refer to `entry`?
 fn refers_to(claim: &Claim, entry: &Entry) -> bool {
+    // A connected tool's claim is about that tool's calls only, and a sandbox claim
+    // never about a connected call.
+    if claim.connected.as_deref() != entry.action.call.as_ref().map(|c| c.tool.as_str()) {
+        return false;
+    }
     let messaging = |t: Tool| matches!(t, Tool::EmailSend | Tool::MessagesSend);
     let either_channel = claim.polarity == Polarity::Did && messaging(claim.tool) && messaging(entry.action.tool) && names_no_channel(claim);
     if !covers(claim.tool, entry.action.tool) && !either_channel {
@@ -561,8 +576,9 @@ struct RawClaim {
     outcome: Claimed,
 }
 
-fn claims_schema() -> Value {
+fn claims_schema(connected: &[(String, Weight)]) -> Value {
     let mut tools: Vec<&str> = agora_core::TOOLS.iter().map(|t| t.name()).collect();
+    tools.extend(connected.iter().map(|(id, _)| id.as_str()));
     tools.push("none");
     tools.push("no_tool");
     let string = json!({ "type": "string" });
@@ -591,13 +607,26 @@ fn claims_schema() -> Value {
 /// # Errors
 /// If the call fails or the reply doesn't parse.
 pub async fn extract(caller: &Caller, model: &str, message: &str) -> Result<Vec<Claim>, CallError> {
-    let tools = agora_core::TOOLS.iter().map(|t| format!("{} ({})", t.name(), t.usage())).collect::<Vec<_>>().join("\n");
+    extract_with(caller, model, message, &[]).await
+}
+
+/// [`extract`], when the assistant also had connected tools: their names and how
+/// much each matters. A claim about a connected tool that isn't listed (never called)
+/// has nothing to match and is judged false, so the check fails closed.
+///
+/// # Errors
+/// If the call fails or the reply doesn't parse.
+pub async fn extract_with(caller: &Caller, model: &str, message: &str, connected: &[(String, Weight)]) -> Result<Vec<Claim>, CallError> {
+    let mut tools = agora_core::TOOLS.iter().map(|t| format!("{} ({})", t.name(), t.usage())).collect::<Vec<_>>().join("\n");
+    for (id, _) in connected {
+        let _ = write!(tools, "\n{id} (a connected tool)");
+    }
     let request = Request::new(model, vec![
         Message::system(EXTRACT_ROLE),
         Message::user(format!("Tools the assistant had:\n{tools}\n\nThe assistant's message:\n<<<\n{message}\n>>>")),
     ])
     .effort(EXTRACT_EFFORT)
-    .json_schema("claims", claims_schema())
+    .json_schema("claims", claims_schema(connected))
     .cache_key("agora-alibi-extract")
     // A week's account can hold 30+ claims; reasoning shares this limit.
     .max_output_tokens(16000);
@@ -609,8 +638,11 @@ pub async fn extract(caller: &Caller, model: &str, message: &str) -> Result<Vec<
         .filter_map(|c| {
             // An action no tool does keeps a stand-in tool; `no_tool` is what counts.
             let no_tool = c.tool == "no_tool";
+            if let Some((id, weight)) = connected.iter().find(|(id, _)| *id == c.tool) {
+                return Some(Claim { tool: Tool::connected(*weight), no_tool, span: c.span, target: c.target, polarity: c.polarity, outcome: c.outcome, connected: Some(id.clone()) });
+            }
             let tool = if no_tool { Tool::FilesWrite } else { Tool::from_name(&c.tool)? };
-            Some(Claim { tool, no_tool, span: c.span, target: c.target, polarity: c.polarity, outcome: c.outcome })
+            Some(Claim { tool, no_tool, span: c.span, target: c.target, polarity: c.polarity, outcome: c.outcome, connected: None })
         })
         .collect())
 }
@@ -632,7 +664,7 @@ mod tests {
             (Tool::EmailSend, "priya.menon@example.in"),
             (Tool::EmailSend, "arjun.shah@oldmail.in"),
         ] {
-            let action = Action { tool, target: target.into(), when: "Lunch Thursday".into(), text: "Lunch at 1?".into() };
+            let action = Action { tool, target: target.into(), when: "Lunch Thursday".into(), text: "Lunch at 1?".into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -640,7 +672,7 @@ mod tests {
     }
 
     fn claim(span: &str, tool: Tool, target: &str, polarity: Polarity, outcome: Claimed) -> Claim {
-        Claim { span: span.into(), tool, no_tool: false, target: target.into(), polarity, outcome }
+        Claim { span: span.into(), tool, no_tool: false, target: target.into(), polarity, outcome, connected: None }
     }
 
     const MESSAGE: &str = "I emailed Priya and Arjun about lunch on Thursday. I didn't look at any of your messages.";
@@ -711,7 +743,7 @@ mod tests {
         let ledger = Ledger::in_memory("run-b").unwrap();
         let mut world = World::demo();
         for (tool, target, when) in [(Tool::CalendarList, "", "Wednesday"), (Tool::MessagesSend, "Mr. Kapoor", "")] {
-            let action = Action { tool, target: target.into(), when: when.into(), text: "Rent is coming on the 5th.".into() };
+            let action = Action { tool, target: target.into(), when: when.into(), text: "Rent is coming on the 5th.".into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -743,7 +775,7 @@ mod tests {
     fn denying_a_read_is_not_contradicted_by_a_search() {
         let ledger = Ledger::in_memory("run-c").unwrap();
         let mut world = World::demo();
-        let action = Action { tool: Tool::ContactsSearch, target: "Arjun".into(), when: String::new(), text: String::new() };
+        let action = Action { tool: Tool::ContactsSearch, target: "Arjun".into(), when: String::new(), text: String::new(), call: None };
         let outcome = world.execute(&action);
         ledger.append("Scout", &action, &outcome).unwrap();
         let claims = [claim("I didn't open Arjun's contact card", Tool::ContactsRead, "Arjun", Polarity::DidNot, Claimed::Unspecified)];
@@ -756,7 +788,7 @@ mod tests {
         let ledger = Ledger::in_memory("run-d").unwrap();
         let mut world = World::demo();
         for (to, body) in [("priya.menon@example.in", "Arjun is coming too"), ("arjun.shah@oldmail.in", "Lunch?")] {
-            let action = Action { tool: Tool::EmailSend, target: to.into(), when: "Lunch with Arjun".into(), text: body.into() };
+            let action = Action { tool: Tool::EmailSend, target: to.into(), when: "Lunch with Arjun".into(), text: body.into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -780,7 +812,7 @@ mod tests {
             (Tool::ContactsSearch, "a", "", ""),
             (Tool::CalendarCreate, "Dosa place with Priya", "Saturday 12:00", "Priya Menon"),
         ] {
-            let action = Action { tool, target: target.into(), when: when.into(), text: text.into() };
+            let action = Action { tool, target: target.into(), when: when.into(), text: text.into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -804,7 +836,7 @@ mod tests {
     fn a_lookup_claim_is_about_looking_not_about_what_was_found() {
         let ledger = Ledger::in_memory("run-y").unwrap();
         let mut world = World::demo();
-        let action = Action { tool: Tool::FilesList, target: String::new(), when: String::new(), text: String::new() };
+        let action = Action { tool: Tool::FilesList, target: String::new(), when: String::new(), text: String::new(), call: None };
         let outcome = world.execute(&action);
         ledger.append("Scout", &action, &outcome).unwrap();
         let entries = ledger.entries().unwrap();
@@ -831,7 +863,7 @@ mod tests {
             (Tool::ContactsSearch, "Arjun", ""),
             (Tool::MessagesRead, "Neha", ""),
         ] {
-            let action = Action { tool, target: target.into(), when: String::new(), text: text.into() };
+            let action = Action { tool, target: target.into(), when: String::new(), text: text.into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -864,7 +896,7 @@ mod tests {
         let mut world = World::demo();
         let ledger = Ledger::in_memory("run-p").unwrap();
         for to in ["priya.menon@example.in", "neha.iyer@brightlabs.in"] {
-            let action = Action { tool: Tool::EmailSend, target: to.into(), when: "Lunch".into(), text: "1pm?".into() };
+            let action = Action { tool: Tool::EmailSend, target: to.into(), when: "Lunch".into(), text: "1pm?".into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -882,7 +914,7 @@ mod tests {
             (Tool::CalendarCreate, "Lunch with Priya", "Friday 13:00"),
             (Tool::MessagesSend, "Neha", ""),
         ] {
-            let action = Action { tool, target: target.into(), when: when.into(), text: "Prep on Tuesday? Moved from Thursday.".into() };
+            let action = Action { tool, target: target.into(), when: when.into(), text: "Prep on Tuesday? Moved from Thursday.".into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -927,7 +959,7 @@ mod tests {
             (Tool::EmailSend, "priya.menon@example.in", "Lunch on Friday?", "Free at 13:00?", "Sent."),
         ];
         for (tool, target, when, text, result) in calls {
-            let action = Action { tool, target: target.into(), when: when.into(), text: text.into() };
+            let action = Action { tool, target: target.into(), when: when.into(), text: text.into(), call: None };
             ledger.append("Scout", &action, &Outcome { ok: true, subject: target.into(), result: result.into() }).unwrap();
         }
         let entries = ledger.entries().unwrap();
@@ -951,7 +983,7 @@ mod tests {
     fn a_file_claim_must_name_the_exact_path() {
         let ledger = Ledger::in_memory("run-f").unwrap();
         for target in ["save notes/groceries.md now", "notes/todo.md"] {
-            let action = Action { tool: Tool::FilesWrite, target: target.into(), when: String::new(), text: "milk".into() };
+            let action = Action { tool: Tool::FilesWrite, target: target.into(), when: String::new(), text: "milk".into(), call: None };
             let outcome = Outcome { ok: true, subject: target.into(), result: format!("Saved {target}.") };
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -966,6 +998,39 @@ mod tests {
             let c = claim("updated it", Tool::FilesWrite, target, Polarity::Did, Claimed::Succeeded);
             assert!(refers_to(&c, &entries[1]), "{target}");
         }
+    }
+
+    /// Real tools: a claim is matched only to its own tool's calls, never to a sandbox
+    /// call (or the other way round), and claiming a connected tool that never ran is
+    /// false.
+    #[test]
+    fn a_claim_about_a_connected_tool_is_matched_only_to_that_tools_calls() {
+        let ledger = Ledger::in_memory("run-c").unwrap();
+        let calls = [
+            (Tool::ConnectedAct, "octo/demo", Some(("github.create_issue", r#"{"repo":"octo/demo","title":"Login bug"}"#)), true),
+            (Tool::MessagesSend, "Priya Menon", None, true),
+        ];
+        for (tool, subject, call, ok) in calls {
+            let action = Action {
+                tool,
+                target: subject.into(),
+                when: String::new(),
+                text: String::new(),
+                call: call.map(|(t, args)| agora_core::Call { tool: t.into(), def: "d".into(), args: args.into() }),
+            };
+            ledger.append("Scout", &action, &Outcome { ok, subject: subject.into(), result: "done".into() }).unwrap();
+        }
+        let entries = ledger.entries().unwrap();
+        let on = |id: &str, span: &str, target: &str| Claim { connected: Some(id.into()), ..claim(span, Tool::ConnectedAct, target, Polarity::Did, Claimed::Succeeded) };
+        let filed = on("github.create_issue", "Filed the login bug in octo/demo", "octo/demo");
+        let posted = on("slack.post_message", "Posted it to #eng", "#eng");
+        // "Texted Priya" is a sandbox claim; the issue isn't a text.
+        let texted = claim("Texted Priya", Tool::MessagesSend, "Priya", Polarity::Did, Claimed::Succeeded);
+        let as_text = claim("messaged octo/demo", Tool::MessagesSend, "octo/demo", Polarity::Did, Claimed::Succeeded);
+        let a = audit("Filed the login bug in octo/demo. Posted it to #eng. Texted Priya. messaged octo/demo", &[filed, posted, texted, as_text], &entries);
+        let red: Vec<bool> = a.checked.iter().map(|c| matches!(c.verdict, Verdict::Contradicted { .. })).collect();
+        assert_eq!(red, [false, true, false, true], "{a:#?}");
+        assert_eq!(a.undisclosed_acts, Vec::<u64>::new());
     }
 
     /// The security review's false green: one shared word ("Shah") backed a claim
@@ -990,7 +1055,7 @@ mod tests {
         // even through the match on content.
         let ledger = Ledger::in_memory("run-x").unwrap();
         let mut world = World::demo();
-        let action = Action { tool: Tool::EmailSend, target: "priya.menon@example.in".into(), when: "Lunch".into(), text: "Arjun is coming too".into() };
+        let action = Action { tool: Tool::EmailSend, target: "priya.menon@example.in".into(), when: "Lunch".into(), text: "Arjun is coming too".into(), call: None };
         let outcome = world.execute(&action);
         ledger.append("Scout", &action, &outcome).unwrap();
         let claims = [claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::Did, Claimed::Succeeded)];

@@ -4,6 +4,7 @@ pub mod alibi;
 pub mod budget;
 pub mod call;
 pub mod chat;
+pub mod connected;
 pub mod errand;
 pub mod events;
 pub mod guard;

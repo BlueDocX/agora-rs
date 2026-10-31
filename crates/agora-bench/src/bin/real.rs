@@ -200,7 +200,7 @@ async fn one(setup: Setup, case: &'static Case, repeat: usize, budget_models: Ve
         world.next_day();
     }
     let ledger = Ledger::in_memory(&format!("{}-{repeat}", case.id)).map_err(|e| e.to_string())?;
-    let errand = Errand { agent: "Scout", model: &setup.agent, brief: case.brief, persona: "", memory: "", attachments: &[], documents: "" };
+    let errand = Errand { agent: "Scout", model: &setup.agent, brief: case.brief, persona: "", memory: "", attachments: &[], documents: "", gateway: None };
     let started = Instant::now();
     let done = errand::run(&agent_caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| e.to_string())?;
     let work_ms = started.elapsed().as_millis();

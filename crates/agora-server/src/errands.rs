@@ -31,10 +31,12 @@
 //! what all errands spend together (`errands_cap_usd`). With a store, errands come
 //! back after a restart.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use agora_core::World;
 use agora_engine::alibi::Audit;
+use agora_engine::connected::{self, BoxFuture, Decision, Gateway};
 use agora_engine::guard::{self, Checked, Checkers, Guarded};
 use agora_engine::errand::{self, Errand};
 use agora_engine::ledger::Receipt;
@@ -47,9 +49,11 @@ use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::company::{self, Member, Role};
+use crate::connectors::{Approver, OfficeGateway};
 use crate::store::{Op, Store};
 use crate::{Hub, authorized, error, to_sse, unauthorized};
 
@@ -127,6 +131,11 @@ pub(crate) enum ErrandEvent {
     NotLearned { reason: String },
     /// Another bot is working in the office; this errand starts when it's done.
     Waiting,
+    /// A call to a connected tool that changes something waits for the person: the
+    /// exact arguments and where it goes. Answer at `.../approvals/{id}`.
+    Approval { id: String, tool: String, args: Value, destinations: Vec<String>, approver: Option<String> },
+    /// The answer to an approval (or no answer in time).
+    Decided { id: String, approved: bool, by: String },
     /// Entry `receipt.seq` was forgotten; these turns' messages were withdrawn, and
     /// `memories` facts and threads learned from it deleted.
     Forgotten {
@@ -200,6 +209,8 @@ pub(crate) struct ErrandRoom {
     /// The attached files and text, until the work takes them (the bytes aren't kept
     /// once it has).
     files: Mutex<Option<crate::attach::Attached>>,
+    /// Calls to connected tools waiting for the person, by approval id.
+    approvals: Mutex<BTreeMap<String, tokio::sync::oneshot::Sender<(bool, String)>>>,
     /// When it was asked for.
     at_ms: u64,
     /// The office day it ran on.
@@ -275,6 +286,20 @@ impl ErrandRoom {
 
     /// Whether `me` may ask about or forget this errand: in a company, the asker, the
     /// bot's owner or the office owner.
+    /// Who approves a call that changes something: the bot's owner, else whoever
+    /// asked, else (before anyone joined) anyone who may use the office.
+    fn approver(&self) -> Option<String> {
+        self.people.bot_of.as_ref().map(|(_, name, _)| name.clone()).or_else(|| self.people.asked_by.as_ref().map(|(_, name)| name.clone()))
+    }
+
+    fn may_approve(&self, me: Option<&Member>) -> bool {
+        match (&self.people.bot_of, &self.people.asked_by) {
+            (Some((owner, ..)), _) => me.is_some_and(|m| m.id == *owner),
+            (None, Some((asker, _))) => me.is_some_and(|m| m.id == *asker),
+            (None, None) => true,
+        }
+    }
+
     fn may_act(&self, me: Option<&Member>) -> bool {
         let ids = [self.people.asked_by.as_ref().map(|(id, _)| id), self.people.bot_of.as_ref().map(|(id, ..)| id)];
         if ids.iter().all(Option::is_none) {
@@ -563,9 +588,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         bot_of: owner.as_ref().map(|o| (o.id.clone(), o.name.clone(), o.area.clone())),
     };
     let model = body.model.unwrap_or_else(|| hub.config.model.clone());
-    if let Err(why) = hub.config.check_model(&model) {
-        return refuse(StatusCode::BAD_REQUEST, &why);
-    }
+    hub.config.check_model(&model).map_err(|why| (StatusCode::BAD_REQUEST, why))?;
     let files = crate::attach::accept(body.uploads, &model).map_err(|why| (StatusCode::BAD_REQUEST, why))?;
     let listed = files.listed.clone();
     let checker = hub.second_checker();
@@ -599,6 +622,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         reply_to: body.reply_to,
         poisoned: body.poisoned,
         files: Mutex::new(Some(files)),
+        approvals: Mutex::default(),
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
         day: std::sync::atomic::AtomicUsize::new(hub.day()),
@@ -683,7 +707,10 @@ async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
             }
         }
         let on_step = |entry: &Entry| room.push(ErrandEvent::Step { entry: entry.clone() });
-        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &files.media, documents: &files.text };
+        // The office's real tools, checked against what the owner approved.
+        let tools = OfficeGateway::prepare(&hub, Arc::new(RoomApprover(Arc::clone(&room)))).await;
+        let gateway = (!tools.is_empty()).then_some(&tools as &dyn Gateway);
+        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &files.media, documents: &files.text, gateway };
         let done = errand::run(&room.caller, &room.ledger, &mut world, &errand, &on_step).await;
         drop(files);
         if !room.poisoned {
@@ -763,7 +790,7 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
         // not from its own impressions.
         let recalled = if room.guard { agora_engine::memory::recall(&hub.memory, &views(&hub.record(&room.id)), &question) } else { String::new() };
         // A later question is about the record; the attached files went with the work.
-        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &[], documents: "" };
+        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &[], documents: "", gateway: None };
         let log = room.guard.then(|| guard::log(&room.ledger.entries().unwrap_or_default()));
         // A snapshot, without waiting: the office may be busy with another errand.
         let world = if room.poisoned { room.world.lock().await.clone() } else { hub.office_view() };
@@ -1214,6 +1241,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             poisoned: meta.poisoned,
             // A restored errand's work is done: its files were never kept.
             files: Mutex::new(None),
+            approvals: Mutex::default(),
             at_ms: meta.at_ms,
             day: std::sync::atomic::AtomicUsize::new(meta.day),
             caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
@@ -1232,4 +1260,58 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
         restored += 1;
     }
     restored
+}
+
+/// How long a call waits for the person before it counts as declined.
+const APPROVAL_WAIT: std::time::Duration = std::time::Duration::from_mins(10);
+
+/// Puts a connected tool's call in front of the person through the errand's stream.
+struct RoomApprover(Arc<ErrandRoom>);
+
+impl Approver for RoomApprover {
+    fn ask<'a>(&'a self, ask: connected::Ask<'a>) -> BoxFuture<'a, Decision> {
+        Box::pin(async move {
+            let room = &self.0;
+            let id = agora_engine::random_hex(6);
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), tx);
+            room.push(ErrandEvent::Approval { id: id.clone(), tool: ask.tool.id.clone(), args: ask.args.clone(), destinations: ask.destinations.to_vec(), approver: room.approver() });
+            let answer = tokio::time::timeout(APPROVAL_WAIT, rx).await;
+            room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id);
+            match answer {
+                Ok(Ok((true, _))) => Decision::Approved,
+                Ok(Ok((false, by))) => Decision::Declined(format!("{by} said no")),
+                _ => {
+                    room.push(ErrandEvent::Decided { id, approved: false, by: "nobody (no answer in 10 minutes)".into() });
+                    Decision::Declined("no answer in 10 minutes".into())
+                }
+            }
+        })
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Answer {
+    approve: bool,
+}
+
+/// `POST /api/errands/{id}/approvals/{approval} {approve}`: the bot's owner (or whoever
+/// asked, if the bot is no one's) lets a waiting call go ahead, or stops it.
+pub(crate) async fn decide(State(hub): State<Arc<Hub>>, Path((id, approval)): Path<(String, String)>, headers: HeaderMap, body: Result<Json<Answer>, JsonRejection>) -> Response {
+    if !authorized(&hub, &headers) {
+        return unauthorized();
+    }
+    let Ok(Json(Answer { approve })) = body else { return error(StatusCode::BAD_REQUEST, "send {\"approve\": true or false}") };
+    let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
+    let me = hub.member(&headers);
+    if !room.may_approve(me.as_ref()) {
+        return error(StatusCode::FORBIDDEN, &format!("only {} can answer this", room.approver().unwrap_or_else(|| "the bot's owner".into())));
+    }
+    let Some(tx) = room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&approval) else {
+        return error(StatusCode::NOT_FOUND, "nothing is waiting for that answer (it was answered, or timed out)");
+    };
+    let by = me.map_or_else(|| "the person".to_string(), |m| m.name);
+    room.push(ErrandEvent::Decided { id: approval, approved: approve, by: by.clone() });
+    let _ = tx.send((approve, by));
+    StatusCode::NO_CONTENT.into_response()
 }

@@ -413,7 +413,7 @@ impl Row {
     fn into_entry(self) -> Result<Entry, JournalError> {
         let seq = self.seq;
         let bad = |why: String| JournalError::new(format!("ledger entry {seq}: {why}"));
-        let tool = Tool::from_name(&self.tool).ok_or_else(|| bad(format!("unknown tool {}", self.tool)))?;
+        let tool = Tool::from_stored_name(&self.tool).ok_or_else(|| bad(format!("unknown tool {}", self.tool)))?;
         let (action, outcome) = match &self.content {
             Some(content) => {
                 if commitment(&self.salt, content) != self.content_hash {
@@ -427,7 +427,7 @@ impl Row {
                 (stored.action, stored.outcome)
             }
             None => (
-                Action { tool, target: FORGOTTEN.into(), when: String::new(), text: String::new() },
+                Action { tool, target: FORGOTTEN.into(), when: String::new(), text: String::new(), call: None },
                 Outcome { ok: self.ok, subject: FORGOTTEN.into(), result: String::new() },
             ),
         };
@@ -489,7 +489,7 @@ mod tests {
     use agora_core::World;
 
     fn act(tool: Tool, target: &str) -> Action {
-        Action { tool, target: target.into(), when: String::new(), text: "hi".into() }
+        Action { tool, target: target.into(), when: String::new(), text: "hi".into(), call: None }
     }
 
     fn ledger_with_three() -> Ledger {

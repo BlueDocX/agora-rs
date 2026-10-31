@@ -152,10 +152,15 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, second_missin
 /// If the first parser fails. (A failed second parser leaves the message
 /// [`unverified`](Checked::unverified), which the guard won't deliver as clean.)
 pub async fn check(caller: &Caller, checkers: Checkers<'_>, message: &str, entries: &[Entry]) -> Result<Checked, CallError> {
-    let first = alibi::extract(caller, checkers.first, message);
+    // The connected tools this errand called: claims about any other are about
+    // something that never happened.
+    let mut connected: Vec<(String, Weight)> = entries.iter().filter_map(|e| e.action.call.as_ref().map(|c| (c.tool.clone(), e.action.tool.weight()))).collect();
+    connected.sort_by(|a, b| a.0.cmp(&b.0));
+    connected.dedup_by(|a, b| a.0 == b.0);
+    let first = alibi::extract_with(caller, checkers.first, message, &connected);
     let (first, second) = match checkers.second {
         Some(model) => {
-            let (a, b) = tokio::join!(first, alibi::extract(caller, model, message));
+            let (a, b) = tokio::join!(first, alibi::extract_with(caller, model, message, &connected));
             (a?, Some(b.ok()))
         }
         None => (first.await?, None),
@@ -196,6 +201,10 @@ fn plainly(e: &Entry) -> String {
         Tool::MessagesSend => format!("texted {}", o.subject),
         Tool::CalendarCreate => format!("booked {}", o.subject),
         Tool::FilesWrite => format!("saved {}", o.subject),
+        Tool::ConnectedLookup | Tool::ConnectedRead | Tool::ConnectedAct => {
+            let tool = e.action.call.as_ref().map_or("a connected tool", |c| c.tool.as_str());
+            if o.subject == tool { format!("used {tool}") } else { format!("used {tool} on {}", o.subject) }
+        }
         other => format!("looked up {} ({})", o.subject, other.name()),
     };
     if o.ok { did } else { format!("tried: {did}, but it failed ({})", o.result.trim_end_matches('.')) }
@@ -420,7 +429,7 @@ mod tests {
         let ledger = Ledger::in_memory("run-g").unwrap();
         let mut world = World::demo();
         for (tool, target) in [(Tool::ContactsSearch, "Priya"), (Tool::MessagesRead, "Neha"), (Tool::EmailSend, "arjun.shah@oldmail.in"), (Tool::MessagesSend, "Priya")] {
-            let action = Action { tool, target: target.into(), when: String::new(), text: "Saturday works!".into() };
+            let action = Action { tool, target: target.into(), when: String::new(), text: "Saturday works!".into(), call: None };
             let outcome = world.execute(&action);
             ledger.append("Scout", &action, &outcome).unwrap();
         }
@@ -428,7 +437,7 @@ mod tests {
     }
 
     fn claim(span: &str, tool: Tool, target: &str, polarity: Polarity) -> Claim {
-        Claim { span: span.into(), tool, no_tool: false, target: target.into(), polarity, outcome: Claimed::Unspecified }
+        Claim { span: span.into(), tool, no_tool: false, target: target.into(), polarity, outcome: Claimed::Unspecified, connected: None }
     }
 
     #[test]
@@ -465,6 +474,14 @@ mod tests {
         let c = judge("Texted Priya that Saturday works.", &claims[..1], Some(&claims[..1]), false, &entries);
         assert_eq!(c.unmentioned, [3]);
         assert!(!c.clean());
+    }
+
+    #[test]
+    fn the_correction_names_a_connected_tool_and_where_it_went() {
+        let ledger = Ledger::in_memory("run-n").unwrap();
+        let action = Action { tool: Tool::ConnectedAct, target: "octo/demo".into(), when: String::new(), text: String::new(), call: Some(agora_core::Call { tool: "github.create_issue".into(), def: "d".into(), args: "{}".into() }) };
+        ledger.append("Scout", &action, &agora_core::Outcome { ok: true, subject: "octo/demo".into(), result: "#12".into() }).unwrap();
+        assert!(correction(&ledger.entries().unwrap()).contains("- #1: I used github.create_issue on octo/demo."));
     }
 
     #[test]
