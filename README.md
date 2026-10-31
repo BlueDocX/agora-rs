@@ -63,13 +63,15 @@ The page shows each stopped draft struck through with its reason, so the correct
 
 In a working week (Monday to Friday, with replies arriving on their days), answers about the week from agents that kept their own notes had **15 of 92 claims contradicted by the ledger**. We read each: 7 are real (invented searches, a sent message denied for four days running). Those answers also left out 22 acts. With ledger-grounded memory and the guard, **0 of 217 were delivered false and nothing was left out**, at under a third of the cost per backed claim.
 
-**Real-world errands, and a self-improvement loop (B8, [details](docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop)).** 40 errands phrased the way people ask, including impossible ones and privacy traps, each with a success check in code. Run on Spark Open via Baseten, then improved in a measured loop: read every failure, fix the cause, measure again, then run a held-out set written before any run on it.
-- **Success:** 78% to **100%** on the final run (97% on the held-out set on reading).
-- **Cost:** **45% lower**, $0.033 to $0.018 per errand.
-- **Time:** **36% faster**, 28 s to 18 s.
-- **0 overreach** on the final run.
+**Real-world errands, and a self-improvement loop (B8, [details](docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop)).** 68 errands phrased the way people ask, each with a success check in code. They include Hinglish and typos, impossible jobs, privacy traps and a poisoned inbox. The system was improved in a measured loop: read every failure against its ledger, fix the cause, measure again, then run held-out errands written before any run on them.
+- **Success:** 78% to **99%** (135/136, everything on Baseten); **24/24** on the last held-out set.
+- **0 false claims delivered, 0 overreach.**
+- **Cost and time:** $0.033 to $0.021 per errand, 28 s to 17 s.
 
-The loop also found the guard's blind spot: a bot reported "Finished paying your rent" when no tool can pay, so the claim was never judged. Claiming an action no tool can do is now false by definition.
+The loop found three of the guard's blind spots, and each now fails closed:
+- **"Finished paying your rent."** No tool can pay, so the claim was never judged. Claiming an action no tool can do is now false by definition.
+- **A todo list overwritten with the bot's narration**, reported as a line it never wrote. Quoted words must now be in the ledger.
+- **A file saved under the wrong name.** A claim about a saved file must now name its exact path.
 
 **Tamper evidence, and against whom.** The hash chain stops the *agent*: it never writes the ledger, and changing, dropping or reordering an entry is caught (`agora-verify`). A chain alone doesn't stop whoever *runs the server*, who could rewrite it and recompute every hash. So the office **signs each ledger head with Ed25519** and hands you the receipt (run, entry count, head, time, signature). Keep it, and `agora-verify --receipt receipt.json agora-journal.db <office-key>` later proves whether the ledger still reaches what the office signed. A rewritten history fails even with every hash recomputed, because only the office's key could have signed the old head. The office's public key is at `/.well-known/agora-signing-key`; publish it somewhere the operator doesn't control to anchor it.
 
@@ -86,6 +88,7 @@ The loop also found the guard's blind spot: a bot reported "Finished paying your
   - Only the person who asked, the bot's owner or the office owner can question an errand or have it forget something.
   - **It survives restarts**: people (only a hash of each key is kept), messages, activity and every errand's stream are kept in SQLite (`agora-state.db`).
   - In 3D, every person's bot has a desk labelled with its owner, and its monitor glows with its latest verdict.
+- **Attach files to an errand.** Up to 4 images (PNG, JPEG, GIF, WebP), PDFs or text files go with the brief, and the bot reads them through Muse Spark's image and document input (`input_image`, `input_file`). A receipt photo, a lease PDF or a guest list can drive the errand ("text everyone on this list"). Each file's type comes from its bytes, never its name. Files are read as data, never as instructions. A PDF is refused for a model that can't read one (Spark Open on Baseten). The errand's record keeps each file's name, size and SHA-256, never the bytes.
 - **Voice errands.** Speak an errand instead of typing it. The browser records a WAV and the office sends it to **Muse Voice Transcribe** (`/v1/asr/transcribe`) on its own key, with the names in the office (contacts, people, bots) as keywords so they come back spelled right.
 - **Ray-Ban Display web app** (`/glasses`), built to Meta's Web Apps docs:
   - `mrbd-web-app-capable`, a black background (black is transparent on the display), arrow and Enter navigation on native controls
@@ -148,7 +151,7 @@ This is a from-scratch rebuild of an earlier TypeScript project, [Ritesh-Root/ag
   - Start a brief in the browser and watch each team member's card move: working, drafted, sent back with the unmet criteria, then accepted or needs a person.
   - The cost updates live, and the deliverable appears at the end.
   - Runs stream as Server-Sent Events. A link like `/#run-…` replays a run from the start.
-  - **3D office:** Three.js with soft shadows, filmic tone mapping and environment light. Each agent has a desk in a pod; they stand in the aisle while work waits, walk to their chair and sit to work, cheer when accepted, and the reviewer walks the aisles to each draft (skeletal animation with crossfades). Speech bubbles show the chat; Enter VR appears on headsets. Without WebGL2 the kanban remains. Characters and furniture are Kenney's CC0 packs (see Credits).
+  - **3D office:** Three.js with soft shadows, filmic tone mapping and environment light. Each agent on the team has a desk in a pod, so the office holds as many people as the team (the Lead and reviewer come in only during a run); they stand in the aisle while work waits, walk to their chair and sit to work, cheer when accepted, and the reviewer walks the aisles to each draft (skeletal animation with crossfades). Speech bubbles show the chat; Enter VR appears on headsets. Without WebGL2 the kanban remains. Characters and furniture are Kenney's CC0 packs (see Credits).
   - **Access.** It listens on localhost unless `AGORA_TOKEN` is set, and every `/api` call then needs the token: as a bearer header, or as an `HttpOnly`, `SameSite=Strict` cookie the page gets from `POST /api/session`. No secret ever goes in a URL, and the page keeps no key in storage. Every request must name the server in `Host` (localhost or `AGORA_HOSTS`), which stops DNS rebinding. Member keys come from the OS random source and only their SHA-256 is stored. `/healthz` answers for load balancers; SIGTERM shuts down gracefully. At most 2 runs are active at once.
 - **Open-weights reviewer:** `AGORA_REVIEWER=baseten` reviews on Muse Spark Open via Baseten (Chat Completions), while planning and writing stay on Meta's Model API.
 - **Scheduler (in `agora-engine`):** the ready-queue scheduler. A task starts the moment its own dependencies finish, the longest remaining chain goes first, and a failure skips only what depends on it. Property tests check dependency order, the parallel cap, critical-path optimality, and failure isolation on random plans.

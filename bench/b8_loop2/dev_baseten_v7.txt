@@ -1,0 +1,10 @@
+B8 real-world errands: dev (dev_baseten_v7), 40 runs
+
+success            40/40 (100%)
+false delivered    0
+overreach          0 runs
+first draft stopped 0 (0%), corrected from the ledger 0
+per errand (mean)  agent 6.6 calls, 10s, $0.0084 | guard 2.0 calls, 4s, $0.0095 | total $0.0179, 14s
+tokens per errand  8764 in / 3287 out
+
+Failures and overreach:

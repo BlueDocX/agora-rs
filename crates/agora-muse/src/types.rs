@@ -15,19 +15,109 @@ pub enum Role {
 pub struct Message {
     pub role: Role,
     pub content: String,
+    /// Images and PDFs sent with the text, inline (user messages only: the model
+    /// reads attachments on no other role).
+    #[serde(default, skip)]
+    pub attachments: Vec<Attachment>,
 }
 
 impl Message {
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: Role::System, content: content.into() }
+        Self { role: Role::System, content: content.into(), attachments: Vec::new() }
     }
 
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into() }
+        Self { role: Role::User, content: content.into(), attachments: Vec::new() }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into() }
+        Self { role: Role::Assistant, content: content.into(), attachments: Vec::new() }
+    }
+
+    /// This user message with `attachments` after its text.
+    #[must_use]
+    pub fn with(mut self, attachments: Vec<Attachment>) -> Self {
+        self.attachments = attachments;
+        self
+    }
+
+    /// The Responses API shape: the plain `{role, content}` when there is nothing
+    /// attached (so cached prefixes stay the same), else typed content blocks.
+    fn to_input(&self) -> Value {
+        if self.attachments.is_empty() {
+            return json!({ "role": self.role, "content": self.content });
+        }
+        let mut parts = vec![json!({ "type": "input_text", "text": self.content })];
+        parts.extend(self.attachments.iter().map(|a| {
+            if a.is_image() {
+                json!({ "type": "input_image", "image_url": a.data_url() })
+            } else {
+                json!({ "type": "input_file", "filename": a.name, "file_data": a.data_url() })
+            }
+        }));
+        json!({ "type": "message", "role": self.role, "content": parts })
+    }
+
+    /// The Chat Completions shape (Baseten): an image is an `image_url` object, a PDF a
+    /// `file` block.
+    fn to_chat(&self) -> Value {
+        if self.attachments.is_empty() {
+            return json!({ "role": self.role, "content": self.content });
+        }
+        let mut parts = vec![json!({ "type": "text", "text": self.content })];
+        parts.extend(self.attachments.iter().map(|a| {
+            if a.is_image() {
+                json!({ "type": "image_url", "image_url": { "url": a.data_url() } })
+            } else {
+                json!({ "type": "file", "file": { "filename": a.name, "file_data": a.data_url() } })
+            }
+        }));
+        json!({ "role": self.role, "content": parts })
+    }
+}
+
+/// A file the person attached: an image (PNG, JPEG, GIF, WebP) or a PDF, sent inline.
+/// The caller checks the type from the bytes (see [`Attachment::sniff`]). It holds the
+/// file as a ready `data:` URL, shared: a message is rebuilt every turn, and copying or
+/// re-encoding megabytes each time would be waste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub name: String,
+    pub mime: String,
+    url: std::sync::Arc<str>,
+}
+
+impl Attachment {
+    #[must_use]
+    pub fn new(name: impl Into<String>, mime: impl Into<String>, data: &[u8]) -> Self {
+        use base64::Engine as _;
+        let mime = mime.into();
+        let url = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data));
+        Self { name: name.into(), mime, url: url.into() }
+    }
+
+    /// The type the bytes themselves show, among the ones the models read
+    /// (dev.meta.ai/docs/file-handling), or `None`. The file's name and the browser's
+    /// claimed type are never trusted for this.
+    #[must_use]
+    pub fn sniff(data: &[u8]) -> Option<&'static str> {
+        match data {
+            [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, ..] => Some("image/png"),
+            [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+            [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', ..] => Some("image/gif"),
+            [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("image/webp"),
+            [b'%', b'P', b'D', b'F', b'-', ..] => Some("application/pdf"),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_image(&self) -> bool {
+        self.mime.starts_with("image/")
+    }
+
+    fn data_url(&self) -> &str {
+        &self.url
     }
 }
 
@@ -90,7 +180,8 @@ impl Request {
     /// The JSON body sent to the API.
     #[must_use]
     pub fn to_body(&self) -> Value {
-        let mut body = json!({ "model": self.model, "input": self.input });
+        let input: Vec<Value> = self.input.iter().map(Message::to_input).collect();
+        let mut body = json!({ "model": self.model, "input": input });
         if let Some(effort) = self.effort {
             body["reasoning"] = json!({ "effort": effort });
         }
@@ -126,6 +217,7 @@ impl Request {
                 _ => messages.push(m.clone()),
             }
         }
+        let messages: Vec<Value> = messages.iter().map(Message::to_chat).collect();
         let mut body = json!({ "model": self.model, "messages": messages });
         if let Some(effort) = self.effort {
             body["reasoning_effort"] = json!(if effort == Effort::Max { Effort::High } else { effort });
@@ -323,6 +415,31 @@ impl RawResponse {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachments_go_as_typed_blocks_and_plain_messages_stay_plain() {
+        let png = Attachment::new("a.png", "image/png", &[1, 2, 3]);
+        let pdf = Attachment::new("bill.pdf", "application/pdf", b"%PDF-1.4");
+        let r = Request::new("muse-spark-1.3", vec![Message::system("s"), Message::user("Look").with(vec![png, pdf])]);
+        let body = r.to_body();
+        assert_eq!(body["input"][0], json!({ "role": "system", "content": "s" }));
+        assert_eq!(body["input"][1]["content"][0], json!({ "type": "input_text", "text": "Look" }));
+        assert_eq!(body["input"][1]["content"][1], json!({ "type": "input_image", "image_url": "data:image/png;base64,AQID" }));
+        assert_eq!(body["input"][1]["content"][2]["type"], "input_file");
+        assert_eq!(body["input"][1]["content"][2]["filename"], "bill.pdf");
+        let chat = r.to_chat_body();
+        assert_eq!(chat["messages"][1]["content"][1], json!({ "type": "image_url", "image_url": { "url": "data:image/png;base64,AQID" } }));
+        assert_eq!(chat["messages"][1]["content"][2]["type"], "file");
+    }
+
+    #[test]
+    fn a_files_type_comes_from_its_bytes() {
+        assert_eq!(Attachment::sniff(b"\x89PNG\r\n\x1a\nrest"), Some("image/png"));
+        assert_eq!(Attachment::sniff(b"%PDF-1.7"), Some("application/pdf"));
+        assert_eq!(Attachment::sniff(b"RIFF\0\0\0\0WEBPVP8"), Some("image/webp"));
+        // A script renamed photo.png is still not an image.
+        assert_eq!(Attachment::sniff(b"#!/bin/sh\nrm -rf /"), None);
+    }
 
     #[test]
     fn body_puts_options_where_the_api_expects_them() {

@@ -53,7 +53,10 @@ pub struct Checked {
     pub agreed: Vec<Option<bool>>,
     /// Quotes of claims either parser found contradicted.
     pub false_claims: Vec<String>,
-    /// Acts and private reads neither parser found mentioned.
+    /// Acts (sends, bookings, writes) neither parser found mentioned. Private reads
+    /// the message leaves out aren't counted here: code lists them from the ledger
+    /// when an errand's report is delivered (see [`list_reads`]), so the agent never
+    /// has to.
     pub unmentioned: Vec<u64>,
     /// Why this message couldn't be fully checked, if it couldn't: a parser gave a
     /// claim whose quote isn't in the message (so the claim was never judged), or the
@@ -108,8 +111,15 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, second_missin
         None => (vec![None; audit.checked.len()], None),
     };
     let mut false_claims = contradicted(&audit);
+    // Quoted words no call sent, wrote, booked or read: false whatever the parsers say.
+    for quote in alibi::misquoted(message, entries) {
+        if !false_claims.contains(&quote) {
+            false_claims.push(quote);
+        }
+    }
     let unquoted = audit.unquoted + other.as_ref().map_or(0, |o| o.unquoted);
-    let mut unmentioned: Vec<u64> = audit.undisclosed_acts.iter().chain(&audit.undisclosed_reads).copied().collect();
+    let mut unmentioned: Vec<u64> = audit.undisclosed_acts.clone();
+    let mut unread: Vec<u64> = audit.undisclosed_reads.clone();
     if let Some(other) = &other {
         for span in contradicted(other) {
             if !false_claims.contains(&span) {
@@ -117,14 +127,14 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, second_missin
             }
         }
         // Unmentioned only if neither parser found a mention.
-        let theirs: Vec<u64> = other.undisclosed_acts.iter().chain(&other.undisclosed_reads).copied().collect();
-        unmentioned.retain(|seq| theirs.contains(seq));
+        unmentioned.retain(|seq| other.undisclosed_acts.contains(seq));
+        unread.retain(|seq| other.undisclosed_reads.contains(seq));
     }
     unmentioned.sort_unstable();
     // Show as "not mentioned" exactly what the guard counts as not mentioned.
     let mut audit = audit;
     audit.undisclosed_acts.retain(|seq| unmentioned.contains(seq));
-    audit.undisclosed_reads.retain(|seq| unmentioned.contains(seq));
+    audit.undisclosed_reads = unread;
     let unverified = if second_missing {
         Some("the second checker didn't answer, so only one parser read it".to_string())
     } else if unquoted > 0 {
@@ -191,11 +201,11 @@ fn plainly(e: &Entry) -> String {
     if o.ok { did } else { format!("tried: {did}, but it failed ({})", o.result.trim_end_matches('.')) }
 }
 
-/// Every act and private read, one line each, in plain words (for the agent to
-/// mention before it finishes).
+/// Every act, one line each, in plain words (for the agent to mention before it
+/// finishes; private reads are listed by code, see [`list_reads`]).
 #[must_use]
 pub fn checklist(entries: &[Entry]) -> String {
-    entries.iter().filter(|e| e.action.tool.weight() != Weight::Lookup).map(|e| format!("- #{}: you {}", e.seq, plainly(e))).collect::<Vec<_>>().join("\n")
+    entries.iter().filter(|e| e.action.tool.weight() == Weight::Act).map(|e| format!("- #{}: you {}", e.seq, plainly(e))).collect::<Vec<_>>().join("\n")
 }
 
 /// The correction: every act and private read, from the ledger, by code.
@@ -340,6 +350,19 @@ pub async fn deliver(
     Ok(settle(drafts, entries))
 }
 
+/// After an errand: list, from the ledger, every private read the delivered message
+/// leaves out, under the agent's words. The person sees every one, and the agent's
+/// report stays an answer rather than a log. (Not for answers about the week: their
+/// reads were earlier errands', not this answer's.) A correction already lists them.
+pub fn list_reads(guarded: &mut Guarded, entries: &[Entry]) {
+    let d = &mut guarded.delivered;
+    let unread: Vec<String> = entries.iter().filter(|e| d.audit.undisclosed_reads.contains(&e.seq)).map(|e| format!("- #{}: I {}.", e.seq, plainly(e))).collect();
+    if guarded.correction.is_none() && !unread.is_empty() {
+        d.message = format!("{}\n\nAlso, from the ledger, what I read:\n{}", d.message.trim_end(), unread.join("\n"));
+        d.audit.undisclosed_reads.clear();
+    }
+}
+
 /// The guarantee, by code alone: deliver the last draft if it is clean; otherwise only
 /// its sentences with no false claim, under a correction written from the ledger. It
 /// needs nothing from the agent, so it holds however the agent behaves.
@@ -422,6 +445,25 @@ mod tests {
         assert_eq!(c.false_claims, ["I emailed Arjun", "I didn't read any chats"]);
         // The bounced email (#3) and the chat (#2) are mentioned by the second parser.
         assert!(c.unmentioned.is_empty(), "{c:?}");
+        assert!(!c.clean());
+    }
+
+    #[test]
+    fn reads_left_out_are_listed_by_code_but_acts_left_out_still_block() {
+        let entries = errand();
+        // Mentions both acts (#3 failed, #4) but not the chat it read (#2).
+        let message = "Texted Priya that Saturday works. Emailing Arjun failed.";
+        let claims = [claim("Texted Priya", Tool::MessagesSend, "Priya", Polarity::Did), Claim { outcome: Claimed::Failed, ..claim("Emailing Arjun failed", Tool::EmailSend, "Arjun", Polarity::Did) }];
+        let c = judge(message, &claims, Some(&claims), false, &entries);
+        assert!(c.clean(), "{c:?}");
+        assert_eq!(c.audit.undisclosed_reads, [2]);
+        let mut g = settle(vec![c], &entries);
+        list_reads(&mut g, &entries);
+        assert!(g.delivered.message.starts_with(message) && g.delivered.message.contains("#2: I read your"), "{}", g.delivered.message);
+        assert_eq!(g.delivered.audit.undisclosed_reads, [0_u64; 0]);
+        // Leaving out an act is still the agent's to fix.
+        let c = judge("Texted Priya that Saturday works.", &claims[..1], Some(&claims[..1]), false, &entries);
+        assert_eq!(c.unmentioned, [3]);
         assert!(!c.clean());
     }
 

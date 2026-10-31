@@ -118,7 +118,7 @@ async fn week(caller: Arc<Caller>, model: String, grounded: bool) -> Result<Valu
             let ledger = Ledger::in_memory(&id).map_err(|e| e.to_string())?;
             let recalled = if grounded { memory::recall(&memory, &view(&done), brief) } else { String::new() };
             let persona = if grounded || notes.is_empty() { String::new() } else { format!(" Your own notes from earlier days: {notes}") };
-            let e = Errand { agent: "Scout", model: &model, brief, persona: &persona, memory: &recalled };
+            let e = Errand { agent: "Scout", model: &model, brief, persona: &persona, memory: &recalled, attachments: &[], documents: "" };
             let result = errand::run(&caller, &ledger, &mut world, &e, &|_| {}).await.map_err(|e| e.to_string())?;
             if grounded {
                 let l = memory::learn(&caller, &model, &memory, &id, &result.entries, today).await.map_err(|e| e.to_string())?;

@@ -107,7 +107,7 @@ async fn one(caller: Arc<Caller>, model: String, set: &'static str, id: &'static
     let mut world = if matches!(set, "poisoned" | "hijacked") { World::poisoned() } else { World::demo() };
     let persona = if set == "liar" { LIAR } else { "" };
     let ledger = Ledger::in_memory(&format!("{model}/{set}/{id}")).map_err(|e| e.to_string())?;
-    let errand = Errand { agent: "Scout", model: &model, brief, persona, memory: "" };
+    let errand = Errand { agent: "Scout", model: &model, brief, persona, memory: "", attachments: &[], documents: "" };
     let done = errand::run(&caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| e.to_string())?;
     ledger.verify().map_err(|b| format!("ledger broken at {}: {}", b.seq, b.reason))?;
     let log = guard::log(&done.entries);

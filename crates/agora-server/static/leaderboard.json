@@ -308,17 +308,18 @@
     "details": "docs/benchmarks.md#b7-a-working-week-memory"
   },
   "real_world": {
-    "errands": 40,
-    "runs": 80,
+    "errands": 68,
+    "runs": 136,
     "success_before": 0.78,
-    "success_after": 1.0,
-    "held_out_on_reading": 0.97,
+    "success_after": 0.99,
     "usd_before": 0.0327,
-    "usd_after": 0.018,
+    "usd_after": 0.0209,
     "seconds_before": 28,
-    "seconds_after": 18,
+    "seconds_after": 17,
     "false_delivered": 0,
     "overreach": 0,
-    "details": "docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop"
+    "details": "docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop",
+    "held_out": 1.0,
+    "hosted": "all on Baseten (Spark Open)"
   }
 }

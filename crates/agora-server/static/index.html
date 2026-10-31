@@ -142,7 +142,14 @@
   #errandform .opts { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 8px; }
   #errandform .guard-pick { margin-right: 0; }
   .micwrap { position: relative; }
-  .micwrap textarea { padding-right: 48px; }
+  .micwrap textarea { padding-right: 88px; }
+  .mic.attach { right: 48px; }
+  .files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .files:empty { display: none; }
+  .files span { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 4px 3px 10px; font: 600 11.5px var(--sans); color: var(--ink); max-width: 100%; }
+  .files span b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+  .files span small { color: var(--muted, #8a8580); font-weight: 500; }
+  .files button { border: 0; background: none; padding: 0 6px; font: 600 14px var(--sans); color: var(--ink); cursor: pointer; line-height: 1; }
   .mic { position: absolute; right: 8px; bottom: 10px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--paper); color: var(--ink); display: grid; place-items: center; padding: 0; }
   .mic:hover { background: var(--butter); }
   .mic.rec { background: var(--bad); border-color: var(--bad); color: #fff; animation: rec 1.2s ease-in-out infinite; }
@@ -514,8 +521,11 @@
       <div class="chips" id="errandchips"></div>
       <div class="micwrap">
         <textarea id="errandtext" maxlength="500" placeholder="Give an errand. The agent works on Asha's contacts, calendar, email, chats and files." aria-label="Errand or question"></textarea>
+        <button class="mic attach" id="attach" type="button" title="Attach images, a PDF or text files (up to 4) for the bot to read" aria-label="Attach files"><svg class="i" viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3"/></svg></button>
+        <input type="file" id="attachpick" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.txt,.md,.csv,.tsv,.json,.log">
         <button class="mic" id="mic" type="button" title="Speak the errand" aria-label="Speak the errand" aria-pressed="false"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
       </div>
+      <div class="files" id="attached" aria-label="Attached files"></div>
       <div class="row"><span class="note" id="errandnote"></span>
         <span class="opts"><select id="errandto" aria-label="Whose bot does it" title="Your own bot, or the bot of an area's lead"></select><label class="guard-pick" title="With the guard on, no message reaches you with a claim the ledger contradicts"><input type="checkbox" id="guardon" checked> Guard</label><label class="guard-pick" id="poisonpick" title="Red team: run it on an inbox with a planted prompt injection, to see whether the bot follows it and whether the guard catches what it says"><input type="checkbox" id="poisoned"> Poisoned inbox (red team)</label><button class="pill ghost" id="errandnew" type="button" hidden>All errands</button>
         <button class="pill butter" id="errandgo" type="submit">Run errand</button></span></div>
@@ -1314,7 +1324,7 @@ function boardItem(b) {
   if (rw) {
     const real = el("div", "lb-row");
     real.append(el("b", null, "Real-world errands (B8)"), el("span", "num", `${Math.round(rw.success_after * 100)}% done`),
-      el("span", "note", `${rw.errands} errands people actually ask, improved in a measured loop: ${Math.round(rw.success_before * 100)}% → ${Math.round(rw.success_after * 100)}% success, $${rw.usd_before} → $${rw.usd_after} and ${rw.seconds_before} → ${rw.seconds_after} s per errand, 0 overreach.`));
+      el("span", "note", `${rw.errands} errands people actually ask, improved in a measured loop: ${Math.round(rw.success_before * 100)}% → ${Math.round(rw.success_after * 100)}% success, $${rw.usd_before} → $${rw.usd_after} and ${rw.seconds_before} → ${rw.seconds_after} s per errand, ${rw.overreach} overreach runs of ${rw.runs}${rw.held_out ? `; held-out errands: ${Math.round(rw.held_out * 100)}%` : ""}.`));
     li.append(real);
   }
   const w = b.memory_week;
@@ -1666,6 +1676,17 @@ function renderAlibi(feed) {
       const asked = e.people?.asked_by && e.people.asked_by[0] !== e.people.bot_of?.[0] ? ` · asked by ${e.people.asked_by[1]}` : "";
       if (e.poisoned) li.append(el("span", "poison", "poisoned inbox"));
       li.append(el("b", null, e.brief), el("small", null, `${e.agent}${whose}${asked} on ${e.model}${e.checker ? ` · second checker ${e.checker}` : ""} · guard ${e.guard ? "on" : "off"}`));
+      // What was attached, as the record keeps it: the bytes went to the bot, not here.
+      if (e.attachments?.length) {
+        const files = el("div", "files");
+        for (const a of e.attachments) {
+          const chip = el("span");
+          chip.title = `${a.mime} · SHA-256 ${a.sha256}`;
+          chip.append(el("b", null, a.name), el("small", null, fmtSize(a.bytes)));
+          files.append(chip);
+        }
+        li.append(files);
+      }
       feed.append(li);
     } else if (e.type === "step") {
       group ??= { list: el("ul"), first: e.entry.seq, last: e.entry.seq, flagged: 0 };
@@ -1801,6 +1822,7 @@ $("errandform").onsubmit = async (ev) => {
   const text = $("errandtext").value.trim();
   if (!text) return;
   const asking = hasReport();
+  if (asking && attachments.length) { $("errandnote").textContent = "Files go with a new errand, not a question: remove them, or start one with All errands."; return; }
   $("errandgo").disabled = true; $("errandnote").textContent = "";
   try {
     if (asking && !errandIdle()) throw new Error("The bot is still busy.");
@@ -1809,11 +1831,13 @@ $("errandform").onsubmit = async (ev) => {
     // "area:<name>" goes to that area's lead's bot; "bot:<name>" to that bot.
     const [kind, value] = $("errandto").value.split(/:(.*)/s);
     const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked,
-      area: kind === "area" ? value : undefined, bot: kind === "bot" ? value : undefined, poisoned: $("poisoned").checked || undefined };
+      area: kind === "area" ? value : undefined, bot: kind === "bot" ? value : undefined, poisoned: $("poisoned").checked || undefined,
+      attachments: attachments.length ? attachments.map(({ name, data }) => ({ name, data })) : undefined };
     const res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
     const reply = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(reply.error || res.statusText);
     $("errandtext").value = "";
+    if (!asking) { attachments = []; renderAttached(); }
     if (asking) { errand.focus = null; reopenErrand(); }
     else watchErrand(reply.id);
     refreshErrandsSoon();
@@ -1822,6 +1846,39 @@ $("errandform").onsubmit = async (ev) => {
   finally { $("errandgo").disabled = false; }
 };
 $("errandnew").onclick = () => { closeErrand(); $("errandtext").focus(); };
+
+// ---- Attachments: images, a PDF or text files go with a new errand. The office checks
+// each file's type from its bytes and keeps only its name, size and hash.
+const MAX_ATTACH = 4, MAX_ATTACH_MB = 8, MAX_ATTACH_TOTAL_MB = 12;
+let attachments = []; // { name, size, data: a data: URL }
+function fmtSize(n) { return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
+function renderAttached() {
+  const box = $("attached");
+  box.replaceChildren(...attachments.map((a, i) => {
+    const chip = el("span"), x = el("button", null, "×");
+    x.type = "button"; x.title = `Remove ${a.name}`; x.setAttribute("aria-label", `Remove ${a.name}`);
+    x.onclick = () => { attachments.splice(i, 1); renderAttached(); };
+    chip.append(el("b", null, a.name), el("small", null, fmtSize(a.size)), x);
+    return chip;
+  }));
+}
+$("attach").onclick = () => {
+  if (hasReport()) { $("errandnote").textContent = "Files go with a new errand: start one with All errands."; return; }
+  $("attachpick").click();
+};
+$("attachpick").onchange = async () => {
+  const picked = [...$("attachpick").files];
+  $("attachpick").value = "";
+  for (const f of picked) {
+    if (attachments.length >= MAX_ATTACH) { $("errandnote").textContent = `At most ${MAX_ATTACH} files.`; break; }
+    if (!f.size) { $("errandnote").textContent = `${f.name} is empty.`; continue; }
+    if (f.size > MAX_ATTACH_MB * 1024 * 1024) { $("errandnote").textContent = `${f.name} is over ${MAX_ATTACH_MB} MB.`; continue; }
+    if (attachments.reduce((n, a) => n + a.size, f.size) > MAX_ATTACH_TOTAL_MB * 1024 * 1024) { $("errandnote").textContent = `The files together must be under ${MAX_ATTACH_TOTAL_MB} MB.`; continue; }
+    const data = await new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => fail(r.error); r.readAsDataURL(f); }).catch(() => null);
+    if (data) attachments.push({ name: f.name, size: f.size, data });
+  }
+  renderAttached();
+};
 // Reconnect an errand whose stream was closed while idle; what was seen stays unacted.
 function reopenErrand() {
   if (!errand) return;

@@ -40,6 +40,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod attach;
 mod chat;
 mod company;
 mod errands;
@@ -54,7 +55,7 @@ use agora_core::Team;
 use agora_engine::{Budget, Journal, RunConfig, RunEvent, Signer, run};
 use agora_muse::{Host, MuseClient, host_of, price_for};
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -361,7 +362,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/company/events", get(company::events))
         .route("/api/company/whoami", get(company::whoami))
         .route("/api/company/messages", post(company::say))
-        .route("/api/errands", post(errands::start).get(errands::list))
+        .route("/api/errands", post(errands::start).layer(DefaultBodyLimit::max(attach::MAX_BODY_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)).get(errands::list))
         .route("/api/errands/{id}/events", get(errands::events))
         .route("/api/errands/{id}/ask", post(errands::ask))
         .route("/api/errands/{id}/ledger", get(errands::ledger))
@@ -373,7 +374,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/memory/facts/{id}", axum::routing::delete(office::delete_fact))
         .route("/api/memory/facts/{id}/keep", post(office::keep_fact))
         .route("/api/memory/facts/{id}/restore", post(office::restore_fact))
-        .route("/api/transcribe", post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(voice::MAX_BYTES)))
+        .route("/api/transcribe", post(voice::transcribe).layer(DefaultBodyLimit::max(voice::MAX_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)))
         .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard_host))
         .layer(middleware::from_fn(access_log))
         .with_state(hub)
@@ -387,6 +388,16 @@ fn host_name(request: &Request) -> Option<String> {
         None => host.rsplit_once(':').map_or(host.as_str(), |(h, _)| h).to_string(),
     };
     Some(name.to_ascii_lowercase())
+}
+
+/// For routes that take a large body (attachments, audio): refuse a caller without the
+/// token before the body is read, so nobody unauthorized can make the server buffer
+/// megabytes. (The handler checks again.)
+async fn signed_in(State(hub): State<Arc<Hub>>, request: Request, next: Next) -> Response {
+    if !authorized(&hub, request.headers()) {
+        return unauthorized();
+    }
+    next.run(request).await
 }
 
 /// Refuse requests that don't name this server (see the module notes on DNS rebinding).

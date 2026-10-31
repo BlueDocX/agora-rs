@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 
 use agora_core::{Limits, Plan, PlanError, TaskSpec, Team};
-use agora_muse::{Effort, Message, Request, Role};
+use agora_muse::{Effort, Message, Request};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -167,7 +167,7 @@ pub(crate) async fn plan(caller: &Caller, model: &str, brief: &str, team: Option
         match checked {
             Ok((plan, tasks)) => return Ok(Planned { plan, tasks, attempts: attempt }),
             Err(problem) => {
-                input.push(Message { role: Role::Assistant, content: response.text });
+                input.push(Message::assistant(response.text));
                 input.push(Message::user(format!("That plan is invalid: {problem}. Return a corrected plan.")));
                 last_problem = problem;
             }

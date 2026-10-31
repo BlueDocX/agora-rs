@@ -303,6 +303,11 @@ async function start(host) {
   reviewer.label = reviewerTag();
   reviewer.root.add(reviewer.label);
   scene.add(lead.root, reviewer.root);
+  // The Lead and the reviewer belong to a run, not to the team: an idle office shows
+  // only the team at its desks (as many people as the team has), and they come in
+  // when a run, or an audit of a bot's claim, needs them.
+  const present = (on) => { lead.root.visible = on; reviewer.root.visible = on; };
+  present(false);
 
   // ---- Desks: one per agent (or per task), in a pod of two facing rows ----
   let desks = new Map(); // key → desk
@@ -470,7 +475,11 @@ async function start(host) {
     });
   }
   function goHome() {
-    reviewer.walk(route(reviewer.root.position, HOME), () => { reviewer.faceCamera = true; reviewer.play("idle"); });
+    reviewer.walk(route(reviewer.root.position, HOME), () => {
+      reviewer.faceCamera = true;
+      reviewer.play("idle");
+      if (!watching) reviewer.root.visible = false; // an audit is over: back out of the room
+    });
   }
 
   function onEvent(e) {
@@ -509,11 +518,12 @@ async function start(host) {
   let watching = false;
   function showTeam(team) {
     if (watching) return;
+    present(false);
     if (team) onEvent({ type: "staffed", team });
     else clearDesks();
   }
-  addEventListener("agora:reset", () => { watching = true; clearDesks(); owner = new Map(); staffed = false; goHome(); });
-  addEventListener("agora:event", (ev) => { watching = true; onEvent(ev.detail); });
+  addEventListener("agora:reset", () => { watching = true; present(true); clearDesks(); owner = new Map(); staffed = false; goHome(); });
+  addEventListener("agora:event", (ev) => { watching = true; present(true); onEvent(ev.detail); });
   addEventListener("agora:team", (ev) => showTeam(ev.detail));
 
   // Speech bubbles: whoever is talking in the chat says it over their head.
@@ -551,6 +561,7 @@ async function start(host) {
     p.walk(route(p.root.position, spot), then);
   }
   let guarded = true; // the errand's guard setting (from its `started` event)
+  let homeTimer = 0; // when the reviewer, after an audit, walks back out
   function onErrand(e) {
     if (e.type === "started") guarded = e.guard !== false;
     const d = errandDesk(e.agentId);
@@ -573,6 +584,11 @@ async function start(host) {
         goTo(d, d.stand, () => { p.faceCamera = true; p.play("emote-no", { once: true, then: () => p.play("idle") }); });
         p.say(c.false_claims.length ? `The ledger contradicts ${c.false_claims.length} of my claim${c.false_claims.length === 1 ? "" : "s"}…`
           : c.unmentioned.length ? "I left something out…" : "That couldn't be fully checked…", 6);
+        reviewer.root.visible = true; // comes in to audit
+        // Back out by itself if the errand's verdict never reaches this page (closed
+        // or switched); a later audit replaces this timer.
+        clearTimeout(homeTimer);
+        homeTimer = setTimeout(goHome, 60000);
         reviewer.walk(route(reviewer.root.position, new Vector3(d.stand.x + 0.45, FLOOR, d.stand.z + (d.stand.z < 0 ? -0.2 : 0.2))), () => {
           reviewer.root.lookAt(d.stand.x, reviewer.root.position.y, d.stand.z);
           reviewer.play("interact-right");
@@ -585,7 +601,8 @@ async function start(host) {
         const lies = e.check.audit.checked.filter((c, i) => c.verdict === "contradicted" && e.check.agreed[i] !== false).length;
         flash(p.root.position, lies ? "#e5483b" : "#1f9d55");
         p.say(lies ? `${lies} claim${lies === 1 ? "" : "s"} the ledger contradicts (guard off)` : e.correction ? "Corrected from the ledger" : "Every claim checks out", 7);
-        setTimeout(goHome, 2500);
+        clearTimeout(homeTimer);
+        homeTimer = setTimeout(goHome, 2500);
         break;
       }
       case "failed": p.say("I couldn't finish that.", 6); break;
@@ -602,7 +619,9 @@ async function start(host) {
   addEventListener("agora:day", ({ detail }) => {
     if (!detail?.changed) return;
     nightAt = performance.now();
-    setTimeout(() => lead.say(`Good morning! It's ${detail.name}.`, 6), 1300);
+    // Whoever is in the room says it: the Lead during a run, else the first desk.
+    const greeter = () => (lead.root.visible ? lead : desks.values().next().value?.person);
+    setTimeout(() => greeter()?.say(`Good morning! It's ${detail.name}.`, 6), 1300);
   });
 
   // ---- Camera: drag to turn all the way round and tilt, wheel or pinch to zoom.
@@ -710,7 +729,7 @@ async function start(host) {
   // This script can load after the run's history has already streamed in: catch up
   // (last, once everything the handlers touch exists).
   const history = window.agoraHistory?.() ?? [];
-  if (history.length) watching = true;
+  if (history.length) { watching = true; present(true); }
   for (const e of history) onEvent(e);
   showTeam(window.agoraIdleTeam?.() ?? null);
 }

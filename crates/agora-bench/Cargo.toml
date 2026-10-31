@@ -27,10 +27,15 @@ path = "src/bin/week.rs"
 name = "real"
 path = "src/bin/real.rs"
 
+[[bin]]
+name = "team"
+path = "src/bin/team.rs"
+
 [dependencies]
 agora-core.workspace = true
 agora-engine.workspace = true
 agora-muse.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

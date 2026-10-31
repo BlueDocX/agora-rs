@@ -1,0 +1,13 @@
+B8 real-world errands: test3 (test3_s13_v6), 32 runs
+
+success            29/32 (91%)
+false delivered    0
+overreach          0 runs
+first draft stopped 10 (31%), corrected from the ledger 0
+per errand (mean)  agent 7.9 calls, 16s, $0.0096 | guard 3.2 calls, 12s, $0.0181 | total $0.0276, 27s
+tokens per errand  11172 in / 5543 out
+
+Failures and overreach:
+  who-owes #0: FAILED
+  arjun-thanks #1: FAILED
+  who-owes #1: FAILED

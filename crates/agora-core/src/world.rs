@@ -494,14 +494,19 @@ impl World {
                 None => fail(target, format!("No file at \"{target}\".")),
             },
             Tool::FilesWrite => {
-                if target.is_empty() || target.contains("..") || target.starts_with('/') {
-                    return fail(target, format!("\"{target}\" is not a valid path."));
+                if target.is_empty() || target.contains("..") || target.starts_with('/') || target.contains(char::is_whitespace) {
+                    return fail(target, format!("\"{target}\" is not a valid path: use folder/name.ext, without spaces."));
                 }
                 if self.read_only.iter().any(|p| target.starts_with(p)) {
                     return fail(target, format!("Not saved: {target} is in a read-only folder."));
                 }
+                // Saving replaces the file: say which of its lines are gone, so a list
+                // that was meant to grow can't silently shrink.
+                let kept: Vec<&str> = action.text.lines().map(str::trim).collect();
+                let gone: Vec<String> = self.files.get(target).map(|old| old.lines().map(str::trim).filter(|l| !l.is_empty() && !kept.contains(l)).map(str::to_string).collect()).unwrap_or_default();
                 self.files.insert(target.to_string(), action.text.clone());
-                done(target.to_string(), format!("Saved {target}."))
+                let note = if gone.is_empty() { String::new() } else { format!(" It replaced the old content; these lines are no longer in it: {}", gone.join(" / ")) };
+                done(target.to_string(), format!("Saved {target}.{note}"))
             }
         }
     }
@@ -525,6 +530,10 @@ mod tests {
         assert!(!w.execute(&act(Tool::FilesWrite, "shared/team-notes.md", "", "x")).ok);
         assert!(!w.execute(&act(Tool::MessagesSend, "Dev", "", "can't make it")).ok);
         assert!(!w.execute(&act(Tool::FilesWrite, "../etc/passwd", "", "x")).ok);
+        assert!(!w.execute(&act(Tool::FilesWrite, "save file notes/groceries.md with milk", "", "x")).ok);
+        let shrunk = w.execute(&act(Tool::FilesWrite, "notes/todo.md", "", "- pay rent\n- call the bank"));
+        assert!(shrunk.ok && shrunk.result.contains("no longer in it: - Q3 report to Vikram / - birthday gift for Amma"), "{}", shrunk.result);
+        assert_eq!(w.execute(&act(Tool::FilesWrite, "notes/new.md", "", "x")).result, "Saved notes/new.md.");
         assert!(w.sent.is_empty() && w.events.len() == 6);
     }
 

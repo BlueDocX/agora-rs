@@ -92,6 +92,9 @@ pub(crate) enum ErrandEvent {
         /// On the inbox with a planted prompt injection.
         #[serde(default)]
         poisoned: bool,
+        /// The files attached to it: name, type, size and SHA-256 (never the bytes).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::attach::Listed>,
     },
     /// The agent is working (turn 0) or answering a question (turn 1, 2…).
     Busy { turn: usize, question: Option<String> },
@@ -194,6 +197,9 @@ pub(crate) struct ErrandRoom {
     reply_to: Option<String>,
     /// Run on the inbox with a planted prompt injection.
     poisoned: bool,
+    /// The attached files and text, until the work takes them (the bytes aren't kept
+    /// once it has).
+    files: Mutex<Option<crate::attach::Attached>>,
     /// When it was asked for.
     at_ms: u64,
     /// The office day it ran on.
@@ -405,7 +411,11 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
         }
     });
     match guarded {
-        Ok(g) => {
+        Ok(mut g) => {
+            // The errand's report lists its reads; a later answer is about one question.
+            if room.guard && question.is_none() {
+                guard::list_reads(&mut g, &entries);
+            }
             let told = match &g.correction {
                 Some(c) if g.delivered.message.is_empty() => c.clone(),
                 Some(c) => format!("{}\n\n{c}", g.delivered.message),
@@ -477,6 +487,9 @@ pub(crate) struct StartErrand {
     /// Run it on an inbox with a planted prompt injection (to watch the defences).
     #[serde(default)]
     poisoned: bool,
+    /// Images, PDFs or text files for the bot to read with the errand.
+    #[serde(default)]
+    attachments: Vec<crate::attach::Upload>,
 }
 
 /// An errand to start, however it was asked for.
@@ -493,6 +506,8 @@ pub(crate) struct Begin {
     pub reply_to: Option<String>,
     /// On the inbox with a planted prompt injection.
     pub poisoned: bool,
+    /// Files to read with it (checked once the model is known).
+    pub uploads: Vec<crate::attach::Upload>,
 }
 
 #[derive(Serialize)]
@@ -515,7 +530,7 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
         },
         None => None,
     };
-    let begin_with = Begin { brief: body.brief, model: body.model, agent: body.agent, guard: body.guard, area: body.area, bot, reply_to: None, poisoned: body.poisoned };
+    let begin_with = Begin { brief: body.brief, model: body.model, agent: body.agent, guard: body.guard, area: body.area, bot, reply_to: None, poisoned: body.poisoned, uploads: body.attachments };
     match begin(&hub, hub.member(&headers), begin_with).await {
         Ok(id) => (StatusCode::CREATED, Json(Started { id })).into_response(),
         Err((status, why)) => error(status, &why),
@@ -551,6 +566,8 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
     if let Err(why) = hub.config.check_model(&model) {
         return refuse(StatusCode::BAD_REQUEST, &why);
     }
+    let files = crate::attach::accept(body.uploads, &model).map_err(|why| (StatusCode::BAD_REQUEST, why))?;
+    let listed = files.listed.clone();
     let checker = hub.second_checker();
     let priced: Vec<&str> = [model.as_str(), hub.config.model.as_str()].into_iter().chain(checker.as_deref()).collect();
     let budget = match Budget::new(&priced, ERRAND_CAP_USD) {
@@ -581,6 +598,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         agent: agent.clone(),
         reply_to: body.reply_to,
         poisoned: body.poisoned,
+        files: Mutex::new(Some(files)),
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
         day: std::sync::atomic::AtomicUsize::new(hub.day()),
@@ -612,7 +630,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
     if let (Some(store), Ok(json)) = (&room.store, serde_json::to_string(&room.meta())) {
         store.send(Op::Errand { id: id.clone(), json });
     }
-    room.push(ErrandEvent::Started { id: id.clone(), brief: brief.clone(), model, agent: agent.clone(), checker, guard, people: people.clone(), poisoned: body.poisoned });
+    room.push(ErrandEvent::Started { id: id.clone(), brief: brief.clone(), model, agent: agent.clone(), checker, guard, people: people.clone(), poisoned: body.poisoned, attachments: listed });
     announce(hub, &people, &agent, &brief, &id);
     let recalled = agora_engine::memory::recall(&hub.memory, &views(&hub.record(&id)), &brief);
     if !recalled.is_empty() {
@@ -640,7 +658,9 @@ fn announce(hub: &Hub, people: &People, agent: &str, brief: &str, id: &str) {
 /// Run the errand, streaming each ledger entry as it is written, then check the report.
 async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
     let recalled = room.recalled();
-    let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled };
+    // The files go to this run once; the room doesn't keep the bytes, and they're
+    // dropped as soon as the work is done (before the guard and memory calls).
+    let files = room.files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take().unwrap_or_default();
     if room.poisoned {
         // The red-team copy: the office as it is now, with the injection planted.
         let mut copy = hub.office.lock().await.clone();
@@ -663,7 +683,9 @@ async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
             }
         }
         let on_step = |entry: &Entry| room.push(ErrandEvent::Step { entry: entry.clone() });
+        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &files.media, documents: &files.text };
         let done = errand::run(&room.caller, &room.ledger, &mut world, &errand, &on_step).await;
+        drop(files);
         if !room.poisoned {
             hub.set_office_view(&world);
         }
@@ -740,7 +762,8 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
         // With the guard on, the agent answers from its ledger and the office's memory,
         // not from its own impressions.
         let recalled = if room.guard { agora_engine::memory::recall(&hub.memory, &views(&hub.record(&room.id)), &question) } else { String::new() };
-        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled };
+        // A later question is about the record; the attached files went with the work.
+        let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &[], documents: "" };
         let log = room.guard.then(|| guard::log(&room.ledger.entries().unwrap_or_default()));
         // A snapshot, without waiting: the office may be busy with another errand.
         let world = if room.poisoned { room.world.lock().await.clone() } else { hub.office_view() };
@@ -1189,6 +1212,8 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             agent: meta.agent,
             reply_to: meta.reply_to,
             poisoned: meta.poisoned,
+            // A restored errand's work is done: its files were never kept.
+            files: Mutex::new(None),
             at_ms: meta.at_ms,
             day: std::sync::atomic::AtomicUsize::new(meta.day),
             caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),

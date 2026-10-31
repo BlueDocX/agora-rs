@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agora_core::Team;
-use agora_muse::{Effort, Host, Message, MuseClient, MuseError, Request, Role, host_of};
+use agora_muse::{Effort, Host, Message, MuseClient, MuseError, Request, host_of};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -398,7 +398,7 @@ impl Ctx {
             if model_rejections == 2 || drafts == 3 {
                 return Err(TaskError::Rejected { failed_criteria: failed });
             }
-            input.push(Message { role: Role::Assistant, content: draft });
+            input.push(Message::assistant(draft));
             input.push(Message::user(format!(
                 "This result does not meet these criteria yet:\n{}\nFix exactly these and return the full corrected result.",
                 bullets(&failed)
