@@ -23,6 +23,10 @@ path = "src/bin/red_team.rs"
 name = "week"
 path = "src/bin/week.rs"
 
+[[bin]]
+name = "real"
+path = "src/bin/real.rs"
+
 [dependencies]
 agora-core.workspace = true
 agora-engine.workspace = true

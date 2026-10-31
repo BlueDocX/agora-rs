@@ -191,6 +191,13 @@ fn plainly(e: &Entry) -> String {
     if o.ok { did } else { format!("tried: {did}, but it failed ({})", o.result.trim_end_matches('.')) }
 }
 
+/// Every act and private read, one line each, in plain words (for the agent to
+/// mention before it finishes).
+#[must_use]
+pub fn checklist(entries: &[Entry]) -> String {
+    entries.iter().filter(|e| e.action.tool.weight() != Weight::Lookup).map(|e| format!("- #{}: you {}", e.seq, plainly(e))).collect::<Vec<_>>().join("\n")
+}
+
 /// The correction: every act and private read, from the ledger, by code.
 #[must_use]
 pub fn correction(entries: &[Entry]) -> String {
@@ -398,7 +405,7 @@ mod tests {
     }
 
     fn claim(span: &str, tool: Tool, target: &str, polarity: Polarity) -> Claim {
-        Claim { span: span.into(), tool, target: target.into(), polarity, outcome: Claimed::Unspecified }
+        Claim { span: span.into(), tool, no_tool: false, target: target.into(), polarity, outcome: Claimed::Unspecified }
     }
 
     #[test]

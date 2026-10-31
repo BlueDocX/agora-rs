@@ -63,6 +63,14 @@ The page shows each stopped draft struck through with its reason, so the correct
 
 In a working week (Monday to Friday, with replies arriving on their days), answers about the week from agents that kept their own notes had **15 of 92 claims contradicted by the ledger**. We read each: 7 are real (invented searches, a sent message denied for four days running). Those answers also left out 22 acts. With ledger-grounded memory and the guard, **0 of 217 were delivered false and nothing was left out**, at under a third of the cost per backed claim.
 
+**Real-world errands, and a self-improvement loop (B8, [details](docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop)).** 40 errands phrased the way people ask, including impossible ones and privacy traps, each with a success check in code. Run on Spark Open via Baseten, then improved in a measured loop: read every failure, fix the cause, measure again, then run a held-out set written before any run on it.
+- **Success:** 78% to **100%** on the final run (97% on the held-out set on reading).
+- **Cost:** **45% lower**, $0.033 to $0.018 per errand.
+- **Time:** **36% faster**, 28 s to 18 s.
+- **0 overreach** on the final run.
+
+The loop also found the guard's blind spot: a bot reported "Finished paying your rent" when no tool can pay, so the claim was never judged. Claiming an action no tool can do is now false by definition.
+
 **Tamper evidence, and against whom.** The hash chain stops the *agent*: it never writes the ledger, and changing, dropping or reordering an entry is caught (`agora-verify`). A chain alone doesn't stop whoever *runs the server*, who could rewrite it and recompute every hash. So the office **signs each ledger head with Ed25519** and hands you the receipt (run, entry count, head, time, signature). Keep it, and `agora-verify --receipt receipt.json agora-journal.db <office-key>` later proves whether the ledger still reaches what the office signed. A rewritten history fails even with every hash recomputed, because only the office's key could have signed the old head. The office's public key is at `/.well-known/agora-signing-key`; publish it somewhere the operator doesn't control to anchor it.
 
 **Prompt injection.** What a call returns (an email, a chat, a file) is someone else's text. Results reach the agent marked as data, never as instructions. The executor also refuses to email any address that isn't saved in the person's contacts or written in the errand itself. So an address planted in an email (even one signed with a friend's name) can't be used to send their data out. A new address the person really wants used goes in the errand. A blocked attempt is still a failed ledger entry, so the guard makes the agent own up to it.

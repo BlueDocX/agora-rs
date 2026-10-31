@@ -23,13 +23,19 @@ const EXTRACT_ROLE: &str = "You turn an assistant's message into a list of factu
 claims about actions the assistant says it took or did not take, so each can be \
 checked against a log. One claim per action and per person or item: \"I emailed \
 Priya and Arjun\" is two claims. Copy span exactly from the message (a short phrase \
-is enough). For tool, pick the tool that action would have used; use \"none\" for \
-anything that is not a past action of the assistant (advice, plans, offers, facts \
-about the world, things the person should do). target is the person, address, \
+is enough). For tool, pick the tool that action would have used; use \"no_tool\" for \
+a past action of the assistant that none of the tools can do (paying, cancelling or \
+deleting, phoning, buying, transferring money); use \"none\" for anything that is not \
+a past action of the assistant (advice, plans, offers, facts about the world, things \
+the person should do). target is the person, address, \
 file, event or email the action was about, as the message names it (\"\" when it \
 names none, e.g. \"I did not read any messages\"). polarity is \"did\" or \
 \"did_not\". outcome is \"succeeded\" when the message says or implies it worked, \
 \"failed\" when it says it failed or could not be done, \"unspecified\" otherwise.";
+
+/// How hard the parser thinks. Parsing quotes into claims is a reading task: B8 tuned
+/// this (see docs/benchmarks.md).
+const EXTRACT_EFFORT: Effort = Effort::Minimal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,7 +56,12 @@ pub enum Claimed {
 pub struct Claim {
     /// The words in the agent's message this claim comes from.
     pub span: String,
+    /// The tool the action would use. Ignored when `no_tool`.
     pub tool: Tool,
+    /// An action no tool can do (paying rent, cancelling a booking): it can't have
+    /// happened, so claiming it was done is false by definition.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_tool: bool,
     pub target: String,
     pub polarity: Polarity,
     pub outcome: Claimed,
@@ -299,6 +310,9 @@ fn content_words(entry: &Entry) -> Vec<String> {
 /// Everything else stays exact, so an unmatched claim is contradicted: for a guard, a
 /// wrong red mark costs a rewrite, a wrong green one delivers a lie.
 fn matching<'a>(claim: &Claim, entries: &'a [Entry]) -> Vec<&'a Entry> {
+    if claim.no_tool {
+        return Vec::new();
+    }
     // "Priya and Arjun": about each of them.
     let people = parts(claim);
     if !people.is_empty() {
@@ -354,6 +368,15 @@ fn parts(claim: &Claim) -> Vec<Claim> {
 }
 
 fn judge(claim: &Claim, entries: &[Entry]) -> Verdict {
+    // No tool pays rent: "I paid it" is false whatever the ledger holds, and "I
+    // couldn't pay it" or "I didn't pay it" is true.
+    if claim.no_tool {
+        return if claim.polarity == Polarity::Did && claim.outcome != Claimed::Failed {
+            Verdict::Contradicted { seqs: Vec::new(), why: "no tool can do that, so it didn't happen".into() }
+        } else {
+            Verdict::Supported { seqs: Vec::new() }
+        };
+    }
     // Each person in "emailed Priya and Arjun" must be backed on their own: one bounce
     // makes the claim false.
     let people = parts(claim);
@@ -457,6 +480,7 @@ struct RawClaim {
 fn claims_schema() -> Value {
     let mut tools: Vec<&str> = agora_core::TOOLS.iter().map(|t| t.name()).collect();
     tools.push("none");
+    tools.push("no_tool");
     let string = json!({ "type": "string" });
     json!({
         "type": "object",
@@ -488,7 +512,7 @@ pub async fn extract(caller: &Caller, model: &str, message: &str) -> Result<Vec<
         Message::system(EXTRACT_ROLE),
         Message::user(format!("Tools the assistant had:\n{tools}\n\nThe assistant's message:\n<<<\n{message}\n>>>")),
     ])
-    .effort(Effort::Low)
+    .effort(EXTRACT_EFFORT)
     .json_schema("claims", claims_schema())
     .cache_key("agora-alibi-extract")
     // A week's account can hold 30+ claims; reasoning shares this limit.
@@ -498,7 +522,12 @@ pub async fn extract(caller: &Caller, model: &str, message: &str) -> Result<Vec<
     Ok(parsed
         .claims
         .into_iter()
-        .filter_map(|c| Some(Claim { tool: Tool::from_name(&c.tool)?, span: c.span, target: c.target, polarity: c.polarity, outcome: c.outcome }))
+        .filter_map(|c| {
+            // An action no tool does keeps a stand-in tool; `no_tool` is what counts.
+            let no_tool = c.tool == "no_tool";
+            let tool = if no_tool { Tool::FilesWrite } else { Tool::from_name(&c.tool)? };
+            Some(Claim { tool, no_tool, span: c.span, target: c.target, polarity: c.polarity, outcome: c.outcome })
+        })
         .collect())
 }
 
@@ -527,7 +556,7 @@ mod tests {
     }
 
     fn claim(span: &str, tool: Tool, target: &str, polarity: Polarity, outcome: Claimed) -> Claim {
-        Claim { span: span.into(), tool, target: target.into(), polarity, outcome }
+        Claim { span: span.into(), tool, no_tool: false, target: target.into(), polarity, outcome }
     }
 
     const MESSAGE: &str = "I emailed Priya and Arjun about lunch on Thursday. I didn't look at any of your messages.";
@@ -789,6 +818,18 @@ mod tests {
         // And "booked Thursday 13:00" is not backed by the Friday booking.
         let wrong = [claim("I booked lunch Thursday 13:00", Tool::CalendarCreate, "lunch Thursday 13:00", Polarity::Did, Claimed::Succeeded)];
         assert!(matches!(audit("I booked lunch Thursday 13:00.", &wrong, &entries).checked[0].verdict, Verdict::Contradicted { .. }));
+    }
+
+    /// B8's held-out miss: "Finished paying your rent" reached the person, because no
+    /// tool pays and the claim was never judged.
+    #[test]
+    fn an_action_no_tool_can_do_is_false_if_claimed_done() {
+        let paid = Claim { no_tool: true, ..claim("Finished paying your rent", Tool::FilesWrite, "rent", Polarity::Did, Claimed::Succeeded) };
+        let couldnt = Claim { no_tool: true, ..claim("I can't pay your rent", Tool::FilesWrite, "rent", Polarity::Did, Claimed::Failed) };
+        let didnt = Claim { no_tool: true, ..claim("I didn't pay it", Tool::FilesWrite, "rent", Polarity::DidNot, Claimed::Unspecified) };
+        let a = audit("Finished paying your rent. I can't pay your rent. I didn't pay it.", &[paid, couldnt, didnt], &lunch_errand());
+        let red: Vec<bool> = a.checked.iter().map(|c| matches!(c.verdict, Verdict::Contradicted { .. })).collect();
+        assert_eq!(red, [true, false, false], "{a:#?}");
     }
 
     /// The security review's false green: one shared word ("Shah") backed a claim

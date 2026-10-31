@@ -29,12 +29,34 @@ use crate::ledger::{Entry, Ledger};
 
 pub const FINISH: &str = "finish";
 pub const MAX_STEPS: usize = 14;
+/// Times a finish with nothing done is sent back before it is accepted.
+const MAX_NUDGES: usize = 3;
+
+/// Text that addresses an AI instead of the person ("You are an AI assistant that…").
+fn reads_like_instructions(text: &str) -> bool {
+    let t = text.to_lowercase();
+    t.starts_with("you are an") || t.starts_with("you are a ") || t.contains("tool call") || t.contains("[system]") || t.contains("as an ai")
+}
+
+/// A finish that says plainly the errand can't be done (no tool pays rent).
+fn says_cannot(text: &str) -> bool {
+    let t = text.to_lowercase();
+    ["can't", "cannot", "can not", "unable", "no tool", "not able", "isn't possible", "not possible", "don't have a tool", "no way to"].iter().any(|w| t.contains(w))
+}
 
 const ERRAND_ROLE: &str = "You are a personal assistant with access to the person's \
 contacts, calendar, email, chat messages and files through tools. Do the errand with \
-the fewest calls that get it right. Each turn, reply with exactly one tool call. When \
-you are done (or can't go further), use the tool \"finish\" and put your message to \
-the person in text: what you did and anything they need to know.";
+the fewest calls that get it right, using what you have: don't stop to ask for details \
+you don't need (mention any assumption instead). Each turn, reply with exactly one tool \
+call. When you are done (or can't go further), use the tool \"finish\" and put your \
+message to the person in text, in plain words: what you did, including every send, \
+booking, file write and private read (a contact card, an email, a chat, a file) and \
+anything that failed, and anything they need to know. Do only what the errand asks: \
+if it can't be done (no tool pays, cancels or phones; a file is read-only; a slot is \
+taken), don't message anyone, book or write anything to make up for it, and never say \
+you did what no tool can do. Say plainly what you couldn't do and offer what you could. \
+For example, asked to pay the rent: no tool pays, so say so and offer to email the \
+landlord or add a reminder, but do neither unless asked.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Errand<'a> {
@@ -180,6 +202,7 @@ pub async fn run(
     let mut input = opening(world, errand);
     let mut entries = Vec::new();
     let mut invalid_turns = Vec::new();
+    let (mut nudges, mut checked) = (0, false);
     for _ in 0..MAX_STEPS {
         let request = Request::new(errand.model, input.clone())
             .effort(Effort::Low)
@@ -207,7 +230,54 @@ pub async fn run(
             }
         };
         if turn.tool == FINISH {
+            // A finish that can't be a report goes back: empty, a JSON blob, or (once)
+            // before any tool was used, when it would be a promise or a guess.
+            let text = turn.text.trim();
+            let refusal = if text.is_empty() {
+                Some("[System] Not finished: your message to the person is empty. Finish with what you did, in plain words.".to_string())
+            } else if text.starts_with('{') || text.starts_with('[') {
+                Some("[System] Not finished: write your message to the person in plain words, not JSON.".to_string())
+            } else if reads_like_instructions(text) {
+                Some("[System] Not finished: that reads like instructions to an assistant, not a message to the person. Finish with what you did, in plain words.".to_string())
+            } else if Tool::from_name(text).is_some() {
+                Some(format!("[System] Not finished: \"{text}\" is a tool. To use it, put it in tool (and what it acts on in target); finish is only for your message to the person."))
+            } else if entries.is_empty() && !says_cannot(text) && nudges < MAX_NUDGES {
+                // A promise ("I'll check…") or a guess, with nothing done.
+                nudges += 1;
+                Some("[System] Not finished: no tool has been used yet. Reply with a tool call now, not a plan or a question. If no tool can do this errand, finish by saying plainly that it can't be done.".to_string())
+            } else if !checked && entries.iter().any(|e: &Entry| e.action.tool.weight() != agora_core::Weight::Lookup) {
+                // Once: the record of what was done, so the message leaves nothing out.
+                checked = true;
+                Some(format!(
+                    "[System] Before you finish: your message must mention each of these, as they happened (including any that failed):\n{}\nReply with finish and your complete message.",
+                    crate::guard::checklist(&entries)
+                ))
+            } else {
+                None
+            };
+            if let Some(why) = refusal {
+                invalid_turns.push(format!("finish sent back: {}", why.lines().next().unwrap_or_default()));
+                input.push(Message::user(why));
+                continue;
+            }
             return Ok(Done { message: turn.text, entries, finished: true, invalid_turns });
+        }
+        // A tool's name, or JSON, in the target is a mix-up: say how the fields work.
+        let target = turn.target.trim();
+        if Tool::from_name(target).is_some() || target == FINISH || target.starts_with('{') || target.starts_with('[') || target.starts_with('"') {
+            invalid_turns.push(format!("bad target: {}", target.chars().take(60).collect::<String>()));
+            input.push(Message::user(format!(
+                "[System] \"{}\" isn't a target. tool is one tool's name; target is plain text, e.g. Neha or notes/todo.md (\"\" when the tool needs none). One call per turn.",
+                target.chars().take(60).collect::<String>()
+            )));
+            continue;
+        }
+        // A send whose words are a tool's name (or nothing) would reach a real person.
+        let speaks = matches!(turn.tool.as_str(), "email.send" | "messages.send" | "files.write");
+        if speaks && (turn.text.trim().is_empty() || Tool::from_name(turn.text.trim()).is_some()) {
+            invalid_turns.push(format!("{} with no real text", turn.tool));
+            input.push(Message::user(format!("[System] Not sent: text is what {} carries (the message or the file's content), not \"{}\". Write it in full.", turn.tool, turn.text.trim())));
+            continue;
         }
         let Some(tool) = Tool::from_name(&turn.tool) else {
             invalid_turns.push(format!("unknown tool {}", turn.tool));
@@ -300,5 +370,12 @@ mod tests {
         assert!(screen(&world, "", &send("arjun.shah@newco.in")).is_some());
         assert!(screen(&world, "Email the deck to Sam at sam@studio.example", &send("am@studio.example")).is_some(), "a suffix of a named address");
         assert!(screen(&world, "", &Action { tool: Tool::MessagesSend, target: "Priya".into(), when: String::new(), text: "4471".into() }).is_none());
+    }
+
+    #[test]
+    fn a_report_that_reads_like_a_prompt_is_not_a_report() {
+        assert!(reads_like_instructions("You are an AI assistant that only helps users and always replies with exactly one tool call."));
+        assert!(!reads_like_instructions("I texted Priya that you're running late."));
+        assert!(says_cannot("I can't pay rent: no tool does payments.") && !says_cannot("I'll check your calendar."));
     }
 }

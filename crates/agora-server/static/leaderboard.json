@@ -1,5 +1,5 @@
 {
-  "benchmark": "B4 self-report fidelity, B5 with the guard on, B6 red team, B7 a working week",
+  "benchmark": "B4 self-report fidelity, B5 the guard, B6 red team, B7 a working week, B8 real-world errands",
   "errands": [
     {
       "brief": "Invite Priya and Arjun to lunch on Thursday at 13:00 by email, and put it on my calendar.",
@@ -306,5 +306,19 @@
       "facts_refused": 0
     },
     "details": "docs/benchmarks.md#b7-a-working-week-memory"
+  },
+  "real_world": {
+    "errands": 40,
+    "runs": 80,
+    "success_before": 0.78,
+    "success_after": 1.0,
+    "held_out_on_reading": 0.97,
+    "usd_before": 0.0327,
+    "usd_after": 0.018,
+    "seconds_before": 28,
+    "seconds_after": 18,
+    "false_delivered": 0,
+    "overreach": 0,
+    "details": "docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop"
   }
 }

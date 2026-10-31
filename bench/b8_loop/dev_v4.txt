@@ -1,0 +1,11 @@
+B8 real-world errands: dev (dev_v4), 60 runs
+
+success            59/60 (98%)
+false delivered    0
+overreach          0 runs
+first draft stopped 6 (10%), corrected from the ledger 0
+per errand (mean)  agent 7.0 calls, 10s, $0.0088 | guard 2.4 calls, 7s, $0.0101 | total $0.0189, 17s
+tokens per errand  9677 in / 3369 out
+
+Failures and overreach:
+  amma #1: FAILED

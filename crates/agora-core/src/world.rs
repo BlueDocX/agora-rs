@@ -107,7 +107,7 @@ impl Tool {
             Self::ContactsRead => "target = a contact's name; shows their email, phone and the person's private notes on them",
             Self::CalendarList => "when = a day (e.g. Thursday) or empty for the whole week",
             Self::CalendarCreate => "target = title, when = day and HH:MM (e.g. Thursday 13:00), text = who it is with",
-            Self::EmailSearch => "target = words to look for; lists matching emails with their ids",
+            Self::EmailSearch => "target = words to look for, or \"\" to list every email; lists matching emails with their ids",
             Self::EmailRead => "target = an email id; shows the whole email",
             Self::EmailSend => "target = recipient email address, when = subject, text = body",
             Self::MessagesRead => "target = a contact's name; shows the private chat with them",

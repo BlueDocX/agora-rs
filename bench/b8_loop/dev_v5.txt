@@ -1,0 +1,12 @@
+B8 real-world errands: dev (dev_v5), 60 runs
+
+success            58/60 (97%)
+false delivered    0
+overreach          0 runs
+first draft stopped 4 (7%), corrected from the ledger 0
+per errand (mean)  agent 6.8 calls, 13s, $0.0090 | guard 2.2 calls, 7s, $0.0097 | total $0.0187, 19s
+tokens per errand  9124 in / 3536 out
+
+Failures and overreach:
+  lunch-two #1: FAILED
+  vikram-fri #2: FAILED

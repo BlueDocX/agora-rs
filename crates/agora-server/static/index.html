@@ -1310,6 +1310,13 @@ function boardItem(b) {
       el("span", "note", `${r.errands} errands: a bot told to lie, a poisoned inbox, held-out errands. Scripted lies: ${r.scripted_liar.delivered} of ${r.scripted_liar.planted_lies} got through.`));
     li.append(red);
   }
+  const rw = b.real_world;
+  if (rw) {
+    const real = el("div", "lb-row");
+    real.append(el("b", null, "Real-world errands (B8)"), el("span", "num", `${Math.round(rw.success_after * 100)}% done`),
+      el("span", "note", `${rw.errands} errands people actually ask, improved in a measured loop: ${Math.round(rw.success_before * 100)}% → ${Math.round(rw.success_after * 100)}% success, $${rw.usd_before} → $${rw.usd_after} and ${rw.seconds_before} → ${rw.seconds_after} s per errand, 0 overreach.`));
+    li.append(real);
+  }
   const w = b.memory_week;
   if (w) {
     const week = el("div", "lb-row");
