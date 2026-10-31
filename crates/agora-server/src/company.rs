@@ -650,6 +650,17 @@ pub(crate) struct Me {
 }
 
 /// Who the key (header or session cookie) belongs to.
+/// The company's routes.
+pub(crate) fn routes() -> axum::Router<Arc<Hub>> {
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route("/api/company/join", post(join))
+        .route("/api/company/members/{id}", patch(change).delete(leave))
+        .route("/api/company/events", get(events))
+        .route("/api/company/whoami", get(whoami))
+        .route("/api/company/messages", post(say))
+}
+
 pub(crate) async fn whoami(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     if !authorized(&hub, &headers) {
         return unauthorized();
@@ -667,12 +678,23 @@ pub(crate) struct Say {
 }
 
 /// `@Bot ...` at the start of a channel message: the bot's member and the errand.
-fn mention<'a>(company: &Company, text: &'a str) -> Option<(Member, &'a str)> {
+/// The bot it addresses and the errand: a person's bot (its owner), or an added agent
+/// (as its owner, under the agent's name, with the agent).
+fn mention<'a>(company: &Company, agents: &[crate::agents::AgentBot], me: &Member, text: &'a str) -> Option<(Member, Option<crate::agents::AgentBot>, &'a str)> {
     let rest = text.strip_prefix('@')?;
     let end = rest.find(|c: char| !c.is_alphanumeric()).unwrap_or(rest.len());
-    let owner = company.by_bot(&rest[..end])?.clone();
+    let name = &rest[..end];
     let brief = rest[end..].trim_start_matches([',', ':', ' ']).trim();
-    (!brief.is_empty()).then_some((owner, brief))
+    if brief.is_empty() {
+        return None;
+    }
+    if let Some(owner) = company.by_bot(name) {
+        return Some((owner.clone(), None, brief));
+    }
+    let agent = agents.iter().find(|a| a.name.eq_ignore_ascii_case(name))?;
+    let mut speaker = agent.owner.as_deref().and_then(|id| company.by_id(id)).unwrap_or(me).clone();
+    speaker.bot.clone_from(&agent.name);
+    Some((speaker, Some(agent.clone()), brief))
 }
 
 pub(crate) async fn say(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Json<Say>, JsonRejection>) -> Response {
@@ -684,18 +706,21 @@ pub(crate) async fn say(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: R
         Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that isn't a valid message: {}", e.body_text())),
     };
     let Some(me) = hub.member(&headers) else { return error(StatusCode::FORBIDDEN, "join the office first") };
+    let agents = hub.agents().all(); // before the company's lock: never both at once
     let (said, errand) = {
         let mut company = hub.company();
         let (to, text) = match company.check_message(&me, &body.to, &body.text) {
             Ok(ok) => ok,
             Err(why) => return error(StatusCode::BAD_REQUEST, &why),
         };
-        let errand = if to.starts_with('#') { mention(&company, &text).map(|(bot, brief)| (bot, brief.to_string(), to.clone())) } else { None };
+        let errand = if to.starts_with('#') { mention(&company, &agents, &me, &text).map(|(bot, agent, brief)| (bot, agent, brief.to_string(), to.clone())) } else { None };
         (company.say(&me, false, &to, text, None), errand)
     };
     // A bot asked in a channel gets the errand; its checked report comes back there.
-    if let Some((bot, brief, channel)) = errand {
-        let begin = crate::errands::Begin { brief, bot: Some(bot.clone()), reply_to: Some(channel.clone()), ..Default::default() };
+    if let Some((bot, agent_bot, brief, channel)) = errand {
+        // An agent with no owner yet is answered by whoever asked.
+        let owner = agent_bot.as_ref().is_none_or(|a| a.owner.is_some()).then(|| bot.clone());
+        let begin = crate::errands::Begin { brief, bot: owner, agent_bot, reply_to: Some(channel.clone()), ..Default::default() };
         let started = crate::errands::begin(&hub, Some(me.clone()), begin).await;
         let mut company = hub.company();
         match started {
@@ -858,11 +883,20 @@ mod tests {
     fn a_bot_is_asked_by_name_at_the_start_of_a_message() {
         let mut c = Company::default();
         c.join("Asha", "", None, None).unwrap();
-        let (bot, brief) = mention(&c, "@scout, text Dev about Wednesday").unwrap();
-        assert_eq!((bot.bot.as_str(), brief), ("Scout", "text Dev about Wednesday"));
-        assert!(mention(&c, "@Nobody do it").is_none());
-        assert!(mention(&c, "@Scout").is_none(), "no errand without a brief");
-        assert!(mention(&c, "hey @Scout do it").is_none());
+        let asha = c.members_view()[0].clone();
+        let muse = crate::agents::AgentBot {
+            id: "agent-1".into(), name: "Muse".into(), owner: Some(asha.id.clone()), owner_name: Some("Asha".into()),
+            preset: None, model: None, tools: vec![], color: "#8b5cf6".into(), at_ms: 0,
+        };
+        let agents = [muse];
+        let (bot, agent, brief) = mention(&c, &agents, &asha, "@scout, text Dev about Wednesday").unwrap();
+        assert_eq!((bot.bot.as_str(), agent.is_none(), brief), ("Scout", true, "text Dev about Wednesday"));
+        // An added agent speaks under its own name, as its owner.
+        let (bot, agent, _) = mention(&c, &agents, &asha, "@muse check the docs").unwrap();
+        assert_eq!((bot.bot.as_str(), bot.id.as_str(), agent.map(|a| a.name)), ("Muse", asha.id.as_str(), Some("Muse".to_string())));
+        assert!(mention(&c, &agents, &asha, "@Nobody do it").is_none());
+        assert!(mention(&c, &agents, &asha, "@Scout").is_none(), "no errand without a brief");
+        assert!(mention(&c, &agents, &asha, "hey @Scout do it").is_none());
     }
 
     #[test]

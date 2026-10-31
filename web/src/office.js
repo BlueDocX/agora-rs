@@ -541,7 +541,7 @@ async function start(host) {
   // it did but didn't mention, green when every claim checks out; on a red one the
   // reviewer walks over as the auditor.
   const SHELF = new Vector3(-0.72, FLOOR, -2.3), LAPTOP = new Vector3(-1.32, FLOOR, 2.3);
-  const ACTS = new Set(["calendar.create", "email.send", "messages.send", "files.write"]);
+  const ACTS = new Set(["calendar.create", "email.send", "messages.send", "files.write", "connected.act"]);
   const rings = [];
   function flash(at, color) {
     const ring = new Mesh(new RingGeometry(0.22, 0.34, 40), new MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }));
@@ -569,6 +569,12 @@ async function start(host) {
     switch (e.type) {
       case "busy":
         p.say(e.turn === 0 ? "On it!" : "…", e.turn === 0 ? 3 : 30);
+        break;
+      case "approval": // a real tool's call waits for a person's OK
+        p.say(`May I use ${e.tool}? Waiting for your OK…`, 120);
+        break;
+      case "decided":
+        p.say(e.approved ? "Thanks, going ahead." : "OK, I won't.", 4);
         break;
       case "step": {
         const { action, outcome } = e.entry;

@@ -167,6 +167,12 @@
   .person .acts button { white-space: nowrap; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 9px; font: 700 10.5px var(--sans); cursor: pointer; }
   .person.off { opacity: .55; }
   .person.me { outline: 2px solid var(--butter); }
+  dialog#agentbox { border: 0; border-radius: 24px; padding: 22px 24px; width: min(440px, calc(100vw - 32px)); background: var(--paper); color: var(--ink); }
+  dialog#agentbox h3 { margin: 0 0 4px; } dialog#agentbox p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+  dialog#agentbox label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 10px 0 4px; }
+  dialog#agentbox input, dialog#agentbox select { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 14px var(--sans); background: var(--stone); }
+  dialog#agentbox .dests { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; } dialog#agentbox .dests label { display: inline-flex; gap: 4px; margin: 0; font-weight: 600; color: var(--ink); }
+  dialog#agentbox .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   dialog#joinbox { border: 0; border-radius: 24px; padding: 22px 24px; width: min(420px, calc(100vw - 32px)); background: var(--paper); color: var(--ink); }
   dialog#joinbox h3 { margin: 0 0 4px; } dialog#joinbox p { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
   dialog#joinbox label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 10px 0 4px; }
@@ -372,6 +378,34 @@
   dialog#teams { width: min(1080px, calc(100vw - 24px)); height: min(740px, calc(100vh - 32px)); max-height: none; border: 0; border-radius: 28px;
                  padding: 0; background: var(--paper); color: var(--ink); box-shadow: 0 40px 80px -24px rgba(23,21,15,.4); overflow: hidden; }
   dialog::backdrop { background: rgba(23,21,15,.42); backdrop-filter: blur(6px); }
+  .pill.mini { padding: 3px 10px; font-size: 11px; }
+  dialog#tools { width: min(1080px, calc(100vw - 24px)); height: min(760px, calc(100vh - 32px)); max-height: none; border: 0; border-radius: 28px; padding: 0; background: var(--paper); color: var(--ink); }
+  .tl { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100%; position: relative; }
+  .tl-list { border-right: 1px solid var(--line); padding: 20px; overflow: auto; }
+  .tl-list h3 { margin: 0 0 12px; } .tl-list h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .tl-list label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 8px 0 3px; }
+  .tl-list input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: 13px var(--sans); background: var(--stone); }
+  .tl-list .row { display: flex; justify-content: flex-end; margin-top: 10px; }
+  .tl-conn { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--stone); border-radius: 14px; padding: 9px 12px; margin-bottom: 6px; font: 13px var(--sans); color: var(--ink); cursor: pointer; }
+  .tl-conn.on { border-color: var(--ink); background: var(--paper); }
+  .tl-conn small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .tl-main { padding: 20px 24px; overflow: auto; }
+  .tl-main h3 { margin: 0 0 4px; } .tl-main .actions { display: flex; gap: 8px; margin: 10px 0 16px; flex-wrap: wrap; }
+  .tl-close { position: absolute; top: 12px; right: 14px; border: 0; background: none; font-size: 22px; cursor: pointer; color: var(--ink); }
+  .tl-tool { border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; margin-bottom: 10px; background: var(--stone); }
+  .tl-tool.changed { border-color: var(--bad); }
+  .tl-tool header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .tl-tool header b { font: 600 13px var(--mono); } .tl-tool .desc { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
+  .tl-tool .warn { color: var(--bad); font-weight: 700; font-size: 11.5px; }
+  .tl-tool label { display: block; font: 700 10.5px var(--sans); color: var(--muted); margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .04em; }
+  .tl-tool input, .tl-tool select, .tl-tool textarea { box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; font: 12.5px var(--sans); background: var(--paper); width: 100%; }
+  .tl-tool select { width: auto; }
+  .tl-tool .dests { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; } .tl-tool .dests label { display: inline-flex; gap: 4px; text-transform: none; font-weight: 600; margin: 0; }
+  .tl-tool .save { display: flex; justify-content: flex-end; gap: 8px; align-items: center; margin-top: 8px; }
+  .ab-approve { border: 1px solid #e8c45a; background: #fff8e1; border-radius: 16px; padding: 10px 12px; }
+  .ab-approve pre { white-space: pre-wrap; font: 11.5px/1.5 var(--mono); background: var(--paper); border-radius: 10px; padding: 8px; margin: 6px 0; max-height: 220px; overflow: auto; }
+  .ab-approve .row { display: flex; gap: 8px; justify-content: flex-end; }
+  @media (max-width: 760px) { .tl { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .tl-list { border-right: 0; border-bottom: 1px solid var(--line); max-height: 42vh; } }
   .tm { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; }
   .tm-list { background: var(--stone); border-right: 1px solid var(--line); padding: 22px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
   .tm-list h4 { margin: 0 8px 6px; font-size: 19px; font-weight: 800; }
@@ -557,6 +591,10 @@
     <div class="sect"><span class="label">People in the office</span><span class="tag" id="peopletag">0 here</span></div>
     <div id="invitebox"></div>
     <div class="folks" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
+    <div class="sect"><span class="label">Agents</span><button class="pill ghost mini" id="addagent" type="button">+ Add an agent</button></div>
+    <div class="folks" id="agentlist"><p class="note">Add agents of your own: a role, a model, the tools they may use. They work on the same executor, so everything they do is ledgered and checked.</p></div>
+    <div class="sect"><span class="label">Connected tools</span><button class="pill ghost mini" id="toolsbtn" type="button">Manage</button></div>
+    <p class="note" id="toolsum">None yet: bots work in the sandbox. Connect GitHub, Slack, Linear or any MCP server to let them do real work, every call ledgered and checked.</p>
     <div class="sect"><span class="label">Team</span></div>
     <div class="team-pick">
       <select id="teamsel" aria-label="Team for the next run"></select>
@@ -609,10 +647,35 @@
 <div id="call" hidden role="dialog" aria-label="Call">
   <div class="head"><span id="calltitle">Call</span><a id="callopen" href="#" target="_blank" rel="noopener">Open in a new tab</a><button class="close" id="callclose" type="button" aria-label="Close the call">×</button></div>
 </div>
+<dialog id="agentbox" aria-label="Add an agent"><form method="dialog" id="agentform">
+  <h3>Add an agent</h3>
+  <p>It works like any bot here: Agora makes its calls, ledgers them and checks what it says. You own it: its actions wait for your OK.</p>
+  <label for="agentname">Name (people ask it with @Name)</label><input id="agentname" maxlength="24" required placeholder="e.g. Muse">
+  <label for="agentrole">Role and skills</label><select id="agentrole"></select>
+  <label for="agentmodel">Model</label><select id="agentmodel"></select>
+  <label>Connected tools it may use</label><div id="agenttools" class="dests"></div>
+  <p class="note" id="agentnote"></p>
+  <div class="row"><button class="pill ghost" type="button" id="agentcancel">Cancel</button><button class="pill butter" id="agentgo">Add</button></div>
+</form></dialog>
+<dialog id="tools" aria-label="Connected tools"><div class="tl">
+  <nav class="tl-list"><h3>Connected tools</h3><div id="tllist"></div>
+    <form id="tlconnect"><h4>Connect a server</h4>
+      <div class="chips" id="tlcatalog"></div>
+      <label for="tlname">Name</label><input id="tlname" maxlength="40" required placeholder="e.g. GitHub">
+      <label for="tlurl">MCP server URL (https://)</label><input id="tlurl" required placeholder="https://…/mcp" spellcheck="false">
+      <label for="tltoken">Token, if it needs one (kept sealed; never shown again)</label><input id="tltoken" type="password" autocomplete="off" spellcheck="false">
+      <p class="note" id="tlnote"></p>
+      <div class="row"><button class="pill butter" id="tlgo">Connect</button></div>
+    </form>
+  </nav>
+  <div class="tl-main" id="tlmain"><p class="note">Pick a connector, or connect one. Every tool starts off: you decide what each may do.</p></div>
+  <button class="tl-close" id="tlclose" type="button" aria-label="Close">×</button>
+</div></dialog>
 <dialog id="teams" aria-label="Manage teams"><div class="tm"><nav class="tm-list" id="tmlist"></nav><div class="tm-main" id="tmedit"></div></div></dialog>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+let agents = []; // added agents (see loadAgents); read by the team and recipient lists
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
@@ -1357,7 +1420,8 @@ function stepLine(entry, flagged) {
   const a = entry.action, o = entry.outcome;
   const li = el("li", "ab-step" + (o.ok ? "" : " fail") + (flagged ? " flag" : "") + (errand?.focus === entry.seq ? " focus" : ""));
   li.id = "step-" + entry.seq;
-  li.append(el("span", "n", "#" + entry.seq), el("span", "tool", `${a.tool} · ${o.subject || a.target}`), el("span", "ok", o.ok ? "ok" : "failed"));
+  const tool = a.call ? a.call.tool : a.tool; // a connected tool by its own name
+  li.append(el("span", "n", "#" + entry.seq), el("span", "tool", `${tool} · ${o.subject || a.target}`), el("span", "ok", o.ok ? "ok" : "failed"));
   if (entry.forgotten_at_ms) {
     li.classList.add("gone");
     li.append(el("span", "res", "content forgotten · its hash stays: " + short(entry.content_hash)), el("span", "h", "hash " + short(entry.hash) + " ← " + short(entry.prev)));
@@ -1727,6 +1791,8 @@ function renderAlibi(feed) {
     } else if (e.type === "learned") feed.append(learnedItem(e.learned));
     else if (e.type === "not_learned") feed.append(el("li", "note", `Memory not updated this time (${e.reason}). The errand itself is done.`));
     else if (e.type === "waiting") feed.append(el("li", "note", "Waiting for the office: another bot is working in it. This errand starts when it's done."));
+    else if (e.type === "approval") feed.append(approvalCard(e, errand.events));
+    else if (e.type === "decided") feed.append(el("li", "note", `${e.approved ? "Approved" : "Declined"} by ${e.by}.`));
     else if (e.type === "idle") busy = null;
   }
   endGroup();
@@ -1859,6 +1925,194 @@ $("errandform").onsubmit = async (ev) => {
   finally { $("errandgo").disabled = false; }
 };
 $("errandnew").onclick = () => { closeErrand(); $("errandtext").focus(); };
+
+// ---- Agents people add: a role, a model and the connected tools they may use. They
+// run on the same executor as every bot, so all they do is ledgered and checked.
+async function loadAgents() {
+  const res = await fetch("/api/agents").catch(() => null);
+  agents = res?.ok ? await res.json() : [];
+  renderAgents();
+}
+function renderAgents() {
+  const box = $("agentlist");
+  if (!agents.length) {
+    box.replaceChildren(el("p", "note", "Add agents of your own: a role, a model, the tools they may use. They work on the same executor, so everything they do is ledgered and checked."));
+  } else {
+    box.replaceChildren(...agents.map((a) => {
+      const row = el("div", "person"), dot = el("span", "dot"), who = el("span", "who");
+      dot.style.background = a.color;
+      const role = a.preset ? presets.flatMap((t) => t.agents.map((x) => [`${t.id}/${x.id}`, x.name])).find(([k]) => k === a.preset)?.[1] : null;
+      who.append(el("b", null, a.name), el("small", null, `${role || "assistant"} · ${a.model || "office model"} · ${a.tools.length ? plural(a.tools.length, "tool") : "sandbox only"}${a.owner_name ? ` · ${a.owner_name}'s` : ""}`));
+      row.append(dot, who, el("span", "role member", "agent"));
+      const acts = el("div", "acts");
+      button("Ask it", null, () => { $("errandto").value = "bot:" + a.name; $("errandtext").focus(); }, acts);
+      button("Remove", null, async () => {
+        const res = await fetch(`/api/agents/${encodeURIComponent(a.id)}`, { method: "DELETE" }).catch(() => null);
+        if (res?.ok) loadAgents(); else toast((await res?.json().catch(() => ({})))?.error || "Couldn't remove it");
+      }, acts);
+      row.append(acts);
+      return row;
+    }));
+  }
+  renderErrandTo();
+  showIdleTeam();
+  renderBoard(); // the header's count and name come from the same team as the desks
+}
+$("addagent").onclick = async () => {
+  await loadConnectors();
+  botRoleOptions($("agentrole"), "");
+  modelOptions($("agentmodel"), "");
+  const on = connectors.flatMap((c) => c.paused ? [] : c.tools.filter((t) => t.class !== "off").map((t) => `${c.id}.${t.name}`));
+  $("agenttools").replaceChildren(...(on.length ? on.map((id) => { const l = el("label"), cb = el("input"); cb.type = "checkbox"; cb.value = id; cb.checked = true; l.append(cb, id); return l; })
+    : [el("span", "note", "No connected tools are on: it works in the sandbox.")]));
+  $("agentnote").textContent = "";
+  $("agentbox").showModal();
+  $("agentname").focus();
+};
+$("agentcancel").onclick = () => $("agentbox").close();
+$("agentform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  $("agentgo").disabled = true;
+  const res = await fetch("/api/agents", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({
+    name: $("agentname").value, preset: $("agentrole").value || undefined, model: $("agentmodel").value || undefined,
+    tools: [...$("agenttools").querySelectorAll("input:checked")].map((x) => x.value) }) }).catch(() => null);
+  $("agentgo").disabled = false;
+  if (!res?.ok) { $("agentnote").textContent = (await res?.json().catch(() => ({})))?.error || "Couldn't add it."; return; }
+  $("agentbox").close(); $("agentname").value = "";
+  loadAgents();
+};
+loadAgents();
+
+// ---- Connected tools: real MCP servers. Every tool starts off; the owner decides
+// what each may do. An act waits for its bot owner's OK in the errand.
+function approvalCard(e, events) {
+  const li = el("li", "ab-approve");
+  const answered = events.some((x) => x.type === "decided" && x.id === e.id);
+  li.append(el("b", null, `${started()?.agent || "The bot"} wants to use ${e.tool}`),
+    el("div", "note", e.destinations?.length ? `It goes to: ${e.destinations.join(", ")}` : "It names no destination."),
+    el("pre", null, JSON.stringify(e.args, null, 2)));
+  if (!answered) {
+    const row = el("div", "row"), no = el("button", "pill ghost", "Decline"), yes = el("button", "pill butter", "Approve");
+    no.type = yes.type = "button";
+    const answer = async (approve) => {
+      no.disabled = yes.disabled = true;
+      const res = await fetch(`/api/errands/${encodeURIComponent(errand.id)}/approvals/${encodeURIComponent(e.id)}`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ approve }) });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); $("errandnote").textContent = b.error || res.statusText; no.disabled = yes.disabled = false; }
+    };
+    no.onclick = () => answer(false); yes.onclick = () => answer(true);
+    row.append(el("span", "note", e.approver ? `${e.approver} answers this.` : ""), no, yes);
+    li.append(row);
+  }
+  return li;
+}
+
+// Official remote MCP servers that take a token (checked against each vendor's docs,
+// 2026-11-01). Servers that need OAuth (Slack, Google, Sentry, HubSpot, Asana) aren't
+// listed until the office can sign in to them.
+const CATALOG = [
+  { name: "GitHub", url: "https://api.githubcopilot.com/mcp/", hint: "a fine-grained personal access token, limited to the repositories it may touch" },
+  { name: "Linear", url: "https://mcp.linear.app/mcp", hint: "a Linear API key (a read-only key makes every tool read-only)" },
+  { name: "Notion", url: "https://mcp.notion.com/mcp", hint: "a Notion MCP token (Business or Enterprise; a workspace owner creates it)" },
+  { name: "Stripe", url: "https://mcp.stripe.com", hint: "an Agent API key (Stripe rejects other keys from December 2026)" },
+  { name: "Cloudflare", url: "https://mcp.cloudflare.com/mcp", hint: "a Cloudflare API token, scoped to what it may change" },
+  { name: "Jira & Confluence", url: "https://mcp.atlassian.com/v1/mcp", hint: "an Atlassian service-account API key (an org admin must allow tokens)" },
+  { name: "Zapier", url: "https://mcp.zapier.com/api/v1/connect", hint: "the connection token of your Zapier MCP server (each call costs 2 Zapier tasks)" },
+  { name: "DeepWiki", url: "https://mcp.deepwiki.com/mcp", hint: "no token: it reads public repositories' documentation" },
+];
+let connectors = [], toolsPick = null;
+async function loadConnectors() {
+  const res = await fetch("/api/connectors").catch(() => null);
+  connectors = res?.ok ? await res.json() : [];
+  const on = connectors.flatMap((c) => c.tools.filter((t) => t.class !== "off").map((t) => `${c.id}.${t.name}`));
+  const changed = connectors.flatMap((c) => c.tools.filter((t) => t.changed)).length;
+  $("toolsum").textContent = connectors.length
+    ? `${connectors.length} server${connectors.length === 1 ? "" : "s"} · ${on.length} tool${on.length === 1 ? "" : "s"} on${changed ? ` · ${changed} changed, off until you look` : ""}. Bots can call ${on.length ? "them" : "none yet"}; every call is ledgered and checked.`
+    : "None yet: bots work in the sandbox. Connect GitHub, Slack, Linear or any MCP server to let them do real work, every call ledgered and checked.";
+  if ($("tools").open) renderTools();
+}
+function renderTools() {
+  $("tllist").replaceChildren(...connectors.map((c) => {
+    const b = el("button", "tl-conn" + (toolsPick === c.id ? " on" : ""));
+    b.type = "button";
+    const on = c.tools.filter((t) => t.class !== "off").length;
+    b.append(el("b", null, c.name), el("small", null, `${c.paused ? "Paused · " : ""}${on} of ${c.tools.length} tools on · ${c.has_token ? "token sealed" : "no token"}`));
+    b.onclick = () => { toolsPick = c.id; renderTools(); };
+    return b;
+  }));
+  $("tlcatalog").replaceChildren(...CATALOG.map((p) => {
+    const b = el("button", null, p.name);
+    b.type = "button"; b.title = `Needs ${p.hint}`;
+    b.onclick = () => { $("tlname").value = p.name; $("tlurl").value = p.url; $("tlnote").textContent = `${p.name} needs ${p.hint}.`; $("tltoken").focus(); };
+    return b;
+  }));
+  const c = connectors.find((x) => x.id === toolsPick);
+  const main = $("tlmain");
+  if (!c) { main.replaceChildren(el("p", "note", "Pick a connector, or connect one. Every tool starts off: you decide what each may do.")); return; }
+  const head = el("div"), actions = el("div", "actions");
+  head.append(el("h3", null, c.name), el("p", "note", `${c.url} · tools are called as ${c.id}.<tool>`));
+  const act = (label, fn, cls = "pill ghost") => { const b = el("button", cls, label); b.type = "button"; b.onclick = fn; actions.append(b); };
+  act(c.paused ? "Resume" : "Pause all its tools", () => connectorCall(`/api/connectors/${c.id}/pause`, "POST", { paused: !c.paused }));
+  act("List its tools again", () => connectorCall(`/api/connectors/${c.id}/refresh`, "POST"));
+  act("Remove", () => { if (confirm(`Remove ${c.name}? Its token is deleted.`)) connectorCall(`/api/connectors/${c.id}`, "DELETE").then(() => { toolsPick = null; }); });
+  main.replaceChildren(head, actions, el("p", "note", "Lookup: searches and lists. Read: reads something private (always shown to the person). Act: changes something; each call waits for the bot owner's OK. Destinations: arguments that say where a call goes; one must be on the allowlist or written in the errand itself."),
+    ...c.tools.map((t) => toolRow(c, t)));
+}
+function toolRow(c, t) {
+  const box = el("section", "tl-tool" + (t.changed ? " changed" : ""));
+  const head = el("header"), cls = el("select");
+  for (const [v, label] of [["off", "Off"], ["lookup", "Lookup"], ["read", "Read"], ["act", "Act (asks first)"]]) {
+    const o = el("option", null, label + (v === t.suggested && v !== "off" ? " · suggested" : "")); o.value = v; cls.append(o);
+  }
+  cls.value = t.class;
+  head.append(el("b", null, `${c.id}.${t.name}`), cls);
+  if (t.changed) head.append(el("span", "warn", "The server changed this tool: it's off until you review it."));
+  box.append(head, el("div", "desc", "The server says: " + (t.description || "(nothing)")));
+  const usage = el("input"); usage.value = t.usage; usage.maxLength = 300;
+  const l1 = el("label", null, "What the agent is shown (you approve this text)"); box.append(l1, usage);
+  const props = Object.keys(t.schema?.properties || {});
+  const dests = el("div", "dests");
+  for (const p of props) {
+    const lab = el("label"), cb = el("input"); cb.type = "checkbox"; cb.value = p; cb.checked = t.destinations.includes(p);
+    lab.append(cb, p); dests.append(lab);
+  }
+  box.append(el("label", null, "Arguments that name a destination"), dests.childNodes.length ? dests : el("div", "note", "It takes no arguments."));
+  const allow = el("textarea"); allow.rows = 2; allow.value = t.allow.join("\n"); allow.placeholder = "One per line, e.g. octo/demo or #launch";
+  box.append(el("label", null, "Allowed destinations (besides those written in the errand)"), allow);
+  const save = el("div", "save"), note = el("span", "note"), btn = el("button", "pill butter", "Save");
+  btn.type = "button";
+  btn.onclick = async () => {
+    btn.disabled = true; note.textContent = "";
+    const ok = await connectorCall(`/api/connectors/${c.id}/tools/${encodeURIComponent(t.name)}`, "PATCH", {
+      class: cls.value, usage: usage.value, destinations: [...dests.querySelectorAll("input:checked")].map((x) => x.value),
+      allow: allow.value.split("\n").map((x) => x.trim()).filter(Boolean) }, note);
+    btn.disabled = false;
+    if (ok) note.textContent = "Saved.";
+  };
+  save.append(note, btn);
+  box.append(save);
+  return box;
+}
+async function connectorCall(url, method, body, noteEl = $("tlnote")) {
+  const res = await fetch(url, { method, headers: JSON_HEADERS, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
+  if (!res?.ok) { const b = await res?.json().catch(() => ({})); noteEl.textContent = b?.error || "That didn't work."; return false; }
+  await loadConnectors();
+  return true;
+}
+$("toolsbtn").onclick = () => { $("tools").showModal(); renderTools(); loadConnectors(); };
+$("tlclose").onclick = () => $("tools").close();
+$("tlconnect").onsubmit = async (ev) => {
+  ev.preventDefault();
+  $("tlgo").disabled = true; $("tlnote").textContent = "Connecting and listing its tools…";
+  const res = await fetch("/api/connectors", { method: "POST", headers: JSON_HEADERS,
+    body: JSON.stringify({ name: $("tlname").value, url: $("tlurl").value, token: $("tltoken").value || undefined }) }).catch(() => null);
+  const body = await res?.json().catch(() => ({}));
+  $("tlgo").disabled = false;
+  if (!res?.ok) { $("tlnote").textContent = body?.error || "Couldn't reach it."; return; }
+  $("tltoken").value = ""; $("tlnote").textContent = `Connected: ${body.tools.length} tools, all off. Turn on the ones you want.`;
+  toolsPick = body.id;
+  await loadConnectors(); renderTools();
+};
+loadConnectors();
 
 // ---- Attachments: images, PDFs or text files go with a new errand or a brief. The
 // office checks each file's type from its bytes and keeps only its name, size and hash.
@@ -2417,8 +2671,9 @@ function renderErrandTo() {
   sel.append(new Option(mine ? `My bot (${mine.bot})` : "Your bot", ""));
   for (const m of company.members.filter((m) => m.role !== "member" && m.area && m.id !== mine?.id)) sel.append(new Option(`${m.area} → ${m.name}'s ${m.bot}`, "area:" + m.area));
   for (const m of company.members.filter((m) => m.id !== mine?.id)) sel.append(new Option(`${m.bot} (${m.name}'s bot)`, "bot:" + m.bot));
+  for (const a of agents) sel.append(new Option(`${a.name} (agent${a.owner_name ? `, ${a.owner_name}'s` : ""})`, "bot:" + a.name));
   sel.value = [...sel.options].some((o) => o.value === was) ? was : "";
-  sel.hidden = hasReport() || !company.members.length;
+  sel.hidden = hasReport() || (!company.members.length && !agents.length);
 }
 // Answers whether it worked; a refusal shows under that person.
 async function changeMember(id, change) {
@@ -2649,8 +2904,11 @@ $("callclose").onclick = closeCall;
 
 // The office shows the company's bots at their desks (each labelled with its owner).
 function companyTeam() {
-  if (!company.members.length) return null;
-  return { id: "company", name: "The office", kind: `${plural(company.members.length, "person", "people")} · a bot each`, agents: company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color })) };
+  if (!company.members.length && !agents.length) return null;
+  const bots = company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color }));
+  const added = agents.map((a) => ({ id: a.id, name: `${a.name} · agent`, role: a.preset || "agent", color: a.color }));
+  const kind = [company.members.length && plural(company.members.length, "person", "people"), agents.length && plural(agents.length, "agent")].filter(Boolean).join(" · ");
+  return { id: "company", name: "The office", kind, agents: [...bots, ...added] };
 }
 
 // Before any run is watched, the office shows the picked team at their desks.

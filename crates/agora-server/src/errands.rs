@@ -211,6 +211,8 @@ pub(crate) struct ErrandRoom {
     files: Mutex<Option<crate::attach::Attached>>,
     /// Calls to connected tools waiting for the person, by approval id.
     approvals: Mutex<BTreeMap<String, tokio::sync::oneshot::Sender<(bool, String)>>>,
+    /// An added agent's connected tools (`None` = a person's bot: every tool on).
+    only_tools: Option<Vec<String>>,
     /// When it was asked for.
     at_ms: u64,
     /// The office day it ran on.
@@ -527,6 +529,8 @@ pub(crate) struct Begin {
     pub area: Option<String>,
     /// The bot's owner, when a bot was named.
     pub bot: Option<Member>,
+    /// An agent someone added, when it was named (its owner is in `bot`).
+    pub agent_bot: Option<crate::agents::AgentBot>,
     /// The channel to report back to.
     pub reply_to: Option<String>,
     /// On the inbox with a planted prompt injection.
@@ -548,18 +552,44 @@ pub(crate) async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body:
         Ok(b) => b,
         Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that request isn't a valid errand: {}", e.body_text())),
     };
-    let bot = match body.bot.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
-        Some(name) => match hub.company().by_bot(name).cloned() {
-            Some(owner) => Some(owner),
+    let (bot, agent_bot) = match body.bot.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        Some(name) => match resolve_bot(&hub, name) {
+            Some(found) => found,
             None => return error(StatusCode::BAD_REQUEST, &format!("there is no bot called {name} here")),
         },
-        None => None,
+        None => (None, None),
     };
-    let begin_with = Begin { brief: body.brief, model: body.model, agent: body.agent, guard: body.guard, area: body.area, bot, reply_to: None, poisoned: body.poisoned, uploads: body.attachments };
+    let begin_with = Begin { brief: body.brief, model: body.model, agent: body.agent, guard: body.guard, area: body.area, bot, agent_bot, reply_to: None, poisoned: body.poisoned, uploads: body.attachments };
     match begin(&hub, hub.member(&headers), begin_with).await {
         Ok(id) => (StatusCode::CREATED, Json(Started { id })).into_response(),
         Err((status, why)) => error(status, &why),
     }
+}
+
+/// Whose bot does an errand: a named bot (or added agent), the area's lead's, else the
+/// asker's own. Answers its owner and the name it works under.
+fn whose(hub: &Hub, me: Option<&Member>, area: Option<&str>, bot: Option<Member>, agent_bot: Option<&crate::agents::AgentBot>, agent: Option<String>) -> Result<(Option<Member>, String), (StatusCode, String)> {
+    let lead = match area.map(str::trim).filter(|a| !a.is_empty()) {
+        Some(area) => Some(hub.company().lead_of(area).cloned().ok_or_else(|| (StatusCode::BAD_REQUEST, format!("nobody leads {area} yet")))?),
+        None => None,
+    };
+    let owner = bot.or(lead).or_else(|| me.cloned());
+    let name = match agent_bot {
+        Some(a) => a.name.clone(),
+        None => owner.as_ref().map_or_else(|| agent.map_or_else(|| DEFAULT_AGENT.to_string(), |a| a.trim().to_string()), |o| o.bot.clone()),
+    };
+    Ok((owner, name))
+}
+
+/// The bot called `name`: a person's (its owner), or an added agent (and its owner,
+/// if it has one).
+pub(crate) fn resolve_bot(hub: &Hub, name: &str) -> Option<(Option<Member>, Option<crate::agents::AgentBot>)> {
+    if let Some(owner) = hub.company().by_bot(name).cloned() {
+        return Some((Some(owner), None));
+    }
+    let agent = hub.agents().by_name(name).cloned()?;
+    let owner = agent.owner.as_deref().and_then(|id| hub.company().by_id(id).cloned());
+    Some((owner, Some(agent)))
 }
 
 /// Start an errand for `me` (if they joined). Answers its id.
@@ -569,17 +599,8 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
     if brief.is_empty() || brief.chars().count() > MAX_ERRAND_CHARS {
         return refuse(StatusCode::BAD_REQUEST, "the errand must be 1 to 500 characters");
     }
-    // Whose bot does it: a named bot, the area's lead's, else the asker's own.
-    let area = body.area.as_deref().map(str::trim).filter(|a| !a.is_empty());
-    let lead = match area {
-        Some(area) => match hub.company().lead_of(area).cloned() {
-            Some(lead) => Some(lead),
-            None => return refuse(StatusCode::BAD_REQUEST, &format!("nobody leads {area} yet")),
-        },
-        None => None,
-    };
-    let owner = body.bot.or(lead).or_else(|| me.clone());
-    let agent = owner.as_ref().map_or_else(|| body.agent.map_or_else(|| DEFAULT_AGENT.to_string(), |a| a.trim().to_string()), |o| o.bot.clone());
+    let (owner, agent) = whose(hub, me.as_ref(), body.area.as_deref(), body.bot, body.agent_bot.as_ref(), body.agent)?;
+    let agent_bot = body.agent_bot;
     if agent.is_empty() || agent.chars().count() > 40 || agent.chars().any(char::is_control) {
         return refuse(StatusCode::BAD_REQUEST, "the agent's name must be 1 to 40 characters on one line");
     }
@@ -587,7 +608,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         asked_by: me.as_ref().map(|m| (m.id.clone(), m.name.clone())),
         bot_of: owner.as_ref().map(|o| (o.id.clone(), o.name.clone(), o.area.clone())),
     };
-    let model = body.model.unwrap_or_else(|| hub.config.model.clone());
+    let model = body.model.or_else(|| agent_bot.as_ref().and_then(|a| a.model.clone())).unwrap_or_else(|| hub.config.model.clone());
     hub.config.check_model(&model).map_err(|why| (StatusCode::BAD_REQUEST, why))?;
     let files = crate::attach::accept(body.uploads, &model).map_err(|why| (StatusCode::BAD_REQUEST, why))?;
     let listed = files.listed.clone();
@@ -610,7 +631,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         Err(e) => return refuse(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
     let guard = body.guard.unwrap_or(true);
-    let persona = owner.as_ref().map(company::Member::persona).unwrap_or_default();
+    let persona = agent_bot.as_ref().map_or_else(|| owner.as_ref().map(company::Member::persona).unwrap_or_default(), crate::agents::AgentBot::persona);
     let room = Arc::new(ErrandRoom {
         id: id.clone(),
         people: people.clone(),
@@ -623,6 +644,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         poisoned: body.poisoned,
         files: Mutex::new(Some(files)),
         approvals: Mutex::default(),
+        only_tools: agent_bot.map(|a| a.tools),
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
         day: std::sync::atomic::AtomicUsize::new(hub.day()),
@@ -708,7 +730,7 @@ async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
         }
         let on_step = |entry: &Entry| room.push(ErrandEvent::Step { entry: entry.clone() });
         // The office's real tools, checked against what the owner approved.
-        let tools = OfficeGateway::prepare(&hub, Arc::new(RoomApprover(Arc::clone(&room)))).await;
+        let tools = OfficeGateway::prepare(&hub, Arc::new(RoomApprover(Arc::clone(&room))), room.only_tools.as_deref()).await;
         let gateway = (!tools.is_empty()).then_some(&tools as &dyn Gateway);
         let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &files.media, documents: &files.text, gateway };
         let done = errand::run(&room.caller, &room.ledger, &mut world, &errand, &on_step).await;
@@ -1242,6 +1264,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             // A restored errand's work is done: its files were never kept.
             files: Mutex::new(None),
             approvals: Mutex::default(),
+            only_tools: None,
             at_ms: meta.at_ms,
             day: std::sync::atomic::AtomicUsize::new(meta.day),
             caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),

@@ -267,6 +267,11 @@ impl Connectors {
         }
     }
 
+    /// Every tool that's on, on connectors not paused (`server.tool`).
+    pub fn on_ids(&self) -> Vec<String> {
+        self.list.iter().filter(|c| !c.paused).flat_map(|c| c.tools.iter().filter(|t| t.class != Class::Off).map(move |t| format!("{}.{}", c.id, t.name))).collect()
+    }
+
     fn server(&self, c: &Connector) -> agora_mcp::Server {
         agora_mcp::Server { url: c.url.clone(), token: c.token.as_deref().and_then(|t| self.sealer.open(t)), allow_local: self.allow_local }
     }
@@ -488,7 +493,8 @@ pub(crate) struct OfficeGateway {
 impl OfficeGateway {
     /// Re-list every connector with tools on (a changed one goes off), then gather
     /// what's usable. A connector that can't be reached just has no tools this time.
-    pub async fn prepare(hub: &Hub, approver: Arc<dyn Approver>) -> Self {
+    /// `only`: the tools an agent may use (`None` = every tool that's on).
+    pub async fn prepare(hub: &Hub, approver: Arc<dyn Approver>, only: Option<&[String]>) -> Self {
         let active: Vec<String> = hub.connectors().list.iter().filter(|c| !c.paused && c.tools.iter().any(|t| t.class != Class::Off)).map(|c| c.id.clone()).collect();
         let mut unreachable = Vec::new();
         for id in &active {
@@ -504,6 +510,9 @@ impl OfficeGateway {
             for t in &connector.tools {
                 let Some(weight) = t.class.weight() else { continue };
                 let id = format!("{}.{}", connector.id, t.name);
+                if only.is_some_and(|o| !o.contains(&id)) {
+                    continue;
+                }
                 tools.push(Connected { id: id.clone(), usage: t.usage.clone(), schema: t.schema.clone(), weight, destinations: t.destinations.clone(), allow: t.allow.clone(), def: t.def.clone() });
                 routes.insert(id, (server.clone(), t.name.clone()));
             }

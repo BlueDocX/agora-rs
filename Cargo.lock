@@ -43,7 +43,9 @@ version = "0.1.0"
 dependencies = [
  "agora-core",
  "agora-engine",
+ "agora-mcp",
  "agora-muse",
+ "axum",
  "serde",
  "serde_json",
  "tokio",

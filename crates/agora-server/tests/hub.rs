@@ -711,3 +711,27 @@ async fn a_connected_tools_act_waits_for_approval_and_its_claim_is_checked_again
     assert!(step["entry"]["outcome"]["result"].as_str().unwrap().starts_with("Blocked: evil/exfil"), "{step}");
     assert_eq!(calls.lock().unwrap().len(), 1, "the server never saw it");
 }
+
+#[tokio::test]
+async fn an_added_agent_works_under_its_own_name_with_only_its_tools() {
+    let (mcp_url, calls) = tracker().await;
+    let base = serve(app(HubConfig { allow_local_mcp: true, ..config().await })).await;
+    let http = reqwest::Client::new();
+    http.post(format!("{base}/api/connectors")).json(&json!({"name": "Tracker", "url": mcp_url})).send().await.unwrap();
+    http.patch(format!("{base}/api/connectors/tracker/tools/create_issue")).json(&json!({"class": "act"})).send().await.unwrap();
+    // A tool that isn't connected (or isn't on) can't be granted.
+    let bad = http.post(format!("{base}/api/agents")).json(&json!({"name": "Muse", "tools": ["tracker.delete_repo"]})).send().await.unwrap();
+    assert_eq!(bad.status(), 400);
+    let added: Value = http.post(format!("{base}/api/agents")).json(&json!({"name": "Muse", "preset": "research-lab/fact-checker", "tools": []})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(added["name"], "Muse");
+    assert_eq!(http.post(format!("{base}/api/agents")).json(&json!({"name": "muse"})).send().await.unwrap().status(), 409, "names are unique");
+
+    let id = http.post(format!("{base}/api/errands")).json(&json!({"brief": "File the login bug", "bot": "Muse"})).send().await.unwrap().json::<Value>().await.unwrap()["id"].as_str().unwrap().to_string();
+    let mut stream = http.get(format!("{base}/api/errands/{id}/events")).send().await.unwrap();
+    let events = read_until(&mut stream, r#""type":"idle""#).await;
+    assert_eq!(events[0]["agent"], "Muse");
+    // It was never offered the tracker, so it couldn't file anything there.
+    let step = events.iter().find(|e| e["type"] == "step").unwrap();
+    assert_eq!(step["entry"]["action"]["tool"], "messages.send", "{step}");
+    assert!(calls.lock().unwrap().is_empty());
+}

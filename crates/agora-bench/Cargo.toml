@@ -31,13 +31,19 @@ path = "src/bin/real.rs"
 name = "team"
 path = "src/bin/team.rs"
 
+[[bin]]
+name = "hostile"
+path = "src/bin/hostile.rs"
+
 [dependencies]
 agora-core.workspace = true
 agora-engine.workspace = true
+agora-mcp.workspace = true
+axum.workspace = true
 agora-muse.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "net"] }
 
 [lints]
 workspace = true

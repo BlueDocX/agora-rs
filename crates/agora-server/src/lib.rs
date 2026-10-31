@@ -40,6 +40,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod agents;
 mod attach;
 mod chat;
 mod company;
@@ -237,6 +238,7 @@ struct Hub {
     errands: Mutex<errands::Errands>,
     company: Mutex<company::Company>,
     connectors: connectors::Shared,
+    agents: agents::Shared,
     signer: Arc<Signer>,
     store: Option<store::Store>,
     /// Seconds of audio transcribed while the server runs.
@@ -254,6 +256,15 @@ struct Hub {
 impl Hub {
     pub(crate) fn connectors(&self) -> std::sync::MutexGuard<'_, connectors::Connectors> {
         self.connectors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn agents(&self) -> std::sync::MutexGuard<'_, agents::Agents> {
+        self.agents.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Every connected tool that's on (`server.tool`), on connectors not paused.
+    pub(crate) fn connected_tool_ids(&self) -> Vec<String> {
+        self.connectors().on_ids()
     }
 }
 
@@ -331,6 +342,7 @@ pub fn app(config: HubConfig) -> Router {
         agora_engine::memory::Memory::in_memory()
     });
     let Ok(memory) = memory else { panic!("SQLite can't open even an in-memory database") };
+    let agents = agents::Agents::new(&loaded.kv, store.clone());
     let connectors = connectors::Connectors::new(&loaded.kv, config.secret_key.as_deref(), store.clone(), config.allow_local_mcp);
     let today = loaded.kv.iter().find(|(k, _)| k == "day").and_then(|(_, v)| v.parse().ok()).unwrap_or(0usize);
     let hub = Arc::new(Hub {
@@ -341,6 +353,7 @@ pub fn app(config: HubConfig) -> Router {
         errands: Mutex::default(),
         company: Mutex::new(company),
         connectors: Mutex::new(connectors),
+        agents: Mutex::new(agents),
         signer: Arc::new(signer),
         store,
         transcribed_s: std::sync::atomic::AtomicU64::new(0),
@@ -376,11 +389,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/chat", post(chat::post))
         .route("/api/chat/events", get(chat::events))
         .route("/mcp", post(mcp::post).get(mcp::get))
-        .route("/api/company/join", post(company::join))
-        .route("/api/company/members/{id}", axum::routing::patch(company::change).delete(company::leave))
-        .route("/api/company/events", get(company::events))
-        .route("/api/company/whoami", get(company::whoami))
-        .route("/api/company/messages", post(company::say))
+        .merge(company::routes())
         .route("/api/errands", post(errands::start).layer(DefaultBodyLimit::max(attach::MAX_BODY_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)).get(errands::list))
         .route("/api/errands/{id}/events", get(errands::events))
         .route("/api/errands/{id}/ask", post(errands::ask))
@@ -389,6 +398,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/errands/{id}/receipt", get(errands::receipt))
         .route("/api/errands/{id}/approvals/{approval}", post(errands::decide))
         .merge(connectors::routes())
+        .merge(agents::routes())
         .merge(office::routes())
         .route("/api/transcribe", post(voice::transcribe).layer(DefaultBodyLimit::max(voice::MAX_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)))
         .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard_host))
