@@ -1,0 +1,45 @@
+B9 team quality: v5, 16 runs, 104 tasks
+
+tasks done          102/104 (98%)
+accepted 1st draft  72/102 (71%)
+standards met       812/995 (82%)
+judge score (1-5)   3.98 mean; 66/102 ship-ready (4+)
+role fit            101/102 (99%)
+per run (mean)      $0.105, 54s (the team; judging is extra)
+
+Per agent (team/agent: tasks, mean score, standards met):
+  agora/analyst                         4  4.8  45/46
+  agora/editor                          1  5.0  11/11
+  agora/researcher                      4  4.5  27/31
+  agora/writer                          3  5.0  29/29
+  creative-studio/art-director          2  5.0  19/19
+  creative-studio/copywriter            5  3.6  32/43
+  creative-studio/director              2  4.5  24/25
+  creative-studio/strategist            3  3.3  12/30
+  game-studio/designer                  4  3.5  28/34
+  game-studio/level-designer            4  4.2  46/47
+  game-studio/narrative                 3  4.3  27/28
+  game-studio/producer                  2  2.5  17/25
+  pr-agency/media-analyst               4  4.2  32/35
+  pr-agency/pr-lead                     2  2.5  18/30
+  pr-agency/press-writer                4  4.2  31/38
+  pr-agency/social                      2  3.0  9/19
+  product/engineer                      3  4.3  20/23
+  product/pm                            6  3.5  33/54
+  product/qa                            3  3.7  27/30
+  product/ux-writer                     2  3.5  18/22
+  research-lab/data-analyst             4  5.0  42/42
+  research-lab/fact-checker             3  3.0  13/21
+  research-lab/lead-researcher          4  4.0  20/32
+  research-lab/science-writer           2  4.0  16/20
+  security/compliance                   2  4.0  14/16
+  security/responder                    2  4.5  24/25
+  security/tester                       2  3.5  15/20
+  security/threat-modeler               8  3.4  42/70
+  strategy-coach/market-analyst         6  4.8  54/55
+  strategy-coach/skeptic                2  4.0  22/24
+  strategy-coach/strategist             4  3.8  45/51
+
+Not done:
+  four-day-week #0 plain-language-explainer (science-writer): failed
+  cafe-oat #1 assemble-one-page-brief (editor): failed

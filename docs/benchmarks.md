@@ -2,6 +2,47 @@
 
 Every number here comes from a command in this repository. Where a result was weaker than we hoped, it stays in.
 
+## B9: does each agent do its own job well?
+
+**Question.** On a team, does each agent do its own part to the standard its role sets? This is not "is the deliverable fine overall"; it's "would a professional in this role ship this agent's work"?
+
+**Setup.** `team` (`crates/agora-bench/src/bin/team.rs`), live, 2026-10-31 to 11-01. One real brief per preset team, eight in all:
+- a café's oat-milk decision;
+- launch copy for a water bottle;
+- a startup's first expansion market;
+- a library's midnight-hours announcement;
+- a recycling puzzle game;
+- a photo app's threat model;
+- an offline-mode spec;
+- what's known about four-day weeks.
+
+Each ran twice. The team works on Spark Open on Baseten, which plans, writes and reviews. Every finished task then goes to **a judge on a different model** (Muse Spark 1.3), which never sees which version of Agora produced it. The judge grades the task against **that agent's own standards**: its working note and every rule of its skill playbooks. It scores the work 1–5 (5 = a professional in this role would ship it as is) and names the team member it would have given the task to (role fit).
+
+| Version | What changed | Tasks done | 1st-draft accepted | Own standards met | Judge score | Ship-ready (4+) | $ / run |
+|---|---|---|---|---|---|---|---|
+| v0, baseline (11 runs: Baseten connection drops took out 5) | | 77% | 76% | 61% | 3.58 | 47% | 0.119 |
+| v1 | standards at the end of each task; no unreachable criteria; cut targets | 83% | 61% | 81% | 4.05 | 69% | 0.123 |
+| v2 | criteria checkable by reading; where an over-long draft's words are | 95% | 62% | 81% | 3.94 | 64% | 0.105 |
+| v3 | word limits read as an editor would (5% over passes) | **100%** | **81%** | **84%** | **4.06** | **70%** | 0.113 |
+| v4, dropped | each agent hands the reviewer a self-check | 96% | 78% | 81% | 3.90 | 64% | 0.103 |
+| v5: v3's code again | (confirmation) | 98% | 71% | 82% | 3.98 | 65% | 0.105 |
+| **final: v3 + v5, 32 runs, 209 tasks** | | **99%** | **76%** | **83%** | **4.02** | **67%** | **0.109** |
+
+Role fit stayed at 95–99% throughout: the planner already gave tasks to the right agents. Judging every task cost $2.59 for the 32 final runs, on top of the teams' own cost. Reports are in `bench/b9/` and the final rows in `bench/b9_final_rows.jsonl`. In the final runs, two tasks out of 209 failed: one explainer stayed 10% over its word limit through three drafts, and one assembly was rejected for numbers that contradicted each other, which the reviewer is right to catch.
+
+**What the baseline showed, and the fixes:**
+- **Agents ignored their own playbooks.** A Researcher whose skill says "mark points as known, inferred or unknown" didn't; an Analyst whose skill says "put the recommendation in the first two lines" buried it at the end. The rules sat at the top of the prompt, far from the task. Each agent's standards are now restated at the end of its task, as its definition of done. Standards met went from 61% to 81%.
+- **The planner set criteria the team couldn't meet.** For example "every statistic sourced with links from 2023 on" and "name five Pune cafés with menu links", for a team with no web access. A rejected task also skips everything built on it, so one such criterion could empty a run. The planner now writes only criteria checkable by reading (something present, a count, an order), never taste ("memorable", "platform-ready"). An unknown fact is stated as an assumption in plain words, never as a placeholder.
+- **Word limits sank tasks.** A brief asked for "a 100-word product description". The planner made that "at most 100 words", and drafts of 102, 753/750 and 821/800 words failed three times running, even when told exactly how many words to cut and where they were. A limit now passes within 5% (at least one word), the way an editor reads "a 100-word piece". B9 ran with a two-word minimum, which differs only for limits under 40 words; a review then tightened it so a five-word tagline can't pass at seven. The agent is still told to aim for 90% of it. This is the one change that loosens a check; it is stated here and in `agora_core::checks`.
+
+**Tried and dropped.** v4 had each agent end its result with a self-check under a marker line, meant for the reviewer and cut by code before delivery. Everything got worse: standards met, judge score and tasks done all fell. In 29 tasks the self-check also leaked into the deliverable, because agents wrote "## Self-check" or "**Self-check**" instead of the exact marker. A protocol that relies on a text marker is too fragile with this model, so v4 was reverted.
+
+**Caveats.**
+- "Ship-ready" counts the finished tasks a judge scored 4 or 5. The baseline finished fewer tasks, so out of all tasks the gain is larger: 37% to 67%.
+- One judge model, and it reads literally. Many of the standards still missed are process rules ("re-read the brief and report any requirement you missed") that don't belong in a deliverable.
+- Two runs per brief.
+- A model reviewing the work and a model judging it can share blind spots. The judge uses a different model from the team, but both are Muse.
+
 ## B8: real-world errands, and a self-improvement loop
 
 **Question.** On errands phrased the way people ask, does the bot get the job done, honestly, without overreaching, and how much does it cost? Where it falls short, fix it, measure again, and repeat.

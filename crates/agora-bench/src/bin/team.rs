@@ -130,6 +130,8 @@ async fn one(muse: MuseClient, baseten: MuseClient, model: &str, judge_model: &s
         baseten: Some(baseten.clone()),
         events: None,
         team: Some(team.clone()),
+        attachments: Vec::new(),
+        documents: String::new(),
     };
     let started = Instant::now();
     let report = run(muse.clone(), &config, brief, None).await.map_err(|e| e.to_string())?;

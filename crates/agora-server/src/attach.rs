@@ -109,6 +109,22 @@ pub(crate) fn accept(uploads: Vec<Upload>, model: &str) -> Result<Attached, Stri
     Ok(out)
 }
 
+/// [`accept`] for a run, where several models read the files (`readers`: role and
+/// model): every one must be able to (a PDF is refused, naming the role, if any can't
+/// read one). Decodes once.
+///
+/// # Errors
+/// As [`accept`].
+pub(crate) fn accept_for(uploads: Vec<Upload>, readers: &[(&str, &str)]) -> Result<Attached, String> {
+    let files = accept(uploads, readers.first().map_or("", |(_, m)| m))?;
+    if let Some((role, model)) = readers.iter().find(|(_, m)| host_of(m) == Some(Host::Baseten))
+        && let Some(pdf) = files.media.iter().find(|f| !f.is_image())
+    {
+        return Err(format!("the {role} runs on {model}, which can't read PDFs: give the {role} a model on Meta's API to send {}", pdf.name));
+    }
+    Ok(files)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -127,6 +143,15 @@ mod tests {
         assert_eq!(a.listed[0].mime, "image/png");
         assert_eq!(a.listed[0].sha256.len(), 64);
         assert!(a.text.contains("Attached file notes.md:\n<<<\n- milk\n- eggs\n>>>"), "{}", a.text);
+    }
+
+    #[test]
+    fn a_run_refuses_a_pdf_naming_the_role_that_cant_read_it() {
+        let readers = [("writer", "muse-spark-1.3"), ("reviewer", "meta-models/muse-spark-open-1026")];
+        let why = accept_for(vec![up("bill.pdf", b"%PDF-1.4 x")], &readers).unwrap_err();
+        assert!(why.starts_with("the reviewer runs on meta-models/muse-spark-open-1026"), "{why}");
+        // Images are fine for every reader.
+        assert_eq!(accept_for(vec![up("a.png", b"\x89PNG\r\n\x1a\nx")], &readers).unwrap().media.len(), 1);
     }
 
     #[test]

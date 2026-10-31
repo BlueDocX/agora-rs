@@ -573,7 +573,10 @@
     <div class="sect"><span class="label">User brief</span></div>
     <form id="form">
       <textarea id="brief" maxlength="4000" placeholder="No active brief. Tell the office what to deliver…" required></textarea>
+      <div class="files" id="briefattached" aria-label="Files attached to the brief"></div>
+      <input type="file" id="briefpick" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.txt,.md,.csv,.tsv,.json,.log">
       <div class="row">
+        <button class="pill ghost" id="briefattach" type="button" title="Attach images, PDFs or text files (up to 4) for the team to work from">Attach files</button>
         <button class="pill butter" id="go" type="submit">
           <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>Run office
         </button>
@@ -940,6 +943,7 @@ $("token").onchange = async () => {
 };
 $("form").onsubmit = async (ev) => {
   ev.preventDefault();
+  if (briefFiles.busy()) { $("formnote").textContent = "Still reading the attached files…"; return; }
   $("go").disabled = true; $("formnote").textContent = "Starting…";
   try {
     // The chosen team must be known before the run goes out, or it would run unstaffed.
@@ -948,9 +952,10 @@ $("form").onsubmit = async (ev) => {
     const res = await fetch("/api/runs", { method: "POST",
       headers: JSON_HEADERS,
       body: JSON.stringify({ brief: $("brief").value, team: teamForRun(),
-        model: $("modelsel").value || undefined, reviewer_model: $("reviewsel").value || undefined }) });
+        model: $("modelsel").value || undefined, reviewer_model: $("reviewsel").value || undefined, attachments: briefFiles.body() }) });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || res.statusText);
+    briefFiles.clear();
     $("formnote").textContent = ""; await refreshRuns(); watch(body.id);
   } catch (err) { $("formnote").textContent = err.message; }
   finally { $("go").disabled = false; }
@@ -1326,6 +1331,13 @@ function boardItem(b) {
     real.append(el("b", null, "Real-world errands (B8)"), el("span", "num", `${Math.round(rw.success_after * 100)}% done`),
       el("span", "note", `${rw.errands} errands people actually ask, improved in a measured loop: ${Math.round(rw.success_before * 100)}% → ${Math.round(rw.success_after * 100)}% success, $${rw.usd_before} → $${rw.usd_after} and ${rw.seconds_before} → ${rw.seconds_after} s per errand, ${rw.overreach} overreach runs of ${rw.runs}${rw.held_out ? `; held-out errands: ${Math.round(rw.held_out * 100)}%` : ""}.`));
     li.append(real);
+  }
+  const tq = b.team_quality;
+  if (tq) {
+    const team = el("div", "lb-row");
+    team.append(el("b", null, "Each agent's own job (B9)"), el("span", "num", `${Math.round(tq.ship_ready_after * 100)}% ship-ready`),
+      el("span", "note", `${tq.teams} preset teams, a judge on another model grading each agent against its own role's standards: standards met ${Math.round(tq.standards_before * 100)}% → ${Math.round(tq.standards_after * 100)}%, tasks done ${Math.round(tq.done_before * 100)}% → ${Math.round(tq.done_after * 100)}%, $${tq.usd_per_run} per run.`));
+    li.append(team);
   }
   const w = b.memory_week;
   if (w) {
@@ -1822,7 +1834,8 @@ $("errandform").onsubmit = async (ev) => {
   const text = $("errandtext").value.trim();
   if (!text) return;
   const asking = hasReport();
-  if (asking && attachments.length) { $("errandnote").textContent = "Files go with a new errand, not a question: remove them, or start one with All errands."; return; }
+  if (errandFiles.busy()) { $("errandnote").textContent = "Still reading the attached files…"; return; }
+  if (asking && errandFiles.files.length) { $("errandnote").textContent = "Files go with a new errand, not a question: remove them, or start one with All errands."; return; }
   $("errandgo").disabled = true; $("errandnote").textContent = "";
   try {
     if (asking && !errandIdle()) throw new Error("The bot is still busy.");
@@ -1832,12 +1845,12 @@ $("errandform").onsubmit = async (ev) => {
     const [kind, value] = $("errandto").value.split(/:(.*)/s);
     const body = asking ? { question: text } : { brief: text, model: $("modelsel").value || undefined, agent: agent.name, guard: $("guardon").checked,
       area: kind === "area" ? value : undefined, bot: kind === "bot" ? value : undefined, poisoned: $("poisoned").checked || undefined,
-      attachments: attachments.length ? attachments.map(({ name, data }) => ({ name, data })) : undefined };
+      attachments: errandFiles.body() };
     const res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
     const reply = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(reply.error || res.statusText);
     $("errandtext").value = "";
-    if (!asking) { attachments = []; renderAttached(); }
+    if (!asking) errandFiles.clear();
     if (asking) { errand.focus = null; reopenErrand(); }
     else watchErrand(reply.id);
     refreshErrandsSoon();
@@ -1847,38 +1860,52 @@ $("errandform").onsubmit = async (ev) => {
 };
 $("errandnew").onclick = () => { closeErrand(); $("errandtext").focus(); };
 
-// ---- Attachments: images, a PDF or text files go with a new errand. The office checks
-// each file's type from its bytes and keeps only its name, size and hash.
+// ---- Attachments: images, PDFs or text files go with a new errand or a brief. The
+// office checks each file's type from its bytes and keeps only its name, size and hash.
 const MAX_ATTACH = 4, MAX_ATTACH_MB = 8, MAX_ATTACH_TOTAL_MB = 12;
-let attachments = []; // { name, size, data: a data: URL }
 function fmtSize(n) { return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
-function renderAttached() {
-  const box = $("attached");
-  box.replaceChildren(...attachments.map((a, i) => {
+// A picker: `pick` is the hidden file input, `list` shows the chips, `note` the problems.
+function filePicker(pick, list, note) {
+  const files = []; // { name, size, data: a data: URL }
+  let reading = 0; // files still being read: a submit now would leave them out
+  const render = () => list.replaceChildren(...files.map((a, i) => {
     const chip = el("span"), x = el("button", null, "×");
     x.type = "button"; x.title = `Remove ${a.name}`; x.setAttribute("aria-label", `Remove ${a.name}`);
-    x.onclick = () => { attachments.splice(i, 1); renderAttached(); };
+    x.onclick = () => { files.splice(i, 1); render(); };
     chip.append(el("b", null, a.name), el("small", null, fmtSize(a.size)), x);
     return chip;
   }));
+  pick.onchange = async () => {
+    const picked = [...pick.files];
+    pick.value = "";
+    reading++;
+    for (const f of picked) {
+      if (files.length >= MAX_ATTACH) { note.textContent = `At most ${MAX_ATTACH} files.`; break; }
+      if (!f.size) { note.textContent = `${f.name} is empty.`; continue; }
+      if (f.size > MAX_ATTACH_MB * 1024 * 1024) { note.textContent = `${f.name} is over ${MAX_ATTACH_MB} MB.`; continue; }
+      if (files.reduce((n, a) => n + a.size, f.size) > MAX_ATTACH_TOTAL_MB * 1024 * 1024) { note.textContent = `The files together must be under ${MAX_ATTACH_TOTAL_MB} MB.`; continue; }
+      const data = await new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => fail(r.error); r.readAsDataURL(f); }).catch(() => null);
+      if (data && files.length < MAX_ATTACH) files.push({ name: f.name, size: f.size, data });
+    }
+    reading--;
+    render();
+  };
+  return {
+    files,
+    open: () => pick.click(),
+    busy: () => reading > 0,
+    // What the office is sent, or undefined for none.
+    body: () => (files.length ? files.map(({ name, data }) => ({ name, data })) : undefined),
+    clear: () => { files.length = 0; render(); },
+  };
 }
+const errandFiles = filePicker($("attachpick"), $("attached"), $("errandnote"));
+const briefFiles = filePicker($("briefpick"), $("briefattached"), $("formnote"));
 $("attach").onclick = () => {
   if (hasReport()) { $("errandnote").textContent = "Files go with a new errand: start one with All errands."; return; }
-  $("attachpick").click();
+  errandFiles.open();
 };
-$("attachpick").onchange = async () => {
-  const picked = [...$("attachpick").files];
-  $("attachpick").value = "";
-  for (const f of picked) {
-    if (attachments.length >= MAX_ATTACH) { $("errandnote").textContent = `At most ${MAX_ATTACH} files.`; break; }
-    if (!f.size) { $("errandnote").textContent = `${f.name} is empty.`; continue; }
-    if (f.size > MAX_ATTACH_MB * 1024 * 1024) { $("errandnote").textContent = `${f.name} is over ${MAX_ATTACH_MB} MB.`; continue; }
-    if (attachments.reduce((n, a) => n + a.size, f.size) > MAX_ATTACH_TOTAL_MB * 1024 * 1024) { $("errandnote").textContent = `The files together must be under ${MAX_ATTACH_TOTAL_MB} MB.`; continue; }
-    const data = await new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => fail(r.error); r.readAsDataURL(f); }).catch(() => null);
-    if (data) attachments.push({ name: f.name, size: f.size, data });
-  }
-  renderAttached();
-};
+$("briefattach").onclick = () => briefFiles.open();
 // Reconnect an errand whose stream was closed while idle; what was seen stays unacted.
 function reopenErrand() {
   if (!errand) return;

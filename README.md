@@ -73,6 +73,19 @@ The loop found three of the guard's blind spots, and each now fails closed:
 - **A todo list overwritten with the bot's narration**, reported as a line it never wrote. Quoted words must now be in the ledger.
 - **A file saved under the wrong name.** A claim about a saved file must now name its exact path.
 
+**Each agent doing its own job (B9, [details](docs/benchmarks.md#b9-does-each-agent-do-its-own-job-well)).** Eight preset teams each did a real brief, twice. A judge on a different model graded every agent's work against **that agent's own standards**, its role and skill playbooks, blind to the version of Agora. Before and after the measured loop:
+- **Tasks done:** 77% to **99%**.
+- **The agent's own standards met:** 61% to **83%**.
+- **Ship-ready by the judge:** 47% to **67%**, at about $0.11 per run.
+
+The fixes were general:
+- each agent's standards come last in its task, as its definition of done;
+- the planner writes only criteria checkable by reading, and none that need the web;
+- an over-long draft is shown where its words are;
+- word limits read the way an editor reads them.
+
+One idea made things worse (a self-check that leaked into deliverables), so it was dropped.
+
 **Tamper evidence, and against whom.** The hash chain stops the *agent*: it never writes the ledger, and changing, dropping or reordering an entry is caught (`agora-verify`). A chain alone doesn't stop whoever *runs the server*, who could rewrite it and recompute every hash. So the office **signs each ledger head with Ed25519** and hands you the receipt (run, entry count, head, time, signature). Keep it, and `agora-verify --receipt receipt.json agora-journal.db <office-key>` later proves whether the ledger still reaches what the office signed. A rewritten history fails even with every hash recomputed, because only the office's key could have signed the old head. The office's public key is at `/.well-known/agora-signing-key`; publish it somewhere the operator doesn't control to anchor it.
 
 **Prompt injection.** What a call returns (an email, a chat, a file) is someone else's text. Results reach the agent marked as data, never as instructions. The executor also refuses to email any address that isn't saved in the person's contacts or written in the errand itself. So an address planted in an email (even one signed with a friend's name) can't be used to send their data out. A new address the person really wants used goes in the errand. A blocked attempt is still a failed ledger entry, so the guard makes the agent own up to it.
@@ -88,7 +101,7 @@ The loop found three of the guard's blind spots, and each now fails closed:
   - Only the person who asked, the bot's owner or the office owner can question an errand or have it forget something.
   - **It survives restarts**: people (only a hash of each key is kept), messages, activity and every errand's stream are kept in SQLite (`agora-state.db`).
   - In 3D, every person's bot has a desk labelled with its owner, and its monitor glows with its latest verdict.
-- **Attach files to an errand.** Up to 4 images (PNG, JPEG, GIF, WebP), PDFs or text files go with the brief, and the bot reads them through Muse Spark's image and document input (`input_image`, `input_file`). A receipt photo, a lease PDF or a guest list can drive the errand ("text everyone on this list"). Each file's type comes from its bytes, never its name. Files are read as data, never as instructions. A PDF is refused for a model that can't read one (Spark Open on Baseten). The errand's record keeps each file's name, size and SHA-256, never the bytes.
+- **Attach files to an errand or a team brief.** Up to 4 images (PNG, JPEG, GIF, WebP), PDFs or text files go with it, read through Muse Spark's image and document input (`input_image`, `input_file`). A receipt photo, a lease PDF or a guest list can drive an errand ("text everyone on this list"). On a team run, the planner, every agent and the reviewer see the files, so a criterion like "matches the product photo" is checked against the photo itself. An address in an attached file is treated like one found in an email, never like one the person typed. Each file's type comes from its bytes, never its name. Files are read as data, never as instructions. A PDF is refused for a model that can't read one (Spark Open on Baseten). The errand's record keeps each file's name, size and SHA-256, never the bytes.
 - **Voice errands.** Speak an errand instead of typing it. The browser records a WAV and the office sends it to **Muse Voice Transcribe** (`/v1/asr/transcribe`) on its own key, with the names in the office (contacts, people, bots) as keywords so they come back spelled right.
 - **Ray-Ban Display web app** (`/glasses`), built to Meta's Web Apps docs:
   - `mrbd-web-app-capable`, a black background (black is transparent on the display), arrow and Enter navigation on native controls

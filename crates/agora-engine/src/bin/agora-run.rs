@@ -51,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         events: None,
         team: None,
+        attachments: Vec::new(),
+        documents: String::new(),
     };
     let muse = MuseClient::from_env()?; // before journaling a run that can't start
     let (journal, brief) = match args.as_slice() {

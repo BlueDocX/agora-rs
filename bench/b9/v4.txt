@@ -1,0 +1,45 @@
+B9 team quality: v4, 16 runs, 106 tasks
+
+tasks done          102/106 (96%)
+accepted 1st draft  80/102 (78%)
+standards met       788/974 (81%)
+judge score (1-5)   3.90 mean; 65/102 ship-ready (4+)
+role fit            97/102 (95%)
+per run (mean)      $0.103, 52s (the team; judging is extra)
+
+Per agent (team/agent: tasks, mean score, standards met):
+  agora/analyst                         4  4.0  36/41
+  agora/researcher                      4  4.2  21/25
+  creative-studio/art-director          2  4.0  18/25
+  creative-studio/copywriter            6  3.5  36/53
+  creative-studio/director              2  2.5  17/27
+  creative-studio/strategist            2  3.0  26/32
+  game-studio/designer                  4  4.0  36/45
+  game-studio/level-designer            4  4.8  46/47
+  game-studio/narrative                 2  3.5  15/19
+  game-studio/producer                  2  3.5  20/25
+  pr-agency/media-analyst               4  3.5  18/28
+  pr-agency/pr-lead                     2  3.0  16/30
+  pr-agency/press-writer                4  4.5  40/41
+  pr-agency/social                      2  3.5  16/20
+  product/engineer                      4  4.2  17/21
+  product/pm                            5  4.0  19/31
+  product/qa                            3  4.0  25/30
+  product/ux-writer                     3  4.7  30/31
+  research-lab/data-analyst             4  4.8  34/35
+  research-lab/fact-checker             4  2.5  17/31
+  research-lab/lead-researcher          5  3.8  28/39
+  research-lab/science-writer           2  3.5  14/18
+  security/compliance                   2  3.5  8/14
+  security/responder                    2  4.0  23/25
+  security/tester                       2  5.0  22/22
+  security/threat-modeler               8  3.5  50/71
+  strategy-coach/market-analyst         6  4.5  50/52
+  strategy-coach/skeptic                3  4.7  37/38
+  strategy-coach/strategist             5  3.8  53/58
+
+Not done:
+  cafe-oat #0 write-brief-sections (writer): failed
+  cafe-oat #0 edit-assemble-one-pager (editor): skipped
+  cafe-oat #1 write-brief-prose (writer): failed
+  cafe-oat #1 edit-final-one-page-brief (editor): skipped

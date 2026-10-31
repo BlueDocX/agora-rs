@@ -29,7 +29,9 @@ async fn mock_model() -> String {
         post(|Json(body): Json<Value>| async move {
             match body["text"]["format"]["name"].as_str() {
                 Some("Plan") => {
-                    let mut task = json!({"id": "note", "title": "Write the note", "instructions": "Write it.",
+                    // A picture attached to a run's brief reaches the planner…
+                    let title = if body["input"].to_string().contains(r#""type":"input_image""#) { "Write the note (saw the picture)" } else { "Write the note" };
+                    let mut task = json!({"id": "note", "title": title, "instructions": "Write it.",
                         "deps": [], "acceptance": ["is friendly"], "max_words": 0, "required_headings": []});
                     // With a team, the schema lists who may do it: pick the first.
                     let who = &body["text"]["format"]["schema"]["properties"]["tasks"]["items"]["properties"]["agent"]["enum"][0];
@@ -37,6 +39,10 @@ async fn mock_model() -> String {
                         task["agent"] = who.clone();
                     }
                     reply(&json!({"tasks": [task]}).to_string())
+                }
+                // …and the reviewer, which fails a draft it reviewed without seeing it.
+                Some("Verdict") if body["input"].to_string().contains("Attached to the brief") && !body["input"].to_string().contains(r#""type":"input_image""#) => {
+                    reply(r#"{"pass": false, "failed_criteria": ["the reviewer didn't get the picture"], "confidence": "high"}"#)
                 }
                 Some("Verdict") => reply(r#"{"pass": true, "failed_criteria": [], "confidence": "high"}"#),
                 // An errand: text Priya, then say so.
@@ -85,6 +91,8 @@ async fn mock_model() -> String {
                         None => reply("Lead's summary"),
                     }
                 }
+                // …and the worker.
+                _ if body["input"].to_string().contains(r#""type":"input_image""#) => reply("Hello, regulars! (saw the picture)"),
                 _ => reply("Hello, regulars!"),
             }
         }),
@@ -591,4 +599,17 @@ async fn a_big_body_without_the_token_is_refused_before_it_is_read() {
     let big = json!({"brief": "x", "attachments": [{"name": "a.png", "data": "A".repeat(3 * 1024 * 1024)}]});
     let res = http.post(format!("{base}/api/errands")).json(&big).send().await.unwrap();
     assert_eq!(res.status(), 401);
+}
+
+#[tokio::test]
+async fn a_picture_attached_to_a_run_reaches_the_planner_the_worker_and_the_reviewer() {
+    let base = hub(None).await;
+    let http = reqwest::Client::new();
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    let started: Value = http.post(format!("{base}/api/runs")).json(&json!({"brief": "a note about this", "attachments": [{"name": "shop.png", "data": png}]})).send().await.unwrap().json().await.unwrap();
+    let id = started["id"].as_str().unwrap();
+    let body = http.get(format!("{base}/api/runs/{id}/events")).send().await.unwrap().text().await.unwrap();
+    assert!(body.contains("Write the note (saw the picture)"), "the planner saw it: {body}");
+    assert!(body.contains("Hello, regulars! (saw the picture)"), "the worker saw it");
+    assert!(body.contains(r#""type":"task_accepted""#), "the reviewer saw it and passed it");
 }

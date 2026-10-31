@@ -123,6 +123,8 @@ fn config(cap_usd: f64) -> RunConfig {
         baseten: None,
         events: None,
         team: None,
+        attachments: Vec::new(),
+        documents: String::new(),
     }
 }
 
@@ -269,7 +271,7 @@ async fn a_cut_off_draft_is_refused_but_still_charged() {
 #[tokio::test]
 async fn limits_are_checked_by_code_before_any_review() {
     let mut short = task("short", &[]);
-    short["max_words"] = json!(3); // "draft 1 of short" is 4 words
+    short["max_words"] = json!(1); // "draft 1 of short" is 4 words, over even with the slack
     let (base, seen) = mock(Script {
         plan: Arc::new(move |_| plan_of(&[short.clone()])),
         verdict: Arc::new(|_, _| pass()),
@@ -280,8 +282,8 @@ async fn limits_are_checked_by_code_before_any_review() {
 
     let seen = seen.lock().unwrap();
     assert_eq!(seen.reviews, 0, "no model review for a draft that breaks a limit");
-    assert!(seen.worker_prompts["short"][0].contains("- at most 3 words"));
-    assert!(seen.worker_prompts["short"][1].contains("at most 3 words (it has 4; cut 1)"));
+    assert!(seen.worker_prompts["short"][0].contains("- at most 1 words"));
+    assert!(seen.worker_prompts["short"][1].contains("at most 1 words (it has 4; cut it to about 1)"));
     // Code-check misses don't use up the review retry: three drafts, then a person.
     assert_eq!(seen.worker_prompts["short"].len(), 3);
     assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Rejected { .. })));

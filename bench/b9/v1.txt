@@ -1,0 +1,61 @@
+B9 team quality: v1, 16 runs, 106 tasks
+
+tasks done          88/106 (83%)
+accepted 1st draft  54/88 (61%)
+standards met       734/896 (82%)
+judge score (1-5)   4.05 mean; 61/88 ship-ready (4+)
+role fit            86/88 (98%)
+per run (mean)      $0.123, 62s (the team; judging is extra)
+
+Per agent (team/agent: tasks, mean score, standards met):
+  agora/analyst                         4  4.8  52/53
+  agora/editor                          1  3.0  12/17
+  agora/researcher                      4  4.8  29/30
+  agora/writer                          1  5.0  11/11
+  creative-studio/art-director          3  4.3  12/16
+  creative-studio/copywriter            2  4.5  13/16
+  creative-studio/director              2  4.0  20/22
+  creative-studio/strategist            2  3.5  20/30
+  game-studio/designer                  4  4.0  35/44
+  game-studio/level-designer            5  5.0  58/58
+  game-studio/narrative                 2  5.0  23/23
+  game-studio/producer                  2  3.0  16/22
+  pr-agency/media-analyst               3  3.7  13/18
+  pr-agency/pr-lead                     1  3.0  12/16
+  pr-agency/press-writer                1  3.0  6/9
+  pr-agency/social                      1  3.0  6/10
+  product/engineer                      4  4.5  26/30
+  product/pm                            4  3.2  14/33
+  product/qa                            3  3.7  25/31
+  product/ux-writer                     2  4.0  21/24
+  research-lab/data-analyst             4  5.0  44/44
+  research-lab/fact-checker             3  4.0  25/33
+  research-lab/lead-researcher          5  4.2  37/42
+  research-lab/science-writer           1  4.0  11/13
+  security/compliance                   2  3.5  9/19
+  security/responder                    2  3.5  18/22
+  security/tester                       2  4.5  21/22
+  security/threat-modeler               8  3.4  54/77
+  strategy-coach/market-analyst         5  4.0  36/47
+  strategy-coach/skeptic                2  4.0  26/28
+  strategy-coach/strategist             3  3.7  29/36
+
+Not done:
+  bottle-launch #0 tagline-concepts (copywriter): failed
+  bottle-launch #0 social-campaign-copy (copywriter): failed
+  bottle-launch #0 product-description-100 (copywriter): failed
+  expand-first #0 premortem-risks-mitigations (skeptic): failed
+  expand-first #0 synthesize-recommendation (strategist): skipped
+  library-hours #0 key-messages-framework (pr-lead): failed
+  library-hours #0 press-release-draft (press-writer): skipped
+  library-hours #0 reporter-pitch-email (press-writer): skipped
+  library-hours #0 qa-and-risks (media-analyst): skipped
+  library-hours #0 social-amplification-pack (social): skipped
+  four-day-week #0 plain-language-explainer (science-writer): failed
+  cafe-oat #1 draft-one-page-brief (writer): failed
+  cafe-oat #1 assemble-final-brief (editor): skipped
+  bottle-launch #1 social-posts-pack (copywriter): failed
+  expand-first #1 risk-register-and-pre-mortem (skeptic): failed
+  expand-first #1 final-recommendation-and-roadmap (strategist): skipped
+  library-hours #1 midnight-press-release (press-writer): failed
+  notes-offline #1 design-offline-states-and-flows (ux-writer): failed

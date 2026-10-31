@@ -176,6 +176,8 @@ struct Room {
     brief: String,
     /// The team's name, if the run has one.
     team: Option<String>,
+    /// The files attached to the brief: name, type, size and SHA-256 (never the bytes).
+    files: Vec<attach::Listed>,
     inner: Mutex<RoomInner>,
 }
 
@@ -352,7 +354,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
         .route("/api/skills", get(|| async { Json(agora_core::SKILLS) }))
         .route("/api/models", get(models))
-        .route("/api/runs", post(start).get(list))
+        .route("/api/runs", post(start).layer(DefaultBodyLimit::max(attach::MAX_BODY_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)).get(list))
         .route("/api/runs/{id}/events", get(events))
         .route("/api/chat", post(chat::post))
         .route("/api/chat/events", get(chat::events))
@@ -569,6 +571,9 @@ struct StartRun {
     model: Option<String>,
     #[serde(default)]
     reviewer_model: Option<String>,
+    /// Images, PDFs or text files for the team to work from.
+    #[serde(default)]
+    attachments: Vec<attach::Upload>,
 }
 
 impl Hub {
@@ -609,6 +614,21 @@ fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
+/// What a run needs, checked: its team, its models (each with a host this office has)
+/// and its files (every model that reads them must be able to).
+fn prepare(hub: &Hub, body: StartRun) -> Result<(Option<Team>, String, Option<String>, attach::Attached), String> {
+    let team = resolve(body.team)?;
+    let model = body.model.unwrap_or_else(|| hub.config.model.clone());
+    let reviewer_model = body.reviewer_model.or_else(|| hub.config.reviewer_model.clone());
+    let agents = team.iter().flat_map(|t| &t.agents).filter_map(|a| a.model.as_deref().map(|m| (a.name.as_str(), m)));
+    let readers: Vec<(&str, &str)> = [("writer", model.as_str())].into_iter().chain(reviewer_model.as_deref().map(|m| ("reviewer", m))).chain(agents).collect();
+    if let Some(why) = readers.iter().find_map(|(_, m)| hub.check_model(m).err()) {
+        return Err(why);
+    }
+    let files = attach::accept_for(body.attachments, &readers)?;
+    Ok((team, model, reviewer_model, files))
+}
+
 async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Json<StartRun>, JsonRejection>) -> Response {
     if !authorized(&hub, &headers) {
         return unauthorized();
@@ -623,17 +643,14 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
     if brief.is_empty() || brief.chars().count() > MAX_BRIEF_CHARS {
         return error(StatusCode::BAD_REQUEST, "the brief must be 1 to 4000 characters");
     }
-    let team = match resolve(body.team) {
-        Ok(team) => team,
+    // Full: say so before decoding megabytes of files.
+    if hub.state().rooms.iter().filter(|r| !r.done()).count() >= hub.config.max_active {
+        return error(StatusCode::TOO_MANY_REQUESTS, "too many runs in progress; try again when one finishes");
+    }
+    let (team, model, reviewer_model, files) = match prepare(&hub, body) {
+        Ok(ready) => ready,
         Err(why) => return error(StatusCode::BAD_REQUEST, &why),
     };
-    let model = body.model.unwrap_or_else(|| hub.config.model.clone());
-    let reviewer_model = body.reviewer_model.or_else(|| hub.config.reviewer_model.clone());
-    let chosen = [Some(&model), reviewer_model.as_ref()].into_iter().flatten();
-    let agents = team.iter().flat_map(|t| &t.agents).filter_map(|a| a.model.as_ref());
-    if let Some(why) = chosen.chain(agents).find_map(|m| hub.check_model(m).err()) {
-        return error(StatusCode::BAD_REQUEST, &why);
-    }
     let config = &hub.config;
     {
         let mut state = hub.state();
@@ -643,7 +660,9 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
         state.starting += 1; // the slot is ours until the room is added
     }
     let release = || hub.state().starting -= 1;
-    let journal = match &config.journal {
+    // A run with files isn't journaled: their bytes aren't kept, so it couldn't be
+    // resumed as the same run (a resume would re-plan without them and pay again).
+    let journal = match config.journal.as_ref().filter(|_| files.listed.is_empty()) {
         Some(path) => {
             let (path, b, model, t) = (path.clone(), brief.clone(), model.clone(), team.clone());
             let reviewer = reviewer_model.clone();
@@ -672,6 +691,7 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
         id: id.clone(),
         brief: brief.clone(),
         team: team.as_ref().map(|t| t.name.clone()),
+        files: files.listed.clone(),
         inner: Mutex::new(RoomInner { history: Vec::new(), live: Some(live) }),
     });
     {
@@ -700,6 +720,8 @@ async fn start(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Jso
         baseten: config.baseten.clone(),
         events: Some(tx.clone()),
         team,
+        attachments: files.media,
+        documents: files.text,
     };
     let muse = config.muse.clone();
     let running = tokio::spawn(async move { run(muse, &run_config, &brief, journal).await });
@@ -762,6 +784,8 @@ struct RunSummary {
     id: String,
     brief: String,
     team: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<attach::Listed>,
     done: bool,
 }
 
@@ -771,7 +795,7 @@ async fn list(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
     }
     let state = hub.state();
     let runs: Vec<RunSummary> =
-        state.rooms.iter().rev().map(|r| RunSummary { id: r.id.clone(), brief: r.brief.clone(), team: r.team.clone(), done: r.done() }).collect();
+        state.rooms.iter().rev().map(|r| RunSummary { id: r.id.clone(), brief: r.brief.clone(), team: r.team.clone(), files: r.files.clone(), done: r.done() }).collect();
     Json(runs).into_response()
 }
 

@@ -321,5 +321,22 @@
     "details": "docs/benchmarks.md#b8-real-world-errands-and-a-self-improvement-loop",
     "held_out": 1.0,
     "hosted": "all on Baseten (Spark Open)"
+  },
+  "team_quality": {
+    "teams": 8,
+    "runs": 32,
+    "tasks": 209,
+    "done_before": 0.77,
+    "done_after": 0.99,
+    "standards_before": 0.61,
+    "standards_after": 0.83,
+    "score_before": 3.58,
+    "score_after": 4.02,
+    "ship_ready_before": 0.47,
+    "ship_ready_after": 0.67,
+    "role_fit": 0.97,
+    "usd_per_run": 0.109,
+    "judge": "muse-spark-1.3",
+    "details": "docs/benchmarks.md#b9-does-each-agent-do-its-own-job-well"
   }
 }

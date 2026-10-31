@@ -1,0 +1,43 @@
+B9 team quality: v3, 16 runs, 105 tasks
+
+tasks done          105/105 (100%)
+accepted 1st draft  85/105 (81%)
+standards met       853/1014 (84%)
+judge score (1-5)   4.06 mean; 73/105 ship-ready (4+)
+role fit            101/105 (96%)
+per run (mean)      $0.113, 56s (the team; judging is extra)
+
+Per agent (team/agent: tasks, mean score, standards met):
+  agora/analyst                         4  4.2  34/37
+  agora/editor                          2  3.0  20/26
+  agora/researcher                      4  4.5  26/32
+  agora/writer                          2  5.0  24/24
+  creative-studio/art-director          3  4.7  5/7
+  creative-studio/copywriter            6  4.0  47/56
+  creative-studio/director              2  4.0  20/22
+  creative-studio/strategist            2  3.5  14/18
+  game-studio/designer                  4  4.2  37/43
+  game-studio/level-designer            3  5.0  33/33
+  game-studio/narrative                 3  4.7  29/30
+  game-studio/producer                  3  4.0  32/38
+  pr-agency/media-analyst               3  3.7  20/25
+  pr-agency/pr-lead                     2  3.0  23/35
+  pr-agency/press-writer                4  3.8  33/44
+  pr-agency/social                      2  3.0  14/22
+  product/engineer                      4  3.8  20/30
+  product/pm                            6  3.5  12/30
+  product/qa                            3  3.7  24/29
+  product/ux-writer                     2  3.5  16/20
+  research-lab/data-analyst             4  5.0  47/47
+  research-lab/fact-checker             3  3.7  15/20
+  research-lab/lead-researcher          4  4.5  36/38
+  research-lab/science-writer           3  4.7  31/34
+  security/compliance                   2  4.5  11/13
+  security/responder                    2  3.0  22/28
+  security/tester                       2  4.0  21/22
+  security/threat-modeler               7  3.7  51/62
+  strategy-coach/market-analyst         5  5.0  41/41
+  strategy-coach/skeptic                4  4.2  39/43
+  strategy-coach/strategist             5  3.6  56/65
+
+Not done:
