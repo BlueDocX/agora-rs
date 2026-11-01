@@ -59,18 +59,7 @@ Open the office and press **Watch it catch a lie**. It replays a real errand, re
 
 ## How it works
 
-```mermaid
-flowchart LR
-  you(["You, or your coding CLI"]) -->|"errand"| agent["Agent (Muse Spark)"]
-  agent -->|"asks for a tool call"| exec{{"Executor: Agora's own code"}}
-  person(["Person in the office"]) -.->|"approve or decline"| exec
-  exec -->|"destination named by you? private data in play? approved?"| tools[("Sandbox tools and MCP servers: GitHub, Slack, Linear…")]
-  exec -->|"records every call"| ledger[("Signed, hash-chained ledger")]
-  agent -->|"report"| guard{{"Guard: 2 parsers + Rust"}}
-  ledger --> guard
-  guard -->|"a false claim: rewrite"| agent
-  guard -->|"only what the ledger backs"| you
-```
+<p align="center"><img src="docs/media/how-it-works.png" alt="How it works: you or your coding CLI give the agent an errand. The agent asks Agora's executor for each tool call; the executor checks whether you named the destination, whether private data is in play, and whether a person approved, then calls the sandbox tools or MCP servers and records every call in a signed, hash-chained ledger. The agent's report goes to the guard, which checks it against the ledger: a false claim goes back to be rewritten, and only what the ledger backs reaches you." width="100%"></p>
 
 - **The agent never acts on its own.** It asks; Agora's executor checks the request, makes the call and records it. The agent can't write its own record.
 - **The guard reads what the agent says before you do.** Every claim is checked against the ledger by code. Anything false goes back to be rewritten; anything still false is cut and corrected from the ledger.

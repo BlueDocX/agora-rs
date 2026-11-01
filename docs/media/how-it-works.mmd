@@ -1,0 +1,10 @@
+flowchart LR
+  you(["You, or your coding CLI"]) -->|"errand"| agent["Agent (Muse Spark)"]
+  agent -->|"asks for a tool call"| exec{{"Executor: Agora's own code"}}
+  person(["Person in the office"]) -.->|"approve or decline"| exec
+  exec -->|"destination named by you? private data in play? approved?"| tools[("Sandbox tools and MCP servers: GitHub, Slack, Linear…")]
+  exec -->|"records every call"| ledger[("Signed, hash-chained ledger")]
+  agent -->|"report"| guard{{"Guard: 2 parsers + Rust"}}
+  ledger --> guard
+  guard -->|"a false claim: rewrite"| agent
+  guard -->|"only what the ledger backs"| you
