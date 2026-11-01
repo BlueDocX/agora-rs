@@ -59,10 +59,11 @@
   /* Logs */
   .logs { padding: 20px 14px 14px; }
   .logs > .label { padding: 0 8px 14px; }
-  .tabs { display: flex; background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; overflow-x: auto; scrollbar-width: none; }
-  .tabs::-webkit-scrollbar { display: none; }
-  .tabs button { flex: 1 0 auto; padding-left: 10px !important; padding-right: 10px !important; }
-  .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 700 12.5px/1 var(--sans); color: var(--zinc, #55503f); }
+  /* Every tab stays in reach: they wrap onto a second row rather than scroll out of
+     sight (a hidden sideways scroll can't be reached with a mouse wheel). */
+  .tabs { display: flex; flex-wrap: wrap; background: var(--stone); border-radius: 20px; padding: 4px; gap: 2px; }
+  .tabs button { flex: 1 0 auto; padding-left: 8px !important; padding-right: 8px !important; }
+  .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 700 12px/1 var(--sans); color: var(--zinc, #55503f); }
   .tabs button.on { background: var(--ink); color: var(--paper); }
   .feed { flex: 1; overflow: auto; margin: 12px 0 0; padding: 0 6px; list-style: none; }
   .feed li { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
