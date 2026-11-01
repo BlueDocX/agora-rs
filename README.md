@@ -76,9 +76,13 @@ flowchart LR
 - **The guard reads what the agent says before you do.** Every claim is checked against the ledger by code. Anything false goes back to be rewritten; anything still false is cut and corrected from the ledger.
 - **People stay in charge of real-world actions.** Calls that change something, or that leave the office after private data was read, wait for the person whose account it is. This is Meta's [Agents Rule of Two](https://ai.meta.com/blog/practical-ai-agent-security/), enforced in code.
 
-| A false draft, stopped | A real call, waiting for a person | Driven from Claude Code |
-|---|---|---|
-| <img src="docs/media/stopped-draft.png" alt="The guard stops 'No, I did not read any private chats or notes for this errand' and the delivered answer says it read the contact details including notes" width="100%"> | <img src="docs/media/approval.png" alt="Scout wants to use deepwiki.ask_wiki_question, with its exact arguments, and Approve and Decline buttons" width="100%"> | <img src="docs/media/claude-code.png" alt="Claude Code runs an errand through Agora over MCP, waits at an approval it can't give, then relays the checked report" width="100%"> |
+| A false draft, stopped | A real call, waiting for a person |
+|---|---|
+| <img src="docs/media/stopped-draft.png" alt="The guard stops 'No, I did not read any private chats or notes for this errand' and the delivered answer says it read the contact details including notes" width="372"> | <img src="docs/media/approval.png" alt="Scout wants to use deepwiki.ask_wiki_question, with its exact arguments, and Approve and Decline buttons" width="380"> |
+
+**Driven from Claude Code**, over MCP: the errand's checked report comes back to the terminal, and a call that needs approval waits for a person in the office ([more](#work-from-your-own-terminal-claude-code-codex-opencode-gemini-cli)).
+
+<img src="docs/media/claude-code.png" alt="Claude Code runs an errand through Agora over MCP, waits at an approval it can't give, then relays the checked report" width="100%">
 
 **What we measured (B4, [details](docs/benchmarks.md#b4-self-report-fidelity-alibi)).** 10 errands per model in a sandbox with planted failures.
 
