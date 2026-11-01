@@ -11,3 +11,4 @@ assets/kenney-src
 *.env
 .env*
 .git
+.taste-skill
