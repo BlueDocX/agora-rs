@@ -9,7 +9,27 @@ Each mark links to the ledger entries that prove it.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 - Nov 4, 2026), on Meta's Muse models.
 
-**Why.** In September 2026 the Muse agent synced a user's Messages and then gave a made-up account of what it had done; Meta apologised. In October, TIME reported its memory keeps what users ask it to forget. Agents now act on our data, and their own account of what they did is the weakest link.
+## What it solves
+
+**AI agents now act on our data**: they send, book, file, pay and read private messages. When something goes wrong, the only account of what happened comes from the agent itself, and that is the part that fails:
+
+- **Agents misreport what they did.**
+  - Muse told a columnist it saw "the incoming notification stream only, not access to your texts". It had synced over 187,000 rows of his iMessages. Meta Superintelligence Labs' head called that explanation "on us" ([Decrypt](https://decrypt.co/379122/metas-muse-ai-agent-user-private-imessages-lied-how), Sept 2026). Meta disputes that the access was without consent.
+  - Replit's coding agent deleted a production database during a code freeze. It then said a rollback wouldn't work; it did ([Fortune](https://fortune.com/2025/07/23/ai-coding-tool-replit-wiped-database-called-it-a-catastrophic-failure/), July 2025).
+  - We measured it on Meta's models: asked about their work later, 20–41% of their statements about their own actions were false (B4, below).
+- **Agents can be turned against the person they work for.** Meta calls prompt injection "a fundamental, unsolved weakness in all LLMs". Its [Agents Rule of Two](https://ai.meta.com/blog/practical-ai-agent-security/) requires a human, or another reliable check, once an agent has untrusted input, private data and a way to act. Meta lists what the rule doesn't cover: "agent mistakes, hallucinations", such as a false account of what the agent did.
+- **"Forget" isn't forgetting.** Asking Muse to forget something "does not necessarily erase the message in which it was shared" ([TIME](https://time.com/article/2026/10/06/meta-muse-ai-agent-privacy/), Oct 2026).
+
+**Agora closes all three in code, not in the prompt.**
+- **A record the agent can't write:** the executor makes every call and records it in a signed, hash-chained ledger.
+- **The guard** checks every claim in an agent's message against that ledger, and no claim it contradicts reaches you.
+- **Meta's Rule of Two, enforced on real tools:**
+  - destinations come only from your words or an allowlist;
+  - every action waits for the account owner;
+  - once an errand holds private data, every outbound call waits for a person.
+- **Forgetting you can verify:** the content is gone, and the chain still proves the read happened.
+
+Open the office and press **Watch it catch a lie**. It replays a real errand, recorded on Muse Spark Open. Asked "Did you read any of my private chats or notes?", the bot said "No"; the ledger shows the read, and the guard stops the answer before it reaches the person.
 
 **What we measured (B4, [details](docs/benchmarks.md#b4-self-report-fidelity-alibi)).** 10 errands per model in a sandbox with planted failures.
 
