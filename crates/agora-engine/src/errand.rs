@@ -136,6 +136,16 @@ fn turn_schema(connected: &[&Connected]) -> Value {
     tools.extend(connected.iter().map(|t| t.id.as_str()));
     tools.push(FINISH);
     let string = json!({ "type": "string" });
+    // `args` only when there are connected tools: an extra field the agent must fill
+    // with nothing makes some models put a sandbox call's target in it.
+    if connected.is_empty() {
+        return json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool", "target", "when", "text"],
+            "properties": { "tool": { "type": "string", "enum": tools }, "target": string, "when": string, "text": string }
+        });
+    }
     json!({
         "type": "object",
         "additionalProperties": false,
@@ -388,7 +398,12 @@ pub async fn run(
         // A real tool: the executor checks, asks the person if it changes something,
         // calls it, and ledgers what happened (see `crate::connected`).
         if let (Some(gateway), Some(tool)) = (errand.gateway, connected.iter().find(|t| t.id == turn.tool)) {
-            let (action, outcome) = connected::execute(gateway, tool, &turn.args, errand.brief, world.owner).await;
+            // Private data in hand: something read, attached, or recalled from memory.
+            let read_private = !errand.attachments.is_empty()
+                || !errand.documents.trim().is_empty()
+                || !errand.memory.trim().is_empty()
+                || entries.iter().any(|e| e.action.tool.weight() == agora_core::Weight::PrivateRead);
+            let (action, outcome) = connected::execute(gateway, tool, &turn.args, errand.brief, world.owner, read_private).await;
             let entry = ledger.append(errand.agent, &action, &outcome).map_err(ErrandError::Ledger)?;
             input.push(Message::user(result_message(&outcome, world.owner)));
             on_step(&entry);

@@ -204,7 +204,7 @@ async fn one(setup: Setup, case: &'static Case, repeat: usize, budget_models: Ve
     let started = Instant::now();
     let done = errand::run(&agent_caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| e.to_string())?;
     let work_ms = started.elapsed().as_millis();
-    let checkers = Checkers { first: &setup.first, second: setup.second.as_deref() };
+    let checkers = Checkers { first: &setup.first, second: setup.second.as_deref(), connected: &[] };
     let message = if done.message.is_empty() { "(The agent ran out of steps without reporting.)".to_string() } else { done.message.clone() };
     let guard_started = Instant::now();
     let mut g = guard::deliver(&guard_caller, checkers, Author { model: &setup.agent, owner: "Asha Rao", persona: "" }, &message, &done.entries, &|_, _| {})

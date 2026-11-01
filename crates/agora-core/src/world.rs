@@ -176,8 +176,8 @@ pub struct Action {
 pub struct Call {
     /// `server.tool`, as the person approved it (e.g. `github.create_issue`).
     pub tool: String,
-    /// SHA-256 of the tool's definition when it was approved: a receipt proves which
-    /// definition ran.
+    /// SHA-256 of the tool's definition the owner approved: a receipt proves which
+    /// definition the call was made under (what the server then did is its own).
     pub def: String,
     /// The arguments, as the JSON text that was sent.
     pub args: String,

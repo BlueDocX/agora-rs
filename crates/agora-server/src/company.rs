@@ -48,7 +48,7 @@ const MEMBER_HEADER: &str = "x-agora-member";
 pub(crate) const MEMBER_COOKIE: &str = "agora_member";
 pub(crate) const GENERAL: &str = "#general";
 /// Bots are named in join order.
-const BOTS: [&str; MAX_MEMBERS] = [
+pub(crate) const BOTS: [&str; MAX_MEMBERS] = [
     "Scout", "Atlas", "Nova", "Echo", "Pixel", "Sage", "Orbit", "Quill", "Juno", "Vega", "Ember", "Lumen", "Rook", "Tide", "Wren", "Cobalt",
     "Indigo", "Marlo", "Pico", "Sol", "Tango", "Umber", "Zephyr", "Kite",
 ];

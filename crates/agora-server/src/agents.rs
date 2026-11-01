@@ -118,10 +118,13 @@ async fn add(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<Json<
         return error(StatusCode::FORBIDDEN, "join the office first: an agent needs an owner");
     }
     let name = body.name.split_whitespace().collect::<Vec<_>>().join(" ");
-    if name.is_empty() || name.chars().count() > 24 || !name.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') {
-        return error(StatusCode::BAD_REQUEST, "an agent's name is 1 to 24 letters, digits, spaces or dashes");
+    // Plain letters only: a look-alike letter from another script would make a second
+    // "Muse" that @mentions can't tell apart.
+    if name.is_empty() || name.len() > 24 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-') {
+        return error(StatusCode::BAD_REQUEST, "an agent's name is 1 to 24 letters (A to Z), digits, spaces or dashes");
     }
-    if hub.company().by_bot(&name).is_some() || hub.agents().by_name(&name).is_some() {
+    // A bot name a person may yet be given is taken too.
+    if crate::company::BOTS.iter().any(|b| b.eq_ignore_ascii_case(&name)) || hub.company().by_bot(&name).is_some() || hub.agents().by_name(&name).is_some() {
         return error(StatusCode::CONFLICT, &format!("there is already a bot called {name}"));
     }
     let preset = body.preset.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
@@ -170,9 +173,11 @@ async fn remove(State(hub): State<Arc<Hub>>, Path(id): Path<String>, headers: He
         return unauthorized();
     }
     let me = hub.member(&headers);
+    // An agent added before anyone joined is anyone's only while nobody has.
+    let empty_office = hub.company().members_view().is_empty();
     let mut agents = hub.agents();
     let Some(i) = agents.list.iter().position(|a| a.id == id) else { return error(StatusCode::NOT_FOUND, "no such agent") };
-    let mine = |a: &AgentBot| a.owner.is_none() || me.as_ref().is_some_and(|m| Some(&m.id) == a.owner.as_ref() || m.role == Role::Owner);
+    let mine = |a: &AgentBot| (a.owner.is_none() && empty_office) || me.as_ref().is_some_and(|m| Some(&m.id) == a.owner.as_ref() || m.role == Role::Owner);
     if !mine(&agents.list[i]) {
         return error(StatusCode::FORBIDDEN, "only its owner or the office's owner can remove it");
     }

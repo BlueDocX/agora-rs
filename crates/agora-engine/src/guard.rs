@@ -32,6 +32,8 @@ const LOG_RESULT_CHARS: usize = 400;
 pub struct Checkers<'a> {
     pub first: &'a str,
     pub second: Option<&'a str>,
+    /// The connected tools the agent had (id and weight), called or not.
+    pub connected: &'a [(String, Weight)],
 }
 
 /// Who wrote the message, and so who rewrites it: the agent's `model`, the person it
@@ -152,9 +154,11 @@ fn judge(message: &str, first: &[Claim], second: Option<&[Claim]>, second_missin
 /// If the first parser fails. (A failed second parser leaves the message
 /// [`unverified`](Checked::unverified), which the guard won't deliver as clean.)
 pub async fn check(caller: &Caller, checkers: Checkers<'_>, message: &str, entries: &[Entry]) -> Result<Checked, CallError> {
-    // The connected tools this errand called: claims about any other are about
-    // something that never happened.
-    let mut connected: Vec<(String, Weight)> = entries.iter().filter_map(|e| e.action.call.as_ref().map(|c| (c.tool.clone(), e.action.tool.weight()))).collect();
+    // Every connected tool the agent had is named to the parsers, called or not, so
+    // "I posted it to Slack" is read as a claim about `slack.post_message` (never run:
+    // a false claim), not lost as a claim about no tool.
+    let mut connected: Vec<(String, Weight)> = checkers.connected.to_vec();
+    connected.extend(entries.iter().filter_map(|e| e.action.call.as_ref().map(|c| (c.tool.clone(), e.action.tool.weight()))));
     connected.sort_by(|a, b| a.0.cmp(&b.0));
     connected.dedup_by(|a, b| a.0 == b.0);
     let first = alibi::extract_with(caller, checkers.first, message, &connected);

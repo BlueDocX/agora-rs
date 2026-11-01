@@ -101,7 +101,7 @@ fn scored(c: &guard::Checked) -> Value {
 
 /// One model, one memory design, the whole week.
 async fn week(caller: Arc<Caller>, model: String, grounded: bool) -> Result<Value, String> {
-    let checkers = Checkers { first: "muse-spark-1.3", second: Some(SECOND_CHECKER) };
+    let checkers = Checkers { first: "muse-spark-1.3", second: Some(SECOND_CHECKER), connected: &[] };
     let spent_before = caller.spend().cost_usd;
     let mut world = World::demo();
     let memory = Memory::in_memory().map_err(|e| e.to_string())?;

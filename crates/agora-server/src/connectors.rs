@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use agora_core::Weight;
 use agora_engine::connected::{Ask, BoxFuture, Connected, Decision, Gateway, Reply};
@@ -109,6 +109,10 @@ pub(crate) struct Connector {
     pub added_ms: u64,
     #[serde(default)]
     pub paused: bool,
+    /// The member who connected it (id, name): their account is the one acting, so
+    /// they approve its calls. `None` when it was connected before anyone joined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_by: Option<(String, String)>,
 }
 
 /// A connector as the page sees it: no token.
@@ -144,6 +148,12 @@ impl Sealer {
 
     fn load_or_create(path: &Path) -> Result<[u8; 32], String> {
         if path.exists() {
+            #[cfg(unix)]
+            if let Ok(meta) = std::fs::metadata(path)
+                && std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o077 != 0
+            {
+                eprintln!("warning: {} can be read by other users; run chmod 600 on it", path.display());
+            }
             let text = std::fs::read_to_string(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
             return from_hex(text.trim()).and_then(|k| k.try_into().ok()).ok_or_else(|| format!("{} doesn't hold a key", path.display()));
         }
@@ -157,18 +167,30 @@ impl Sealer {
         Ok(key)
     }
 
-    fn seal(&self, plain: &str) -> String {
+    /// Seal `plain` for `whose` (a connector id and which secret it is): it opens
+    /// only for the same one, so a sealed token can't be moved to another connector.
+    fn seal(&self, plain: &str, whose: &str) -> String {
         let mut nonce = [0u8; 12];
         getrandom::fill(&mut nonce).expect("the OS random source works");
-        let sealed = self.cipher.encrypt(&Nonce::from(nonce), plain.as_bytes()).expect("AES-GCM encryption doesn't fail");
+        let sealed = self.cipher.encrypt(&Nonce::from(nonce), Payload { msg: plain.as_bytes(), aad: whose.as_bytes() }).expect("AES-GCM encryption doesn't fail");
         agora_engine::signing::to_hex(&[nonce.as_slice(), &sealed].concat())
     }
 
-    fn open(&self, sealed: &str) -> Option<String> {
+    fn open(&self, sealed: &str, whose: &str) -> Option<String> {
+        self.open_as(sealed, whose.as_bytes())
+    }
+
+    /// A secret sealed by an earlier build, before secrets were bound to their
+    /// connector (no associated data). Re-seal it with [`Self::seal`] once opened.
+    fn open_legacy(&self, sealed: &str) -> Option<String> {
+        self.open_as(sealed, b"")
+    }
+
+    fn open_as(&self, sealed: &str, aad: &[u8]) -> Option<String> {
         let bytes = from_hex(sealed)?;
         let (nonce, body) = bytes.split_at_checked(12)?;
         let nonce: [u8; 12] = nonce.try_into().ok()?;
-        let plain = self.cipher.decrypt(&Nonce::from(nonce), body).ok()?;
+        let plain = self.cipher.decrypt(&Nonce::from(nonce), Payload { msg: body, aad }).ok()?;
         String::from_utf8(plain).ok()
     }
 }
@@ -226,9 +248,39 @@ fn policy(def: agora_mcp::ToolDef) -> ToolPolicy {
     }
 }
 
+/// At most this many tools from one server, and this much schema per tool.
+const MAX_TOOLS: usize = 128;
+const MAX_SCHEMA_BYTES: usize = 32 * 1024;
+
+/// A plain name: letters, digits, `_`, `.`, `-`, up to 128 characters.
+fn plain_name(name: &str) -> bool {
+    (1..=128).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+}
+
+/// The tools of a listing that can be offered: plain names (the tool's and each
+/// argument's), a schema of reasonable size, and no name listed twice (both copies
+/// go: which one is real can't be told). At most [`MAX_TOOLS`].
+fn usable(mut fresh: Vec<agora_mcp::ToolDef>) -> Vec<agora_mcp::ToolDef> {
+    // A listing far beyond the cap is cut first, so a huge one costs little.
+    fresh.truncate(MAX_TOOLS * 4);
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for d in &fresh {
+        *seen.entry(d.name.clone()).or_default() += 1;
+    }
+    fresh
+        .into_iter()
+        .filter(|d| plain_name(&d.name) && seen.get(&d.name) == Some(&1))
+        .filter(|d| serde_json::to_string(&d.schema).is_ok_and(|s| s.len() <= MAX_SCHEMA_BYTES))
+        .filter(|d| d.schema.get("properties").and_then(Value::as_object).is_none_or(|p| p.keys().all(|k| plain_name(k))))
+        .take(MAX_TOOLS)
+        .collect()
+}
+
 /// Merge a fresh listing into `tools`: same definition keeps its policy; a changed one
-/// goes off and is flagged; a new one comes in off; a gone one is dropped.
+/// goes off and is flagged (keeping the owner's description of it, and every
+/// destination either version names); a new one comes in off; a gone one is dropped.
 fn merge(tools: &mut Vec<ToolPolicy>, fresh: Vec<agora_mcp::ToolDef>) -> Vec<String> {
+    let fresh = usable(fresh);
     let mut changed = Vec::new();
     let mut next = Vec::with_capacity(fresh.len());
     for def in fresh {
@@ -240,7 +292,12 @@ fn merge(tools: &mut Vec<ToolPolicy>, fresh: Vec<agora_mcp::ToolDef>) -> Vec<Str
                 }
                 let mut p = policy(def);
                 p.changed = old.class != Class::Off || old.changed;
-                p.destinations.clone_from(&old.destinations);
+                for d in &old.destinations {
+                    if !p.destinations.contains(d) {
+                        p.destinations.push(d.clone());
+                    }
+                }
+                p.usage.clone_from(&old.usage);
                 p.allow.clone_from(&old.allow);
                 next.push(p);
             }
@@ -255,6 +312,7 @@ fn merge(tools: &mut Vec<ToolPolicy>, fresh: Vec<agora_mcp::ToolDef>) -> Vec<Str
 struct SigningIn {
     name: String,
     url: String,
+    added_by: Option<(String, String)>,
     at_ms: u64,
     pending: agora_mcp::oauth::Pending,
 }
@@ -275,7 +333,30 @@ pub(crate) struct Connectors {
 impl Connectors {
     pub fn new(loaded: &[(String, String)], key: Option<&Path>, store: Option<Store>, allow_local: bool) -> Self {
         let list = loaded.iter().find(|(k, _)| k == "connectors").and_then(|(_, v)| serde_json::from_str(v).ok()).unwrap_or_default();
-        Self { list, signing_in: BTreeMap::new(), sealer: Sealer::new(key), store, allow_local }
+        let mut c = Self { list, signing_in: BTreeMap::new(), sealer: Sealer::new(key), store, allow_local };
+        if c.migrate() {
+            c.save();
+        }
+        c
+    }
+
+    /// Re-seal secrets an earlier build sealed without binding them to their
+    /// connector, once, at start. True if any was.
+    fn migrate(&mut self) -> bool {
+        let mut changed = false;
+        for x in &mut self.list {
+            for (slot, which) in [(&mut x.token, "token"), (&mut x.oauth, "oauth")] {
+                let whose = format!("{} {which}", x.id);
+                if let Some(sealed) = slot.as_deref()
+                    && self.sealer.open(sealed, &whose).is_none()
+                    && let Some(plain) = self.sealer.open_legacy(sealed)
+                {
+                    *slot = Some(self.sealer.seal(&plain, &whose));
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     fn save(&self) {
@@ -298,7 +379,7 @@ async fn server_of(hub: &Hub, id: &str) -> Result<agora_mcp::Server, String> {
     let (url, token, oauth, allow_local) = {
         let c = hub.connectors();
         let x = c.list.iter().find(|x| x.id == id).ok_or("no such connector")?;
-        (x.url.clone(), x.token.as_deref().and_then(|t| c.sealer.open(t)), x.oauth.as_deref().and_then(|t| c.sealer.open(t)), c.allow_local)
+        (x.url.clone(), x.token.as_deref().and_then(|t| c.sealer.open(t, &format!("{id} token"))), x.oauth.as_deref().and_then(|t| c.sealer.open(t, &format!("{id} oauth"))), c.allow_local)
     };
     let token = match oauth {
         None => token,
@@ -306,7 +387,7 @@ async fn server_of(hub: &Hub, id: &str) -> Result<agora_mcp::Server, String> {
             let (access, renewed) = agora_mcp::oauth::token(&url, &creds, allow_local).await.map_err(|e| e.to_string())?;
             if let Some(renewed) = renewed {
                 let mut c = hub.connectors();
-                let sealed = c.sealer.seal(&renewed);
+                let sealed = c.sealer.seal(&renewed, &format!("{id} oauth"));
                 if let Some(x) = c.list.iter_mut().find(|x| x.id == id) {
                     x.oauth = Some(sealed);
                 }
@@ -387,7 +468,8 @@ async fn sign_in(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: Result<J
     let mut c = hub.connectors();
     let now = crate::now_ms();
     c.signing_in.retain(|_, s| now.saturating_sub(s.at_ms) < SIGN_IN_MS);
-    c.signing_in.insert(pending.csrf.clone(), SigningIn { name: body.name.trim().chars().take(40).collect(), url: body.url.trim().to_string(), at_ms: now, pending });
+    let added_by = hub.member(&headers).map(|m| (m.id, m.name));
+    c.signing_in.insert(pending.csrf.clone(), SigningIn { name: body.name.trim().chars().take(40).collect(), url: body.url.trim().to_string(), added_by, at_ms: now, pending });
     Json(serde_json::json!({ "authorize_url": authorize_url })).into_response()
 }
 
@@ -439,9 +521,10 @@ async fn signed_in(State(hub): State<Arc<Hub>>, axum::extract::Query(q): axum::e
     if c.list.iter().any(|x| x.id == id) {
         return page("Sign-in failed", &format!("a connector called {id} was added meanwhile"));
     }
-    let sealed = c.sealer.seal(&creds);
+    let sealed = c.sealer.seal(&creds, &format!("{id} oauth"));
+    let tools: Vec<ToolPolicy> = usable(tools).into_iter().map(policy).collect();
     let n = tools.len();
-    c.list.push(Connector { id, name: waiting.name.clone(), url: waiting.url, token: None, oauth: Some(sealed), tools: tools.into_iter().map(policy).collect(), added_ms: crate::now_ms(), paused: false });
+    c.list.push(Connector { id, name: waiting.name.clone(), url: waiting.url, token: None, oauth: Some(sealed), tools, added_ms: crate::now_ms(), paused: false, added_by: waiting.added_by });
     c.save();
     drop(c);
     page(&format!("{} is connected", waiting.name), &format!("{n} tools came in, all off. Turn on the ones you want in the office's Tools."))
@@ -491,8 +574,9 @@ pub(crate) async fn add(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: R
         Err(e) => return error(StatusCode::BAD_GATEWAY, &e.to_string()),
     };
     let mut c = hub.connectors();
-    let sealed = token.as_deref().map(|t| c.sealer.seal(t));
-    let connector = Connector { id, name: body.name.trim().chars().take(40).collect(), url: server.url, token: sealed, oauth: None, tools: tools.into_iter().map(policy).collect(), added_ms: crate::now_ms(), paused: false };
+    let sealed = token.as_deref().map(|t| c.sealer.seal(t, &format!("{id} token")));
+    let added_by = hub.member(&headers).map(|m| (m.id, m.name));
+    let connector = Connector { id, name: body.name.trim().chars().take(40).collect(), url: server.url, token: sealed, oauth: None, tools: usable(tools).into_iter().map(policy).collect(), added_ms: crate::now_ms(), paused: false, added_by };
     c.list.push(connector);
     c.save();
     let added = c.list.last().map(|x| serde_json::to_value(x.view()).unwrap_or_default());
@@ -522,8 +606,11 @@ async fn recheck_with(hub: &Hub, id: &str, server: &agora_mcp::Server) -> Result
     let fresh = agora_mcp::list_tools(server).await.map_err(|e| e.to_string())?;
     let mut c = hub.connectors();
     let connector = c.list.iter_mut().find(|x| x.id == id).ok_or("no such connector")?;
+    let before = serde_json::to_string(&connector.tools).unwrap_or_default();
     let changed = merge(&mut connector.tools, fresh);
-    c.save();
+    if serde_json::to_string(&connector.tools).unwrap_or_default() != before {
+        c.save();
+    }
     drop(c);
     if !changed.is_empty() {
         hub.company().note("office", format!("{id} changed {}: switched off until the owner looks again", changed.join(", ")), None);
@@ -633,16 +720,26 @@ pub(crate) trait Approver: Send + Sync {
 /// not paused, checked against their pinned definitions first.
 pub(crate) struct OfficeGateway {
     tools: Vec<Connected>,
-    /// Tool id → the server to call and the tool's name there.
-    routes: BTreeMap<String, (agora_mcp::Server, String)>,
+    /// Tool id → its connector, the server to call and the tool's name there.
+    routes: BTreeMap<String, (String, agora_mcp::Server, String)>,
     approver: Arc<dyn Approver>,
+    /// To look again before each call: the owner may have paused the connector or
+    /// turned the tool off since the errand started.
+    hub: Arc<Hub>,
+}
+
+impl Connectors {
+    /// Who connected `connector` (id, name), if anyone had joined then.
+    pub fn added_by(&self, connector: &str) -> Option<(String, String)> {
+        self.list.iter().find(|c| c.id == connector).and_then(|c| c.added_by.clone())
+    }
 }
 
 impl OfficeGateway {
     /// Re-list every connector with tools on (a changed one goes off), then gather
     /// what's usable. A connector that can't be reached just has no tools this time.
     /// `only`: the tools an agent may use (`None` = every tool that's on).
-    pub async fn prepare(hub: &Hub, approver: Arc<dyn Approver>, only: Option<&[String]>) -> Self {
+    pub async fn prepare(hub: &Arc<Hub>, approver: Arc<dyn Approver>, only: Option<&[String]>) -> Self {
         let active: Vec<String> = hub.connectors().list.iter().filter(|c| !c.paused && c.tools.iter().any(|t| t.class != Class::Off)).map(|c| c.id.clone()).collect();
         // A connector that can't be reached (or signed in to) has no tools this time.
         let mut servers = BTreeMap::new();
@@ -665,14 +762,34 @@ impl OfficeGateway {
                     continue;
                 }
                 tools.push(Connected { id: id.clone(), usage: t.usage.clone(), schema: t.schema.clone(), weight, destinations: t.destinations.clone(), allow: t.allow.clone(), def: t.def.clone() });
-                routes.insert(id, (server.clone(), t.name.clone()));
+                routes.insert(id, (connector.id.clone(), server.clone(), t.name.clone()));
             }
         }
-        Self { tools, routes, approver }
+        Self { tools, routes, approver, hub: Arc::clone(hub) }
     }
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    /// Each tool's id and weight.
+    pub fn listed(&self) -> Vec<(String, agora_core::Weight)> {
+        self.tools.iter().map(|t| (t.id.clone(), t.weight)).collect()
+    }
+
+    /// Why `tool` may no longer be called, if it may not: its connector was removed or
+    /// paused, the tool turned off or reclassed, or its definition changed.
+    fn withdrawn(&self, tool: &Connected, connector: &str, name: &str) -> Option<&'static str> {
+        let c = self.hub.connectors();
+        let Some(conn) = c.list.iter().find(|x| x.id == connector) else { return Some("its connector was removed") };
+        if conn.paused {
+            return Some("its connector was paused");
+        }
+        let Some(t) = conn.tools.iter().find(|t| t.name == name) else { return Some("the server no longer offers it") };
+        if t.class.weight() != Some(tool.weight) {
+            return Some("the owner changed or turned off this tool");
+        }
+        (t.def != tool.def).then_some("its definition changed and needs the owner's review")
     }
 }
 
@@ -683,7 +800,10 @@ impl Gateway for OfficeGateway {
 
     fn call<'a>(&'a self, tool: &'a Connected, args: &'a Value) -> BoxFuture<'a, Result<Reply, String>> {
         Box::pin(async move {
-            let (server, name) = self.routes.get(&tool.id).ok_or("that tool isn't connected any more")?;
+            let (connector, server, name) = self.routes.get(&tool.id).ok_or("that tool isn't connected any more")?;
+            if let Some(why) = self.withdrawn(tool, connector, name) {
+                return Err(format!("not run: {why}"));
+            }
             agora_mcp::call(server, name, args).await.map(|r| Reply { ok: r.ok, text: r.text }).map_err(|e| e.to_string())
         })
     }
@@ -698,6 +818,15 @@ pub(crate) type Shared = Mutex<Connectors>;
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    #[test]
+    fn a_listing_with_odd_names_or_a_name_twice_loses_those_tools() {
+        let mut odd = def("x", "fine", Some(true));
+        odd.schema = json!({ "type": "object", "properties": { "to\u{202e}": {} } });
+        let fresh = vec![def("send\nmail", "a", None), def("dup", "first", Some(true)), def("dup", "second", None), odd, def("ok_tool", "fine", Some(true))];
+        let names: Vec<String> = usable(fresh).into_iter().map(|d| d.name).collect();
+        assert_eq!(names, ["ok_tool"]);
+    }
+
     use serde_json::json;
 
     use super::*;
@@ -718,11 +847,22 @@ mod tests {
     #[test]
     fn tokens_are_sealed_and_open_only_with_the_key() {
         let a = Sealer::new(None);
-        let sealed = a.seal("ghp_secret");
+        let sealed = a.seal("ghp_secret", "github token");
         assert!(!sealed.contains("ghp_secret"));
-        assert_ne!(sealed, a.seal("ghp_secret"), "a fresh nonce each time");
-        assert_eq!(a.open(&sealed).as_deref(), Some("ghp_secret"));
-        assert_eq!(Sealer::new(None).open(&sealed), None, "another key can't open it");
+        assert_ne!(sealed, a.seal("ghp_secret", "github token"), "a fresh nonce each time");
+        assert_eq!(a.open(&sealed, "github token").as_deref(), Some("ghp_secret"));
+        assert_eq!(a.open(&sealed, "evil token"), None, "it opens only for the connector it was sealed for");
+        assert_eq!(Sealer::new(None).open(&sealed, "github token"), None, "another key can't open it");
+        // A secret sealed before secrets were bound to their connector is re-sealed at start.
+        let mut c = Connectors { list: Vec::new(), signing_in: BTreeMap::new(), sealer: a, store: None, allow_local: false };
+        let mut nonce = [0u8; 12];
+        getrandom::fill(&mut nonce).unwrap();
+        let old = c.sealer.cipher.encrypt(&Nonce::from(nonce), b"ghp_old".as_slice()).unwrap();
+        let legacy = agora_engine::signing::to_hex(&[nonce.as_slice(), &old].concat());
+        c.list.push(Connector { id: "github".into(), name: "GitHub".into(), url: "https://x".into(), token: Some(legacy), oauth: None, tools: vec![], added_ms: 0, paused: false, added_by: None });
+        assert!(c.migrate());
+        assert_eq!(c.sealer.open(c.list[0].token.as_deref().unwrap(), "github token").as_deref(), Some("ghp_old"));
+        assert!(!c.migrate(), "once");
     }
 
     #[test]

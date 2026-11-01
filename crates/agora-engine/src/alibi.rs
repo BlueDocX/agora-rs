@@ -219,6 +219,11 @@ fn about(entry: &Entry) -> Vec<String> {
 
 fn about_text(entry: &Entry) -> String {
     let a = &entry.action;
+    // A connected call is about where it went and which tool it was, never its
+    // arguments or what came back: both can carry words planted by someone else.
+    if let Some(call) = &a.call {
+        return format!("{} {} {}", a.target, entry.outcome.subject, call.tool);
+    }
     let mut text = format!("{} {}", a.target, entry.outcome.subject);
     if a.tool == Tool::CalendarCreate {
         text = format!("{text} {} {}", a.when, a.text);
@@ -226,11 +231,26 @@ fn about_text(entry: &Entry) -> String {
     if a.tool.weight() == Weight::Lookup {
         text = format!("{text} {}", entry.outcome.result);
     }
-    // A connected call is about what its arguments name (a repo, an issue's title).
-    if let Some(call) = &a.call {
-        text = format!("{text} {}", call.args);
-    }
     text
+}
+
+/// The address-like words of a claim's target (`octo/demo`, `#general`,
+/// `priya@acme.in`), trimmed of punctuation.
+fn addresses(target: &str) -> Vec<String> {
+    target
+        .split_whitespace()
+        .map(|w| w.trim_end_matches("'s").trim_end_matches("’s").trim_matches(|c: char| "()[]{}<>\"'`,;:!?".contains(c)).trim_end_matches('.').to_lowercase())
+        // A file's name ("crash.log") names no destination: only `@`, `/` and `#` do.
+        .filter(|w| crate::connected::address_like(w) && w.contains(['@', '/', '#']))
+        .collect()
+}
+
+/// Whether address `a` (from a claim) is where a connected call went (`went`, its
+/// destinations): the same, or a URL ending in it or holding it as whole path
+/// segments (`https://github.com/octo/demo/issues/12` is `octo/demo`).
+fn names_destination(a: &str, went: &[&str]) -> bool {
+    went.iter().filter(|w| w.contains(['@', '/', '#'])).any(|w| a == *w || a.ends_with(&format!("/{w}")) || a.contains(&format!("/{w}/")))
+        || went.contains(&a)
 }
 
 /// Does `claim` (its tool and, if it names one, its target) refer to `entry`?
@@ -300,6 +320,20 @@ fn refers_to(claim: &Claim, entry: &Entry) -> bool {
     let names_match = claim.polarity == Polarity::DidNot
         || claim.tool.weight() == Weight::Lookup
         || proper_names(&claim.target).iter().all(|n| haystack.iter().any(|h| same_word(n, h)));
+    // A connected call is tied to a claim by its tool (checked above) and where it
+    // went. Every address the claim names must be one it went to: "filed it in
+    // octo/prod" is not backed by an issue in octo/demo, though "octo" matches. Prose
+    // ("the Login bug") can't be checked against a repository and doesn't count
+    // against it; a person's name can against an email address, so it must match.
+    if let Some(call) = &entry.action.call {
+        if claim.polarity == Polarity::DidNot {
+            return any_word(&wanted, &haystack) || wanted.is_empty();
+        }
+        let went = format!("{} {} {}", entry.action.target, entry.outcome.subject, call.tool).to_lowercase();
+        let went: Vec<&str> = went.split([' ', ',']).filter(|w| !w.is_empty()).collect();
+        let to_people = went.iter().any(|w| w.contains('@'));
+        return addresses(&claim.target).iter().all(|a| names_destination(a, &went)) && (!to_people || names_match);
+    }
     names_match && any_word(&wanted, &haystack)
 }
 
@@ -1031,6 +1065,37 @@ mod tests {
         let red: Vec<bool> = a.checked.iter().map(|c| matches!(c.verdict, Verdict::Contradicted { .. })).collect();
         assert_eq!(red, [false, true, false, true], "{a:#?}");
         assert_eq!(a.undisclosed_acts, Vec::<u64>::new());
+    }
+
+    /// A connected call is matched on where it went, never on its arguments: a shared
+    /// word ("octo") backs nothing, while an honest report in prose, by URL or naming
+    /// a file is still backed.
+    #[test]
+    fn a_connected_claim_matches_only_where_the_call_went() {
+        let ledger = Ledger::in_memory("run-d").unwrap();
+        let action = Action {
+            tool: Tool::ConnectedAct,
+            target: "octo/demo".into(),
+            when: String::new(),
+            text: String::new(),
+            call: Some(agora_core::Call { tool: "github.create_issue".into(), def: "d".into(), args: r#"{"repo":"octo/demo","title":"Ship to octo/prod and Priya"}"#.into() }),
+        };
+        ledger.append("Scout", &action, &Outcome { ok: true, subject: "octo/demo".into(), result: "done".into() }).unwrap();
+        let entries = ledger.entries().unwrap();
+        let on = |span: &str, target: &str| Claim { connected: Some("github.create_issue".into()), ..claim(span, Tool::ConnectedAct, target, Polarity::Did, Claimed::Succeeded) };
+        let a = audit(
+            "Filed it in octo/prod. Filed it in octo/demo-evil. Filed the Login bug. Filed it at https://github.com/octo/demo/issues/12. Filed it from crash.log in octo/demo.",
+            &[
+                on("Filed it in octo/prod", "octo/prod"),
+                on("Filed it in octo/demo-evil", "octo/demo-evil"),
+                on("Filed the Login bug", "the Login bug"),
+                on("Filed it at https://github.com/octo/demo/issues/12", "https://github.com/octo/demo/issues/12"),
+                on("Filed it from crash.log in octo/demo", "crash.log in octo/demo"),
+            ],
+            &entries,
+        );
+        let red: Vec<bool> = a.checked.iter().map(|c| matches!(c.verdict, Verdict::Contradicted { .. })).collect();
+        assert_eq!(red, [true, true, false, false, false], "{a:#?}");
     }
 
     /// The security review's false green: one shared word ("Shah") backed a claim

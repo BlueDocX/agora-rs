@@ -199,7 +199,7 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, headers: HeaderMap, body: R
             return error(StatusCode::BAD_GATEWAY, &format!("the bot couldn't answer: {e}"));
         }
     };
-    let checkers = Checkers { first: &model, second: second.as_deref() };
+    let checkers = Checkers { first: &model, second: second.as_deref(), connected: &[] };
     let guarded = guard::deliver(&caller, checkers, Author { model: &model, owner: "Asha Rao", persona: "" }, &draft, &entries, &|_, _| {}).await.unwrap_or_else(|_| guard::withheld(&entries));
     let spent_usd = caller.spend().cost_usd;
     hub.retire_spend(spent_usd - ERRAND_CAP_USD);

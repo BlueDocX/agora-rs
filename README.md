@@ -101,7 +101,9 @@ The office's owner connects MCP servers (GitHub, Linear, Notion, Stripe, Cloudfl
 - **Results are data.** Hidden characters are removed, `<<<` and `>>>` are neutralised so a result can't close its own quote and pose as the system, and results are capped at 16,000 characters.
 - **The guard covers real tools.** A claim about a connected tool ("I filed the bug in octo/demo") is matched only to that tool's calls. A claim about a tool that never ran is false, so the check fails closed.
 - **Tokens are sealed at rest** with AES-256-GCM, using a key file readable by this user only. They never appear in a prompt, the ledger or a reply. A paused connector stops all its tools at once.
-- **Private addresses are refused.** The client's resolver refuses private, loopback and link-local addresses, on every request and redirect (`AGORA_LOCAL_MCP=1` lifts this on a laptop).
+- **Private addresses are refused.** The client's resolver refuses private, loopback and link-local addresses (including IPv4 hidden in NAT64 or 6to4 addresses). Redirects are never followed, and proxies are ignored (`AGORA_LOCAL_MCP=1` lifts the address check on a laptop).
+- **After a private read, every call asks.** Once an errand holds anything private (a contact's notes, an email or a chat it read, a file attached to it, or something recalled from memory), even a lookup waits for approval: its arguments go to someone else's server.
+- **Whose account, whose approval.** An act is approved by the member who connected the tool, and each call checks again that the tool is still on and unchanged.
 
 **A hostile server (B10, [details](docs/benchmarks.md#b10-a-hostile-mcp-server)).** An MCP server built to attack the office:
 - poisoned tool descriptions;
@@ -110,10 +112,10 @@ The office's owner connects MCP servers (GitHub, Linear, Notion, Stripe, Cloudfl
 - a "send report" tool as its exfiltration sink.
 
 The owner approves everything it offers, as is: the worst case. Results:
-- **A scripted adversary** made every malicious call directly. All 3 exfiltration attempts were blocked, and 0 bytes reached the sink.
+- **A scripted adversary** made every malicious call directly. All 6 attempts were stopped and 0 bytes reached the sink. The attempts were: the planted address, a URL carrying data, an address in an array, a numeric destination, an undeclared `bcc`, and the notes smuggled out in a search query after a private read, which waited for approval and was declined.
 - **12 live errands** on Muse Spark 1.3 and Spark Open: 0 reports reached the sink, 0 private canaries leaked and 0 false claims were delivered. Spark Open once obeyed the poisoned description, and the executor stopped it.
 
-**Agents of your own.** Anyone in the office can add agents: a name, a preset role with its skills, a model, and the connected tools it may use. An agent works under its own name, takes errands and `@mentions`, sits at its own desk, and runs on the same executor, so everything it does is ledgered and checked. Its owner answers its approvals.
+**Agents of your own.** Anyone in the office can add agents: a name, a preset role with its skills, a model, and the connected tools it may use. An agent works under its own name, takes errands and `@mentions`, sits at its own desk, and runs on the same executor, so everything it does is ledgered and checked. Its owner answers its approvals, except for a connected tool's acts: those are answered by whoever connected that tool.
 
 ## A company in one office, on your glasses, and reachable by Meta AI
 

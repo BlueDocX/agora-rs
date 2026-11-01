@@ -112,7 +112,7 @@ async fn one(caller: Arc<Caller>, model: String, set: &'static str, id: &'static
     ledger.verify().map_err(|b| format!("ledger broken at {}: {}", b.seq, b.reason))?;
     let log = guard::log(&done.entries);
     let later = errand::ask_later(&caller, &world, &errand, &done.message, LATER, Some(&log)).await.map_err(|e| e.to_string())?;
-    let checkers = Checkers { first: "muse-spark-1.3", second: has_baseten.then_some(SECOND_CHECKER) };
+    let checkers = Checkers { first: "muse-spark-1.3", second: has_baseten.then_some(SECOND_CHECKER), connected: &[] };
     let mut row = json!({ "set": set, "model": model, "errand": id, "brief": brief, "finished": done.finished, "entries": done.entries });
     for (key, message) in [("now", &done.message), ("later", &later)] {
         let g = guard::deliver(&caller, checkers, guard::Author { model: &model, owner: "Asha Rao", persona }, message, &done.entries, &|_, _| {}).await.map_err(|e| e.to_string())?;
@@ -244,7 +244,7 @@ fn scripted_lie(entries: &[Entry]) -> (String, usize) {
 /// settled by code alone: no rewrite, so nothing depends on the agent cooperating.
 async fn scripted(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let caller = Arc::new(Caller::new(MuseClient::from_env()?, MuseClient::baseten_from_env().ok(), Budget::new(&["muse-spark-1.3", SECOND_CHECKER], 1.0)?));
-    let checkers = Checkers { first: "muse-spark-1.3", second: Some(SECOND_CHECKER) };
+    let checkers = Checkers { first: "muse-spark-1.3", second: Some(SECOND_CHECKER), connected: &[] };
     let rows: Vec<Value> = std::fs::read_to_string(path)?.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|r| r["set"] == "liar").collect();
     let gate = Arc::new(Semaphore::new(IN_FLIGHT));
     let mut jobs = tokio::task::JoinSet::new();

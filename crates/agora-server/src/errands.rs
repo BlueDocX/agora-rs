@@ -210,9 +210,11 @@ pub(crate) struct ErrandRoom {
     /// once it has).
     files: Mutex<Option<crate::attach::Attached>>,
     /// Calls to connected tools waiting for the person, by approval id.
-    approvals: Mutex<BTreeMap<String, tokio::sync::oneshot::Sender<(bool, String)>>>,
+    approvals: Mutex<BTreeMap<String, Waiting>>,
     /// An added agent's connected tools (`None` = a person's bot: every tool on).
     only_tools: Option<Vec<String>>,
+    /// The connected tools it had (id and weight), for the guard's parsers.
+    available: Mutex<Vec<(String, agora_core::Weight)>>,
     /// When it was asked for.
     at_ms: u64,
     /// The office day it ran on.
@@ -294,18 +296,22 @@ impl ErrandRoom {
         self.people.bot_of.as_ref().map(|(_, name, _)| name.clone()).or_else(|| self.people.asked_by.as_ref().map(|(_, name)| name.clone()))
     }
 
-    fn may_approve(&self, me: Option<&Member>) -> bool {
+    /// `empty_office`: nobody has joined, so anyone who may use it may answer an
+    /// errand from before anyone joined (once someone has, nobody may).
+    fn may_approve(&self, me: Option<&Member>, empty_office: bool) -> bool {
         match (&self.people.bot_of, &self.people.asked_by) {
             (Some((owner, ..)), _) => me.is_some_and(|m| m.id == *owner),
             (None, Some((asker, _))) => me.is_some_and(|m| m.id == *asker),
-            (None, None) => true,
+            (None, None) => empty_office,
         }
     }
 
-    fn may_act(&self, me: Option<&Member>) -> bool {
+    /// `empty_office`: as for [`Self::may_approve`]. An errand from before anyone joined
+    /// is anyone's while nobody has; after that, the office owner's.
+    fn may_act(&self, me: Option<&Member>, empty_office: bool) -> bool {
         let ids = [self.people.asked_by.as_ref().map(|(id, _)| id), self.people.bot_of.as_ref().map(|(id, ..)| id)];
-        if ids.iter().all(Option::is_none) {
-            return true; // an errand from before anyone joined
+        if empty_office && ids.iter().all(Option::is_none) {
+            return true;
         }
         me.is_some_and(|m| m.role == Role::Owner || ids.iter().flatten().any(|id| **id == m.id))
     }
@@ -416,7 +422,8 @@ async fn deliver(hub: &Hub, room: &ErrandRoom, turn: usize, question: Option<Str
         Err(e) => return room.push(ErrandEvent::Failed { turn, reason: e.to_string() }),
     };
     let second = hub.second_checker();
-    let checkers = Checkers { first: &hub.config.model, second: second.as_deref() };
+    let available = room.available.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let checkers = Checkers { first: &hub.config.model, second: second.as_deref(), connected: &available };
     let on_draft = |round: usize, check: &Checked| room.push(ErrandEvent::Draft { turn, round, check: check.clone() });
     let owner = OWNER;
     let guarded = if room.guard {
@@ -599,6 +606,10 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
     if brief.is_empty() || brief.chars().count() > MAX_ERRAND_CHARS {
         return refuse(StatusCode::BAD_REQUEST, "the errand must be 1 to 500 characters");
     }
+    // Once people have joined, an errand has someone answerable for it.
+    if me.is_none() && !hub.company().members_view().is_empty() {
+        return refuse(StatusCode::FORBIDDEN, "join the office first: an errand needs someone answerable for it");
+    }
     let (owner, agent) = whose(hub, me.as_ref(), body.area.as_deref(), body.bot, body.agent_bot.as_ref(), body.agent)?;
     let agent_bot = body.agent_bot;
     if agent.is_empty() || agent.chars().count() > 40 || agent.chars().any(char::is_control) {
@@ -644,6 +655,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         poisoned: body.poisoned,
         files: Mutex::new(Some(files)),
         approvals: Mutex::default(),
+        available: Mutex::default(),
         only_tools: agent_bot.map(|a| a.tools),
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
@@ -713,8 +725,15 @@ async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
         copy.poison();
         *room.world.lock().await = copy;
     }
+    // The office's real tools, checked against what the owner approved (before taking
+    // the world: listing them waits on the network).
+    let tools = OfficeGateway::prepare(&hub, Arc::new(RoomApprover(Arc::clone(&room), Arc::clone(&hub))), room.only_tools.as_deref()).await;
+    *room.available.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = tools.listed();
     let done = {
         // The office's world is shared: an errand that may change it waits its turn.
+        // (A call waiting for approval holds it, up to APPROVAL_WAIT: the next errand
+        // that may change the office waits too, rather than act on a world about to
+        // change under it.)
         let mut world = if let Ok(world) = room.world.try_lock() {
             world
         } else {
@@ -729,8 +748,6 @@ async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
             }
         }
         let on_step = |entry: &Entry| room.push(ErrandEvent::Step { entry: entry.clone() });
-        // The office's real tools, checked against what the owner approved.
-        let tools = OfficeGateway::prepare(&hub, Arc::new(RoomApprover(Arc::clone(&room))), room.only_tools.as_deref()).await;
         let gateway = (!tools.is_empty()).then_some(&tools as &dyn Gateway);
         let errand = Errand { agent: &room.agent, model: &room.model, brief: &room.brief, persona: &room.persona, memory: &recalled, attachments: &files.media, documents: &files.text, gateway };
         let done = errand::run(&room.caller, &room.ledger, &mut world, &errand, &on_step).await;
@@ -784,7 +801,7 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
         return error(StatusCode::BAD_REQUEST, "the question must be 1 to 300 characters");
     }
     let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
-    if !room.may_act(hub.member(&headers).as_ref()) {
+    if !room.may_act(hub.member(&headers).as_ref(), hub.company().members_view().is_empty()) {
         return error(StatusCode::FORBIDDEN, "only whoever asked for this errand, its bot's owner, or the office owner can ask about it");
     }
     // A question may spend what is left of the errand's own cap: keep that within the
@@ -882,8 +899,11 @@ pub(crate) struct Forget {
 /// returned and what it was called on, long enough not to match by chance.
 fn needles(entry: &Entry) -> Vec<String> {
     let a = &entry.action;
+    // A connected call's arguments: each text value in them.
+    let args: Vec<String> = a.call.as_ref().and_then(|c| serde_json::from_str::<Value>(&c.args).ok()).map(|v| strings(&v).lines().map(str::to_string).collect()).unwrap_or_default();
     let mut found: Vec<String> = [entry.outcome.result.as_str(), a.text.as_str()]
-        .iter()
+        .into_iter()
+        .chain(args.iter().map(String::as_str))
         .flat_map(|t| t.split(['\n', '.', ';']))
         .chain([entry.outcome.subject.as_str()])
         .map(str::trim)
@@ -904,7 +924,7 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         Err(e) => return error(StatusCode::BAD_REQUEST, &format!("that isn't a valid request: {}", e.body_text())),
     };
     let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
-    if !room.may_act(hub.member(&headers).as_ref()) {
+    if !room.may_act(hub.member(&headers).as_ref(), hub.company().members_view().is_empty()) {
         return error(StatusCode::FORBIDDEN, "only whoever asked for this errand, its bot's owner, or the office owner can forget from it");
     }
     {
@@ -975,7 +995,7 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
                     }
                 }
                 ErrandEvent::Draft { check, .. } => *check = withdrawn_check(),
-                _ => {}
+                other => scrub_approval(other, &before),
             }
         }
         if inner.report.is_some() {
@@ -1042,6 +1062,16 @@ async fn scrub_recall(hub: &Hub, errand: &str, seq: u64) -> Vec<(String, String)
         }
     }
     all
+}
+
+/// The approval card for a forgotten call showed its arguments: they go too.
+fn scrub_approval(event: &mut ErrandEvent, forgotten: &Entry) {
+    if let ErrandEvent::Approval { tool, args, destinations, .. } = event
+        && forgotten.action.call.as_ref().is_some_and(|c| c.tool == *tool && serde_json::from_str::<Value>(&c.args).ok().as_ref() == Some(&*args))
+    {
+        *args = Value::String(agora_engine::ledger::FORGOTTEN.into());
+        destinations.clear();
+    }
 }
 
 /// Search what the office still holds about an errand for `wanted`: its stream, the
@@ -1264,6 +1294,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             // A restored errand's work is done: its files were never kept.
             files: Mutex::new(None),
             approvals: Mutex::default(),
+        available: Mutex::default(),
             only_tools: None,
             at_ms: meta.at_ms,
             day: std::sync::atomic::AtomicUsize::new(meta.day),
@@ -1288,24 +1319,40 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
 /// How long a call waits for the person before it counts as declined.
 const APPROVAL_WAIT: std::time::Duration = std::time::Duration::from_mins(10);
 
+/// A call waiting for an answer, and who may give it.
+pub(crate) struct Waiting {
+    tx: tokio::sync::oneshot::Sender<(bool, String)>,
+    /// The member who must answer (the connector's owner: it's their account acting);
+    /// `None`: whoever may answer for the errand.
+    approver: Option<String>,
+}
+
 /// Puts a connected tool's call in front of the person through the errand's stream.
-struct RoomApprover(Arc<ErrandRoom>);
+struct RoomApprover(Arc<ErrandRoom>, Arc<Hub>);
 
 impl Approver for RoomApprover {
     fn ask<'a>(&'a self, ask: connected::Ask<'a>) -> BoxFuture<'a, Decision> {
         Box::pin(async move {
             let room = &self.0;
+            // The connector's owner answers: the call acts as them.
+            let connector = ask.tool.id.split_once('.').map_or(ask.tool.id.as_str(), |(c, _)| c);
+            let owner = self.1.connectors().added_by(connector);
             let id = agora_engine::random_hex(6);
             let (tx, rx) = tokio::sync::oneshot::channel();
-            room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), tx);
-            room.push(ErrandEvent::Approval { id: id.clone(), tool: ask.tool.id.clone(), args: ask.args.clone(), destinations: ask.destinations.to_vec(), approver: room.approver() });
+            let approver_name = owner.as_ref().map(|(_, name)| name.clone()).or_else(|| room.approver());
+            room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), Waiting { tx, approver: owner.map(|(id, _)| id) });
+            room.push(ErrandEvent::Approval { id: id.clone(), tool: ask.tool.id.clone(), args: ask.args.clone(), destinations: ask.destinations.to_vec(), approver: approver_name });
             let answer = tokio::time::timeout(APPROVAL_WAIT, rx).await;
-            room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id);
+            // Whoever takes the waiting entry decides: an answer that lost the race to
+            // the timeout is refused, so the page never shows an approval that didn't run.
+            let timed_out = room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id).is_some();
             match answer {
                 Ok(Ok((true, _))) => Decision::Approved,
                 Ok(Ok((false, by))) => Decision::Declined(format!("{by} said no")),
                 _ => {
-                    room.push(ErrandEvent::Decided { id, approved: false, by: "nobody (no answer in 10 minutes)".into() });
+                    if timed_out {
+                        room.push(ErrandEvent::Decided { id, approved: false, by: "nobody (no answer in 10 minutes)".into() });
+                    }
                     Decision::Declined("no answer in 10 minutes".into())
                 }
             }
@@ -1318,8 +1365,9 @@ pub(crate) struct Answer {
     approve: bool,
 }
 
-/// `POST /api/errands/{id}/approvals/{approval} {approve}`: the bot's owner (or whoever
-/// asked, if the bot is no one's) lets a waiting call go ahead, or stops it.
+/// `POST /api/errands/{id}/approvals/{approval} {approve}`: the member who connected
+/// the tool (else the bot's owner, else whoever asked) lets a waiting call go ahead,
+/// or stops it.
 pub(crate) async fn decide(State(hub): State<Arc<Hub>>, Path((id, approval)): Path<(String, String)>, headers: HeaderMap, body: Result<Json<Answer>, JsonRejection>) -> Response {
     if !authorized(&hub, &headers) {
         return unauthorized();
@@ -1327,14 +1375,31 @@ pub(crate) async fn decide(State(hub): State<Arc<Hub>>, Path((id, approval)): Pa
     let Ok(Json(Answer { approve })) = body else { return error(StatusCode::BAD_REQUEST, "send {\"approve\": true or false}") };
     let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
     let me = hub.member(&headers);
-    if !room.may_approve(me.as_ref()) {
-        return error(StatusCode::FORBIDDEN, &format!("only {} can answer this", room.approver().unwrap_or_else(|| "the bot's owner".into())));
-    }
-    let Some(tx) = room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&approval) else {
+    let members = hub.company().members_view();
+    let empty_office = members.is_empty();
+    let mut waiting = room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(w) = waiting.get(&approval) else {
         return error(StatusCode::NOT_FOUND, "nothing is waiting for that answer (it was answered, or timed out)");
     };
+    let allowed = match &w.approver {
+        // If whoever connected the tool has left, the office's owner answers for it.
+        Some(owner) => me.as_ref().is_some_and(|m| m.id == *owner || (m.role == Role::Owner && !members.iter().any(|x| x.id == *owner))),
+        None => room.may_approve(me.as_ref(), empty_office),
+    };
+    if !allowed {
+        let who = if w.approver.is_some() { None } else { room.approver() };
+        drop(waiting);
+        return error(StatusCode::FORBIDDEN, &format!("only {} can answer this", who.unwrap_or_else(|| "the member who connected this tool".into())));
+    }
+    let Some(w) = waiting.remove(&approval) else { return error(StatusCode::NOT_FOUND, "nothing is waiting for that answer") };
+    drop(waiting);
     let by = me.map_or_else(|| "the person".to_string(), |m| m.name);
-    room.push(ErrandEvent::Decided { id: approval, approved: approve, by: by.clone() });
-    let _ = tx.send((approve, by));
+    if w.tx.send((approve, by.clone())).is_err() {
+        // The wait ran out between taking the entry and answering: the call was
+        // declined, and the card must say so (the timeout found nothing to close).
+        room.push(ErrandEvent::Decided { id: approval, approved: false, by: "nobody (no answer in 10 minutes)".into() });
+        return error(StatusCode::GONE, "that call stopped waiting (it timed out)");
+    }
+    room.push(ErrandEvent::Decided { id: approval, approved: approve, by });
     StatusCode::NO_CONTENT.into_response()
 }

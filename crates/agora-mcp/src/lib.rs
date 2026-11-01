@@ -31,14 +31,27 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// The most of a reply kept (the executor caps what the agent sees further).
 const MAX_REPLY_CHARS: usize = 64_000;
 
-/// A server to reach.
-#[derive(Debug, Clone)]
+/// A server to reach. (`Debug` never shows the token.)
+#[derive(Clone)]
 pub struct Server {
     pub url: String,
     /// A bearer token (sent as `Authorization: Bearer …`), if the server needs one.
     pub token: Option<String>,
     /// Allow private, loopback and link-local addresses (a laptop office only).
     pub allow_local: bool,
+}
+
+impl std::fmt::Debug for Server {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Server").field("url", &redacted(&self.url)).field("token", &self.token.as_ref().map(|_| "(sealed)")).field("allow_local", &self.allow_local).finish()
+    }
+}
+
+/// A URL as it may be shown or logged: no user info, no query (some servers put a
+/// secret there).
+#[must_use]
+pub fn redacted(url: &str) -> String {
+    reqwest::Url::parse(url).map_or_else(|_| "(not a URL)".into(), |u| format!("{}://{}{}{}", u.scheme(), u.host_str().unwrap_or_default(), u.port().map(|p| format!(":{p}")).unwrap_or_default(), u.path()))
 }
 
 /// A tool as the server describes it.
@@ -89,14 +102,25 @@ impl std::error::Error for Error {}
 pub fn is_private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast() || v4.is_documentation()
+            let [a, b, c, _] = v4.octets();
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast() || v4.is_documentation() || v4.is_multicast()
                 || (a == 100 && (64..128).contains(&b)) // carrier-grade NAT
                 || a == 0
+                || (a == 192 && b == 0 && c == 0) // IETF protocol assignments
+                || (a == 198 && (18..20).contains(&b)) // benchmarking
+                || a >= 240 // reserved
         }
         IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            v6.is_loopback() || v6.is_unspecified() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80 || v6.to_ipv4_mapped().is_some_and(|v4| is_private(IpAddr::V4(v4)))
+            let s = v6.segments();
+            let embedded = |hi: u16, lo: u16| is_private(IpAddr::V4(std::net::Ipv4Addr::from((u32::from(hi) << 16) | u32::from(lo))));
+            v6.is_loopback() || v6.is_unspecified() || v6.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00 // unique local
+                || (s[0] & 0xffc0) == 0xfe80 // link-local
+                || (s[0] & 0xffc0) == 0xfec0 // site-local
+                || v6.to_ipv4_mapped().is_some_and(|v4| is_private(IpAddr::V4(v4)))
+                || (s[0..6] == [0; 6] && embedded(s[6], s[7])) // IPv4-compatible
+                || (s[0] == 0x64 && s[1] == 0xff9b && embedded(s[6], s[7])) // NAT64
+                || (s[0] == 0x2002 && embedded(s[1], s[2])) // 6to4
         }
     }
 }
@@ -123,6 +147,9 @@ impl Resolve for PublicOnly {
 /// private address written out.
 fn checked(server: &Server) -> Result<reqwest::Url, Error> {
     let url = reqwest::Url::parse(server.url.trim()).map_err(|e| Error::Refused(format!("not a URL ({e})")))?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(Error::Refused("put credentials in the token, not the URL".into()));
+    }
     let host = url.host_str().ok_or_else(|| Error::Refused("the URL has no host".into()))?;
     let literal: Option<IpAddr> = host.trim_start_matches('[').trim_end_matches(']').parse().ok();
     let local = literal.is_some_and(is_private) || host.eq_ignore_ascii_case("localhost");
@@ -138,7 +165,9 @@ fn checked(server: &Server) -> Result<reqwest::Url, Error> {
 
 async fn connect(server: &Server) -> Result<RunningService<RoleClient, ()>, Error> {
     let url = checked(server)?;
-    let mut http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).redirect(reqwest::redirect::Policy::limited(3));
+    // No redirects (one could point at a private address, or replay the body to
+    // another host) and no proxy (it would resolve names where the resolver can't see).
+    let mut http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).redirect(reqwest::redirect::Policy::none()).no_proxy();
     if !server.allow_local {
         http = http.dns_resolver(Arc::new(PublicOnly));
     }
@@ -152,7 +181,26 @@ async fn connect(server: &Server) -> Result<RunningService<RoleClient, ()>, Erro
     tokio::time::timeout(LIST_TIMEOUT, ().serve_with_lifecycle(transport, lifecycle))
         .await
         .map_err(|_| Error::Unreachable("no answer in time".into()))?
-        .map_err(|e| Error::Unreachable(e.to_string()))
+        .map_err(|e| Error::Unreachable(scrub(&e.to_string(), url.as_str())))
+}
+
+/// An error's text without the server's URL (it may carry a secret), as given or as
+/// a library prints it (normalised), and without the query of any other URL in it.
+fn scrub(text: &str, url: &str) -> String {
+    let mut out = text.to_string();
+    let normalised = reqwest::Url::parse(url.trim()).map(|u| u.to_string()).unwrap_or_default();
+    for u in [url, url.trim(), normalised.as_str()] {
+        if !u.is_empty() {
+            out = out.replace(u, "the server").replace(u.trim_end_matches('/'), "the server");
+        }
+    }
+    out.split(' ')
+        .map(|w| match w.find("://").and_then(|i| w[i..].find(['?', '#']).map(|j| i + j)) {
+            Some(q) => format!("{}?…", &w[..q]),
+            None => w.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// SHA-256 of a tool's definition, over canonical JSON (keys sorted).
@@ -174,7 +222,7 @@ pub async fn list_tools(server: &Server) -> Result<Vec<ToolDef>, Error> {
     let client = connect(server).await?;
     let listed = tokio::time::timeout(LIST_TIMEOUT, client.list_all_tools()).await;
     let _ = client.cancel().await;
-    let tools = listed.map_err(|_| Error::Unreachable("no tool list in time".into()))?.map_err(|e| Error::Protocol(e.to_string()))?;
+    let tools = listed.map_err(|_| Error::Unreachable("no tool list in time".into()))?.map_err(|e| Error::Protocol(scrub(&e.to_string(), &server.url)))?;
     Ok(tools
         .into_iter()
         .map(|t| {
@@ -210,7 +258,7 @@ pub async fn call(server: &Server, tool: &str, args: &Value) -> Result<Reply, Er
     let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
     let answered = tokio::time::timeout(CALL_TIMEOUT, client.call_tool(params)).await;
     let _ = client.cancel().await;
-    let result = answered.map_err(|_| Error::Unreachable("the call didn't finish in time".into()))?.map_err(|e| Error::Protocol(e.to_string()))?;
+    let result = answered.map_err(|_| Error::Unreachable("the call didn't finish in time".into()))?.map_err(|e| Error::Protocol(scrub(&e.to_string(), &server.url)))?;
     let mut text: Vec<String> = result
         .content
         .iter()
@@ -235,7 +283,7 @@ mod tests {
 
     #[test]
     fn private_and_plain_http_addresses_are_refused() {
-        for url in ["http://example.com/mcp", "https://10.0.0.5/mcp", "https://169.254.169.254/latest", "https://[::1]/mcp", "https://localhost/mcp", "ftp://x.io", "not a url"] {
+        for url in ["http://example.com/mcp", "https://10.0.0.5/mcp", "https://169.254.169.254/latest", "https://[::1]/mcp", "https://localhost/mcp", "ftp://x.io", "not a url", "https://user:pass@example.com/mcp", "https://2130706433/mcp"] {
             assert!(matches!(checked(&server(url, false)), Err(Error::Refused(_))), "{url}");
         }
         assert!(checked(&server("https://api.githubcopilot.com/mcp/", false)).is_ok());
@@ -245,7 +293,10 @@ mod tests {
 
     #[test]
     fn private_ranges_are_private() {
-        for ip in ["10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1"] {
+        for ip in [
+            "10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1",
+            "64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::1", "::a9fe:a9fe", "fec0::1", "ff02::1", "192.0.0.8", "198.18.0.1", "224.0.0.1", "240.0.0.1",
+        ] {
             assert!(is_private(ip.parse().unwrap()), "{ip}");
         }
         for ip in ["8.8.8.8", "140.82.112.3", "2606:4700::1111"] {
