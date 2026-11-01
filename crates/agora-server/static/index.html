@@ -11,7 +11,7 @@
   /* Warm editorial: bone paper, warm ink, butter yellow. */
   :root {
     color-scheme: light;
-    --bg: #efebe0; --paper: #fcfaf4; --ink: #17150f; --muted: #857d66; --soft: #b3aa8f; --line: #e4ddca;
+    --bg: #efebe0; --paper: #fcfaf4; --ink: #17150f; --muted: #6b6450; --soft: #7a735e; --floor: #f5eedf; --ok-ink: #17703c; --line: #e4ddca;
     --stone: #f6f2e9; --butter: #f2cc46; --butter-deep: #d9af1b;
     --accent: #4285f4; --ok: #1f9d55; --warn: #d9af1b; --bad: #e5483b; --idle: #b3aa8f; --reviewer: #6366c9;
     --sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -25,11 +25,11 @@
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-thumb { background: rgba(23,21,15,.12); border-radius: 99px; }
 
-  .label { font: 700 10.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .label { font: 700 13px/1.2 var(--sans); color: var(--muted); }
   .mono { font-family: var(--mono); }
   .pill { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; border: 0; padding: 10px 18px;
-          font: 800 11px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
-  .pill.butter { background: var(--butter); color: var(--ink); box-shadow: 0 1px 0 var(--butter-deep); }
+          font: 700 13px/1 var(--sans); white-space: nowrap; }
+  .pill.butter { background: var(--butter); color: var(--ink); }
   .pill.butter:hover { background: #f7dc6f; }
   .pill.ink { background: var(--ink); color: var(--paper); }
   .pill.ghost { background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
@@ -41,7 +41,11 @@
   .logo { width: 34px; height: 34px; border-radius: 50%; background: var(--ink); display: grid; place-items: center; }
   .logo::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--butter); }
   header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: .01em; }
-  .ver { font: 500 11px var(--mono); color: var(--muted); }
+  .pitch { margin: 0; max-width: 46ch; font: 500 13px/1.35 var(--sans); color: var(--ink); }
+  #mine { background: var(--stone); border-radius: 16px; padding: 14px 16px; margin: 4px 0 6px; font-size: 14px; }
+  #mine h3 { margin: 0 0 4px; font-size: 16px; } #mine p { margin: 0 0 8px; color: var(--muted); }
+  #mine .wait { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0 0; font-weight: 600; }
+  .replay-note { position: sticky; top: 0; z-index: 2; margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--stone); font: 500 13px/1.45 var(--sans); color: var(--ink); list-style: none; }
   header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .key { display: flex; align-items: center; gap: 6px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 0 12px; color: var(--muted); }
   .key input { border: 0; background: transparent; font: 500 12px var(--mono); color: var(--ink); width: 150px; padding: 9px 0; outline: none; }
@@ -57,12 +61,12 @@
   .logs > .label { padding: 0 8px 14px; }
   .tabs { display: flex; background: var(--stone); border-radius: 999px; padding: 4px; gap: 2px; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
-  .tabs button { flex: 1 0 auto; padding-left: 6px !important; padding-right: 6px !important; }
-  .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 800 10.5px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--zinc, #55503f); }
+  .tabs button { flex: 1 0 auto; padding-left: 10px !important; padding-right: 10px !important; }
+  .tabs button { border: 0; background: transparent; border-radius: 999px; padding: 9px 0; font: 700 12.5px/1 var(--sans); color: var(--zinc, #55503f); }
   .tabs button.on { background: var(--ink); color: var(--paper); }
   .feed { flex: 1; overflow: auto; margin: 12px 0 0; padding: 0 6px; list-style: none; }
   .feed li { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
-  .tabs button { position: relative; letter-spacing: .03em !important; font-size: 9.5px !important; }
+  .tabs button { position: relative; }
   .tabs button.unread::after { content: ""; position: absolute; top: 5px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
   /* Chat */
   .feed.chat li { border: 0; padding: 6px 2px; align-items: flex-start; }
@@ -99,7 +103,7 @@
   .ab-step.fail .tool { color: var(--bad); }
   .ab-step .ok { color: var(--ok); font-weight: 700; } .ab-step.fail .ok { color: var(--bad); }
   .ab-step .res { grid-column: 2 / 4; color: #6b6450; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ab-step .h { grid-column: 2 / 4; color: var(--soft); font-size: 10px; }
+  .ab-step .h { grid-column: 2 / 4; color: var(--soft); font-size: 11px; }
   .ab-step.flag { background: #f1ecfb; border-radius: 8px; }
   .ab-q { text-align: right; } .ab-q span { display: inline-block; background: #fbf4d5; border: 1px solid #f2e09b; border-radius: 16px 4px 16px 16px; padding: 6px 11px; font-size: 13px; }
   .ab-said .bubble { background: var(--stone); border: 1px solid var(--line); border-radius: 4px 16px 16px 16px; padding: 8px 11px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
@@ -124,7 +128,7 @@
   .lb-bar { grid-column: 1 / 3; height: 6px; border-radius: 3px; background: #dff3e6; overflow: hidden; }
   .lb-bar i { display: block; height: 100%; background: var(--bad); }
   .lb-guard { grid-column: 1 / 3; font: 700 11px var(--sans); color: #17663a; background: #eef7f1; border-radius: 8px; padding: 4px 8px; margin-top: 3px; }
-  .ab-step .forget { grid-column: 3; grid-row: 2 / 4; align-self: center; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 2px 8px; font: 700 10px var(--sans); color: #4b3a8a; cursor: pointer; }
+  .ab-step .forget { grid-column: 3; grid-row: 2 / 4; align-self: center; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 2px 8px; font: 700 11px var(--sans); color: #4b3a8a; cursor: pointer; }
   .ab-step .forget:hover { background: #f1ecfb; }
   .ab-step.gone .tool, .ab-step.gone .res { color: var(--soft); text-decoration: line-through; }
   .ab-forgot { font: 11px/1.5 var(--mono); background: #17150f; color: #fcfaf4; border-radius: 12px; padding: 9px 11px; }
@@ -155,13 +159,13 @@
   .mic.rec { background: var(--bad); border-color: var(--bad); color: #fff; animation: rec 1.2s ease-in-out infinite; }
   .mic:disabled { opacity: .5; cursor: progress; }
   @keyframes rec { 50% { box-shadow: 0 0 0 6px rgba(229,72,59,.25); } }
-  .poison { display: inline-block; font: 800 9px/1.4 var(--sans); letter-spacing: .08em; text-transform: uppercase; background: #4b2a7a; color: #fff; border-radius: 999px; padding: 2px 8px; margin-right: 6px; vertical-align: 1px; }
+  .poison { display: inline-block; font: 700 11px/1.4 var(--sans); background: #4b2a7a; color: #fff; border-radius: 999px; padding: 2px 8px; margin-right: 6px; vertical-align: 1px; }
   /* ---- The company: people in the office and their bots ---- */
   .folks { display: flex; flex-direction: column; gap: 6px; }
   .person { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 10px; align-items: center; background: var(--stone); border: 1px solid var(--line); border-radius: 14px; padding: 8px 11px; font-size: 12.5px; }
   .person .dot { width: 10px; height: 10px; border-radius: 50%; }
   .person .who b { font-size: 13px; } .person .who small { display: block; color: var(--muted); font-size: 11px; }
-  .person .role { font: 800 9.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; border-radius: 999px; padding: 4px 8px; background: var(--paper); border: 1px solid var(--line); }
+  .person .role { font: 700 12px var(--sans); border-radius: 999px; padding: 4px 8px; background: var(--paper); border: 1px solid var(--line); }
   .person .role.owner { background: #fbf4d5; border-color: #f2e09b; } .person .role.lead { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; }
   .person .acts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; }
   .person .acts button { white-space: nowrap; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 3px 9px; font: 700 10.5px var(--sans); cursor: pointer; }
@@ -189,7 +193,7 @@
   .kit span, .kit button { font: 700 10.5px var(--sans); border-radius: 999px; padding: 3px 9px; border: 1px solid var(--line); background: var(--paper); color: #55503f; }
   .kit button { cursor: pointer; } .kit button.on, .kit span { background: #e7f8ef; border-color: #bfe9d1; color: #17663a; }
   .person select { grid-column: 2 / 4; border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; font: 600 11px var(--sans); background: var(--paper); }
-  .empty-note { color: var(--muted); font: 800 10.5px var(--sans); letter-spacing: .1em; text-transform: uppercase; text-align: center; padding: 70px 10px; border: 0 !important; display: block !important; }
+  .empty-note { color: var(--ink); font: 500 14px/1.45 var(--sans); text-align: left; padding: 8px 4px 14px; border: 0 !important; display: block !important; }
   .empty-note.short { padding: 22px 10px; }
 
   /* ---- Verdict: the open errand's outcome, pinned at the top ---- */
@@ -200,7 +204,7 @@
   .verdict .big { display: block; font: 800 16px/1.3 var(--sans); color: var(--ink); }
   .verdict .facts { display: block; font: 600 11.5px/1.5 var(--mono); margin-top: 4px; }
   .verdict .why { display: block; font-size: 12px; margin-top: 4px; color: #55503f; }
-  .verdict a { display: inline-block; margin-top: 8px; font: 800 10.5px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink);
+  .verdict a { display: inline-block; margin-top: 8px; font: 700 12px var(--sans); color: var(--ink);
                background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; text-decoration: none; }
   .verdict a:hover { background: var(--butter); }
   .feed details > summary { cursor: pointer; font: 700 11.5px var(--sans); color: #55503f; padding: 6px 4px; list-style-position: inside; }
@@ -215,7 +219,7 @@
   .hist b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hist small { grid-column: 2 / 4; color: var(--muted); font: 500 11px var(--mono); }
   .hist .t { color: var(--soft); font: 500 11px var(--mono); white-space: nowrap; }
-  .hist-head { font: 800 10.5px var(--sans) !important; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 12px 4px 4px !important; }
+  .hist-head { font: 700 13px/1.2 var(--sans) !important; color: var(--muted); padding: 12px 4px 4px !important; }
   /* A bot picked in the office narrows the lists to it */
   .filterbar { display: flex; gap: 6px; margin-top: 10px; }
   .filterbar[hidden] { display: none; }
@@ -240,7 +244,7 @@
   .feed.msgs .bubble span { white-space: pre-wrap; word-break: break-word; }
   .feed.msgs .bot .face { border-radius: 7px; }
   .feed.msgs .bot .bubble { background: #f1ecfb; border-color: #d9cdf3; }
-  .feed.msgs .bot .tagbot { font: 800 9px var(--sans); letter-spacing: .08em; text-transform: uppercase; background: #4b3a8a; color: #fff; border-radius: 999px; padding: 2px 6px; margin-left: 6px; vertical-align: 1px; }
+  .feed.msgs .bot .tagbot { font: 700 11px var(--sans); background: #4b3a8a; color: #fff; border-radius: 999px; padding: 2px 6px; margin-left: 6px; vertical-align: 1px; }
   .feed.msgs .open { display: inline-block; margin-top: 5px; border: 1px solid #d9cdf3; background: var(--paper); border-radius: 999px; padding: 3px 10px; font: 700 10.5px var(--sans); color: #4b3a8a; }
   .feed.msgs .open:hover { background: #e6ddf7; }
   /* The call: a Jitsi Meet room per channel, floating over the page */
@@ -261,7 +265,7 @@
   .person .lead-form input { width: 96px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font: 600 11px var(--sans); background: var(--paper); }
   .person .err { grid-column: 2 / 4; color: var(--bad); font-size: 11.5px; }
   /* ---- Memory: the office across days ---- */
-  .bar .day { font: 800 11px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; background: var(--ink); color: var(--butter); border-radius: 999px; padding: 7px 11px; }
+  .bar .day { font: 700 12px/1 var(--sans); background: var(--ink); color: var(--butter); border-radius: 999px; padding: 7px 11px; }
   .feed.mem li { display: block; border: 0; padding: 5px 2px; }
   .feed.mem .verdict { position: static; }
   .daycard { background: var(--ink); color: var(--paper); border-radius: 16px; padding: 12px 14px !important; margin-bottom: 6px; }
@@ -284,7 +288,7 @@
   .arrived b { display: block; font-size: 12px; margin-bottom: 3px; }
   .arrived ul { margin: 0; padding-left: 16px; }
   .arrived .x { position: absolute; top: 6px; right: 6px; border: 0; background: none; color: var(--muted); font-size: 15px; }
-  .mem-head { font: 800 10.5px var(--sans) !important; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 12px 4px 2px !important; }
+  .mem-head { font: 700 13px/1.2 var(--sans) !important; color: var(--muted); padding: 12px 4px 2px !important; }
   .fact { border-bottom: 1px dashed var(--line) !important; padding: 7px 4px !important; font-size: 12.5px; }
   .fact .what b { font-weight: 700; }
   .fact .q { display: block; color: var(--muted); font-size: 11.5px; font-style: italic; margin: 2px 0 4px; word-break: break-word; }
@@ -309,7 +313,7 @@
   .recall .rh { font: 700 11px var(--sans); color: var(--ink); margin-top: 4px; }
   .recall .rl { padding-left: 4px; word-break: break-word; }
   .recall .rl.warn { color: #7a5d07; background: #fbf1cf; border-radius: 6px; }
-  .recall .src { font-size: 10px; padding: 0 6px; }
+  .recall .src { font-size: 11px; padding: 0 6px; }
   .ab-mem { font: 600 11.5px var(--sans); color: #4b3a8a; background: #f6f2fd; border-radius: 10px; padding: 7px 10px !important; margin: 4px 0; }
   .ab-mem ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
   .ab-step.focus { background: #fbf4d5; border-radius: 8px; box-shadow: inset 3px 0 var(--butter-deep); }
@@ -324,12 +328,12 @@
   .bar .title { line-height: 1.1; }
   .bar .title b { display: block; font-size: 16px; font-weight: 800; }
   .chip { display: flex; align-items: center; gap: 14px; background: var(--stone); border: 1px solid var(--line); border-radius: 16px; padding: 7px 14px; }
-  .chip .k { font: 800 9px/1.2 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .chip .k { font: 700 12px/1.2 var(--sans); color: var(--muted); }
   .chip .v { font: 600 11.5px var(--mono); }
   .chip .sep { width: 1px; align-self: stretch; background: var(--line); }
   .bar .spacer { margin-left: auto; }
   #office3d { position: relative; flex: 1; min-height: 300px; overflow: hidden;
-              background: radial-gradient(ellipse 70% 65% at 50% 45%, #fffaf0 0%, #f5eedf 55%, #ece3d1 100%); }
+              background: var(--floor); }
   #office3d canvas { display: block; touch-action: none; cursor: grab; }
   #office3d canvas:active { cursor: grabbing; }
   #office3d .badge { position: absolute; top: 12px; left: 14px; background: var(--paper); border-radius: 10px; padding: 5px 9px; font: 600 11px var(--mono); }
@@ -341,9 +345,9 @@
   .kanban { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; padding: 14px 18px 18px; overflow-x: auto; max-height: 42%; min-height: 140px; }
   .col { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
   .col h3 { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
-  .count { background: var(--butter); border-radius: 999px; min-width: 20px; padding: 3px 6px; text-align: center; font: 700 10px var(--mono); color: var(--ink); }
+  .count { background: var(--butter); border-radius: 999px; min-width: 20px; padding: 3px 6px; text-align: center; font: 700 11px var(--mono); color: var(--ink); }
   .cards { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-  .hatch { border-radius: 999px; border: 1px solid var(--line); padding: 15px; text-align: center; color: var(--muted); font: 800 10px var(--sans); letter-spacing: .12em;
+  .hatch { border-radius: 999px; border: 1px solid var(--line); padding: 15px; text-align: center; color: var(--muted); font: 700 11px var(--sans);
            background-image: repeating-linear-gradient(-45deg, rgba(23,21,15,.07) 0 2px, transparent 2px 7px); }
   .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; }
   .card .who { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; line-height: 1.3; }
@@ -358,12 +362,12 @@
   .info { padding: 24px; overflow-y: auto; }
   .info-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
   .info-head h2 { margin: 0; font-size: 22px; font-weight: 800; }
-  .status { display: inline-flex; align-items: center; gap: 7px; background: var(--stone); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font: 800 9.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .status { display: inline-flex; align-items: center; gap: 7px; background: var(--stone); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font: 700 12px/1 var(--sans); color: var(--muted); }
   .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
   .status.live { color: var(--accent); } .status.done { color: var(--ok); } .status.bad { color: var(--bad); }
   .sect { display: flex; align-items: center; gap: 10px; margin: 24px 0 12px; }
   .sect::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-  .sect .tag { order: 2; background: #e7f8ef; color: var(--ok); border: 1px solid #bfe9d1; border-radius: 999px; padding: 5px 10px; font: 800 9.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; }
+  .sect .tag { order: 2; background: #e7f8ef; color: var(--ok-ink); border: 1px solid #bfe9d1; border-radius: 999px; padding: 5px 10px; font: 700 12px var(--sans); }
   textarea { width: 100%; min-height: 110px; resize: vertical; font: italic 14px/1.5 var(--sans); color: var(--ink); background: var(--stone);
              border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; outline: none; }
   textarea:focus { border-color: var(--butter-deep); font-style: normal; }
@@ -388,7 +392,7 @@
   dialog#tools { width: min(1080px, calc(100vw - 24px)); height: min(760px, calc(100vh - 32px)); max-height: none; border: 0; border-radius: 28px; padding: 0; background: var(--paper); color: var(--ink); }
   .tl { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100%; position: relative; }
   .tl-list { border-right: 1px solid var(--line); padding: 20px; overflow: auto; }
-  .tl-list h3 { margin: 0 0 12px; } .tl-list h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .tl-list h3 { margin: 0 0 12px; } .tl-list h4 { margin: 18px 0 6px; font-size: 12px; color: var(--muted); }
   .tl-list label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 8px 0 3px; }
   .tl-list input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: 13px var(--sans); background: var(--stone); }
   .tl-list .row { display: flex; justify-content: flex-end; margin-top: 10px; }
@@ -403,7 +407,7 @@
   .tl-tool header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .tl-tool header b { font: 600 13px var(--mono); } .tl-tool .desc { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
   .tl-tool .warn { color: var(--bad); font-weight: 700; font-size: 11.5px; }
-  .tl-tool label { display: block; font: 700 10.5px var(--sans); color: var(--muted); margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .04em; }
+  .tl-tool label { display: block; font: 700 10.5px var(--sans); color: var(--muted); margin: 8px 0 3px; }
   .tl-tool input, .tl-tool select, .tl-tool textarea { box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; font: 12.5px var(--sans); background: var(--paper); width: 100%; }
   .tl-tool select { width: auto; }
   .tl-tool .dests { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; } .tl-tool .dests label { display: inline-flex; gap: 4px; text-transform: none; font-weight: 600; margin: 0; }
@@ -431,7 +435,7 @@
   .tm-head { display: flex; align-items: flex-start; gap: 14px; padding: 24px 28px 18px; border-bottom: 1px solid var(--line); }
   .tm-head .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
   .tm-head .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .tm-head .tag2 { font: 800 9.5px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--stone);
+  .tm-head .tag2 { font: 700 12px var(--sans); color: var(--muted); background: var(--stone);
                    border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; }
   .tm-head .tag2.mine { color: #8a6d0b; background: #fbf4d5; border-color: #f2e09b; }
   input.inline, textarea.inline { border: 0; background: transparent; outline: none; color: var(--ink); padding: 2px 0; width: 100%; font-family: var(--sans);
@@ -506,21 +510,30 @@
     .key { flex: 1; } .key input { width: 100%; }
     .bar .chip { display: none; }
   }
+  .tabs { margin: 0 2px; }
+  /* The header's actions go under the pitch before they run out of room. */
+  @media (max-width: 1280px) {
+    header { flex-wrap: wrap; }
+    header .right { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 8px; }
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="logo" aria-hidden="true"></div>
-  <h1>AGORA</h1>
-  <span class="ver">v0.2 · Rust · Muse</span>
+  <h1>Agora</h1>
+  <p class="pitch">An office for AI agents that can't lie about what they did: every claim is checked against a signed ledger before it reaches you.</p>
   <div class="right">
+    <button class="pill ghost" id="replaybtn" type="button" title="A real errand, recorded and acted out again: watch the guard stop a false answer">
+      <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>Watch it catch a lie
+    </button>
     <button class="pill ghost" id="joinbtn" type="button" title="Join this office: you get your own bot">Join office</button>
     <button class="pill butter" id="giveerrand" type="button" title="Your bot does it; every claim it makes is checked against its ledger">
       <svg class="i" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>Give an errand
     </button>
     <button class="pill ghost" id="newbrief" type="button" title="A team run: plan, draft, review, deliver">New brief</button>
     <button class="pill ghost" id="manage" type="button">
-      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Manage teams
+      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Teams
     </button>
     <label class="key" id="keybox" title="This office needs an access token. It is kept in a cookie this page can't read." hidden>
       <svg class="i" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2"/></svg>
@@ -532,13 +545,13 @@
   <section class="panel logs">
     <div class="label">Logs</div>
     <div class="tabs" role="tablist">
-      <button type="button" data-tab="alibi" class="on" title="Errands whose every claim is checked against a ledger">Alibi</button>
+      <button type="button" data-tab="alibi" class="on" title="Errands whose every claim is checked against a ledger">Errands</button>
       <button type="button" data-tab="memory" title="The office across days: what it remembers, and only what a source backs">Memory</button>
-      <button type="button" data-tab="messages" title="Channels and direct messages; @Bot gives a bot an errand">Messages</button>
-      <button type="button" data-tab="chat" title="Talk with the run's agent team">Chat</button>
+      <button type="button" data-tab="messages" title="Channels and direct messages; @Bot gives a bot an errand">Channels</button>
+      <button type="button" data-tab="chat" title="Talk with the run's agent team">Team chat</button>
       <button type="button" data-tab="activity">Activity</button>
-      <button type="button" data-tab="technical" title="Technical">Tech</button>
-      <button type="button" data-tab="runs">Runs</button>
+      <button type="button" data-tab="technical" title="The team runs' technical log">Log</button>
+      <button type="button" data-tab="runs">Team runs</button>
     </div>
     <div class="filterbar" id="filterbar" hidden></div>
     <div class="convs" id="convs" hidden></div>
@@ -593,7 +606,9 @@
   </section>
 
   <section class="panel info">
-    <div class="info-head"><h2>Project Info</h2><span class="status" id="status">Ready to start</span></div>
+    <div class="info-head"><h2>Office setup</h2><span class="status" id="status">Ready to start</span></div>
+    <p class="note" id="persist" hidden>This office keeps its errands, ledgers and memory across restarts.</p>
+    <div id="mine" hidden></div>
     <div class="sect"><span class="label">People in the office</span><span class="tag" id="peopletag">0 here</span></div>
     <div id="invitebox"></div>
     <div class="folks" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
@@ -845,7 +860,7 @@ function renderBoard() {
     const h = el("h3", "label", name);
     h.append(el("span", "count", String(list.length)));
     const cards = el("div", "cards");
-    if (!list.length) cards.append(el("div", "hatch", "EMPTY"));
+    if (!list.length) cards.append(el("div", "hatch", "Empty"));
     for (const t of list) {
       const card = el("div", "card " + t.cls);
       const who = el("div", "who");
@@ -989,7 +1004,7 @@ async function loadInfo() {
   try {
     [info, models] = await Promise.all([(await fetch("/api/info")).json(), (await fetch("/api/models")).json()]);
     $("captag").textContent = info.cap_usd == null ? "No cap" : `Cap $${info.cap_usd.toFixed(2)} / run`;
-    if (info.persistent) document.querySelector(".ver").textContent += " · kept across restarts";
+    $("persist").hidden = !info.persistent;
     if (tab === "alibi" && !errand) renderFeed(); // the leaderboard's model names
     renderModels();
   } catch { $("model").textContent = "—"; $("reviewer").textContent = "—"; }
@@ -1387,19 +1402,20 @@ let board = null;
 fetch("/api/leaderboard").then((r) => r.json()).then((b) => { board = b; if (tab === "alibi" && !errand) renderFeed(); }).catch(() => {});
 function boardItem(b) {
   const li = el("li", "lb");
-  li.append(el("h4", null, "Self-report fidelity (B4) and the guard (B5)"),
-    el("p", null, `${b.errands.length} errands per model. Unguarded, the reports match the ledger right after the work, but asked later in a fresh chat they deny or invent actions (red bar). With the guard on, no claim the ledger contradicts was delivered.`));
+  li.append(el("h4", null, "Do bots tell the truth about what they did? (B4, B5)"),
+    el("p", null, `${b.errands.length} real errands per model. Right after the work, reports match the ledger. Asked about it later in a fresh chat, bots deny reads and invent actions: the red bar is the share of their statements the ledger contradicts. With the guard on, none of those reached the person.`));
   const label = (id) => models.find((m) => m.id === id)?.label || id;
   for (const m of [...b.models].sort((x, y) => y.later.contradicted / y.later.claims - x.later.contradicted / x.later.claims)) {
     const row = el("div", "lb-row");
     const share = m.later.claims ? m.later.contradicted / m.later.claims : 0;
     const bar = el("div", "lb-bar"); const fill = el("i"); fill.style.width = (share * 100).toFixed(0) + "%"; bar.append(fill);
-    row.append(el("b", null, label(m.model)), el("span", "num", `${m.later.contradicted}/${m.later.claims} later`),
-      el("span", "note", `right away ${m.now.contradicted}/${m.now.claims} · caught in ${m.later.errands_with_a_contradiction}/${m.errands} errands`), el("span"), bar);
+    row.append(el("b", null, label(m.model)), el("span", "num", `${m.later.contradicted} of ${m.later.claims} false later`),
+      el("span", "note", `right after the work: ${m.now.contradicted} of ${m.now.claims} false · a false statement in ${m.later.errands_with_a_contradiction} of ${m.errands} errands`), el("span"), bar);
     if (m.guarded) {
       const g = m.guarded, delivered = g.now.contradicted + g.later.contradicted, claims = g.now.claims + g.later.claims;
-      const stopped = g.guard.first_drafts_with_a_problem[0] + g.guard.first_drafts_with_a_problem[1];
-      row.append(el("span", "lb-guard", `With the guard: ${delivered}/${claims} false claims delivered · ${stopped} drafts stopped and rewritten`));
+      const sum = (a) => a[0] + a[1];
+      const stopped = sum(g.guard.first_drafts_with_a_problem), corrected = sum(g.guard.corrected);
+      row.append(el("span", "lb-guard", `With the guard: ${delivered} of ${claims} statements delivered false · ${stopped} drafts stopped and rewritten by the bot from its ledger${corrected ? `; ${corrected} still wrong after that, corrected by code` : ""}`));
     }
     li.append(row);
   }
@@ -1450,7 +1466,7 @@ function stepLine(entry, flagged) {
     return li;
   }
   li.append(el("span", "res", o.result.split("\n")[0]), el("span", "h", "hash " + short(entry.hash) + " ← " + short(entry.prev)));
-  if (errandIdle()) {
+  if (errandIdle() && onServer()) {
     const b = el("button", "forget", "Forget");
     b.type = "button";
     b.title = "Delete what this call read or did from the agent's records. The ledger still proves it happened.";
@@ -1565,7 +1581,8 @@ function draftItem(e, last, steps, agent) {
   box.append(body, ...receipts);
   if (c.unverified) box.append(el("div", "ab-next", "Not fully checked: " + c.unverified));
   box.append(el("div", "ab-next", last ? "→ not delivered as written: corrected from the ledger" : "→ sent back with the receipts to rewrite"));
-  li.append(fold(key, `${agent} · draft ${e.round + 1} stopped by the guard: ${why.join(", ")}`, false, box));
+  // In the replay the stopped draft is the point: shown open.
+  li.append(fold(key, `${agent} · draft ${e.round + 1} stopped by the guard: ${why.join(", ")}`, Boolean(errand?.replay), box));
   return li;
 }
 // A <details> that stays open or shut across redraws (the feed is redrawn per event).
@@ -1661,7 +1678,7 @@ function verdictItem(steps) {
   if (said.turn > 0) li.append(el("span", "why", `Latest answer, to: ${said.question || "a question"}`));
   if (c.unverified) li.append(el("span", "why", "Why not fully checked: " + c.unverified));
   if (errandBusy()) li.append(el("span", "why", `${agent} is answering a question…`));
-  if (chain.signed) {
+  if (chain.signed && onServer()) {
     const a = el("a", null, "Download signed receipt");
     a.href = `/api/errands/${encodeURIComponent(errand.id)}/receipt`;
     a.download = `${errand.id}-receipt.json`;
@@ -1710,8 +1727,35 @@ async function refreshErrands() {
   if (!res?.ok) return;
   errandList = await res.json().catch(() => []);
   publishBots();
+  renderMine();
   if (errand?.closed && errandList.find((s) => s.id === errand.id)?.busy) reopenErrand(); // someone asked it something
   if (tab === "alibi" && !errand) renderFeed();
+}
+// Your bot, and the calls waiting for your answer: the job that can't wait.
+function renderMine() {
+  const box = $("mine"), m = me?.member;
+  box.hidden = !m;
+  if (!m) return;
+  // As the server decides: whoever connected the tool (the owner, if they left), else
+  // the bot's owner, else whoever asked.
+  const here = new Set(company.members.map((x) => x.id));
+  const forMe = (e) => {
+    const id = e.awaiting_approval.approver_id;
+    if (id) return id === m.id || (!here.has(id) && m.role === "owner");
+    const bot = e.people?.bot_of?.[0];
+    return bot ? bot === m.id : e.people?.asked_by?.[0] === m.id;
+  };
+  const waiting = errandList.filter((e) => e.awaiting_approval && forMe(e));
+  const mineCount = errandList.filter((e) => e.people?.asked_by?.[0] === m.id || e.people?.bot_of?.[0] === m.id).length;
+  box.replaceChildren(el("h3", null, `Your bot: ${m.bot}`),
+    el("p", null, `${m.name}${m.on_cli ? " · working from a CLI" : ""} · ${mineCount ? plural(mineCount, "errand") : "no errands yet"}`));
+  if (!waiting.length) { box.append(el("p", null, "Nothing is waiting for your approval.")); return; }
+  for (const e of waiting) {
+    const row = el("div", "wait");
+    row.append(el("span", null, `${e.awaiting_approval.tool} is waiting for your OK`));
+    button("Review", "pill butter mini", () => openErrand(e.id, e), row);
+    box.append(row);
+  }
 }
 const refreshErrandsSoon = () => { clearTimeout(errandsTimer); errandsTimer = setTimeout(refreshErrands, 400); };
 // Each bot's latest errand, for the desk monitors in the office.
@@ -1738,6 +1782,7 @@ function renderAlibi(feed) {
   back.type = "button"; back.onclick = closeErrand;
   const top = el("li"); top.append(back);
   feed.append(top);
+  if (errand.replay) feed.append(el("li", "replay-note", "A replay of a real errand, recorded on 1 Nov 2026 on Muse Spark Open. Watch the second question: the bot says it read none of Asha's notes, the ledger says it did, and the guard stops that answer before it reaches her."));
   if (errand.missing) {
     feed.append(el("li", "ab-err", "There is no such errand here. The office keeps the last 30."));
     renderErrandChips();
@@ -1900,28 +1945,68 @@ function watchErrand(id, skip = 0) {
   source.onmessage = (m) => {
     let e;
     try { e = JSON.parse(m.data); } catch { return; }
+    takeErrandEvent(e, source);
+  };
+}
+// One event of the open errand, from its stream or from the recorded replay.
+function takeErrandEvent(e, source) {
     errand.events.push(e);
     // In a company the bot's desk is its owner's: point the office at it.
     if (e.type === "started" && e.people?.bot_of) errand.agent = { ...errand.agent, id: e.people.bot_of[0], name: e.agent };
     if (errand.skip > 0) errand.skip--; // a replay of what the office already acted out
     else dispatchEvent(new CustomEvent("agora:errand", { detail: { ...e, agentId: errand.agent.id } })); // the 3D office
     if (["busy", "said", "failed", "idle"].includes(e.type)) refreshErrandsSoon(); // the history and the desk monitors
-    if (e.type === "learned" || e.type === "forgotten") refreshOfficeSoon(); // the memory changed
+    if (source && (e.type === "learned" || e.type === "forgotten")) refreshOfficeSoon(); // the memory changed
     // Idle, it needs no open stream (connections per host are few): it reopens to ask,
     // to forget, or when the history shows it busy again.
-    if (e.type === "idle") setTimeout(() => { if (source === errandSource && errandIdle()) { source.close(); errand.closed = true; } }, 1500);
+    if (source && e.type === "idle") setTimeout(() => { if (source === errandSource && errandIdle()) { source.close(); errand.closed = true; } }, 1500);
     // Forgetting rewrites the errand's history on the server: fetch it again.
     // (Once per forgetting: the replay after reconnecting includes the same event.)
-    const key = e.type === "forgotten" ? `${errand.id}:${errand.events.length}` : null; // its place in the history
+    const key = source && e.type === "forgotten" ? `${errand.id}:${errand.events.length}` : null; // its place in the history
     if (key && !refetched.has(key)) { refetched.add(key); const { open, det } = errand; watchErrand(errand.id, errand.events.length); Object.assign(errand, { open, det }); return; }
     if (tab === "alibi") renderFeed();
-  };
+}
+
+// ---- The replay: a real errand, recorded on 1 Nov 2026 on Muse Spark Open, acted
+// out again from its own events (nothing in it is staged). Asked afterwards whether
+// it read Asha's private notes, the bot said no; ledger entry #2 is that read. The
+// guard stopped the draft, and the answer that reached her owns up.
+//
+// A replay is read-only: nothing of it is on this server, so every control that
+// would act on the errand there (forget, receipt, approve, ask) is left out.
+const onServer = () => !errand?.replay;
+const REPLAY_PACE = { started: 400, recalled: 900, busy: 1100, step: 1500, draft: 2600, said: 2600, learned: 900, idle: 1400 };
+let replayEvents = null;
+$("replaybtn").onclick = () => replayErrand();
+// A first visit (no errand asked for in the link) watches the replay once, unless
+// they have already opened or started one by the time the page has loaded.
+addEventListener("load", () => {
+  let seen = true;
+  try { seen = localStorage.getItem("agora:replayed") === "1"; localStorage.setItem("agora:replayed", "1"); } catch { /* storage blocked: don't autoplay */ }
+  if (!seen && !location.hash.startsWith("#errand=")) setTimeout(() => { if (!errand) replayErrand(); }, 1200);
+});
+async function replayErrand() {
+  replayEvents ??= await fetch("/replay.json").then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (!replayEvents) { toast("The replay couldn't load"); return; }
+  errandSource?.close(); errandSource = null;
+  if (location.hash.startsWith("#errand=")) history.replaceState(null, "", location.pathname + location.search);
+  // Acted out at the office's first desk under its recorded name, never as the
+  // viewer's own bot.
+  errand = { id: replayEvents[0].id, events: [], open: new Set(), det: new Map(), agent: { name: "Scout", id: null, color: "#4285f4" }, skip: 0, replay: true };
+  if (tab !== "alibi") selectTab("alibi"); else renderFeed();
+  const mine = errand;
+  let at = 0;
+  for (const e of replayEvents) {
+    at += REPLAY_PACE[e.type] ?? 900;
+    setTimeout(() => { if (errand === mine) takeErrandEvent(e, null); }, at);
+  }
 }
 $("errandform").onsubmit = async (ev) => {
   ev.preventDefault();
   const text = $("errandtext").value.trim();
   if (!text) return;
   const asking = hasReport();
+  if (errand?.replay) { $("errandnote").textContent = "That was a recorded replay: give your own errand with All errands."; return; }
   if (errandFiles.busy()) { $("errandnote").textContent = "Still reading the attached files…"; return; }
   if (asking && errandFiles.files.length) { $("errandnote").textContent = "Files go with a new errand, not a question: remove them, or start one with All errands."; return; }
   $("errandgo").disabled = true; $("errandnote").textContent = "";
@@ -2061,7 +2146,7 @@ function approvalCard(e, events) {
   li.append(el("b", null, `${started()?.agent || "The bot"} wants to use ${e.tool}`),
     el("div", "note", e.destinations?.length ? `It goes to: ${e.destinations.join(", ")}` : "It names no destination."),
     el("pre", null, JSON.stringify(e.args, null, 2)));
-  if (!answered) {
+  if (!answered && onServer()) {
     const row = el("div", "row"), no = el("button", "pill ghost", "Decline"), yes = el("button", "pill butter", "Approve");
     no.type = yes.type = "button";
     const answer = async (approve) => {
@@ -2835,7 +2920,7 @@ async function whoAmI() {
   if (res.ok) me = await res.json();
   else if (res.status === 404 || res.status === 401) me = null;
   if (me && !me.channels.includes(msgs.conv) && msgs.conv.startsWith("#")) msgs.conv = "#general";
-  renderPeople(); renderFeed();
+  renderPeople(); renderFeed(); renderMine();
   return me;
 }
 const whoAmISoon = () => { clearTimeout(whoTimer); whoTimer = setTimeout(whoAmI, 500); };

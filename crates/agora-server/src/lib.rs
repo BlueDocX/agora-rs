@@ -93,6 +93,8 @@ const CAST_PNG: &[u8] = include_bytes!("../static/models/cast.png");
 /// B4's self-report fidelity results (`alibi-spike` writes `bench-out/b4_summary.json`;
 /// the rows behind it are in `bench/`).
 const LEADERBOARD: &str = include_str!("../static/leaderboard.json");
+/// A real errand's events, recorded on 1 Nov 2026, for the page's replay.
+const REPLAY: &str = include_str!("../static/replay.json");
 
 impl HubConfig {
     /// The client for a model's host (by `agora_muse::host_of`), if this office has it.
@@ -388,7 +390,7 @@ pub fn app(config: HubConfig) -> Router {
         .route("/models/cast.png", get(|h: HeaderMap| async move { asset(&h, "image/png", CAST_PNG, None) }))
         .route("/models/furniture.glb", get(|h: HeaderMap| async move { asset(&h, "model/gltf-binary", FURNITURE, Some(FURNITURE_GZ)) }))
         .route("/api/info", get(info))
-        .route("/api/leaderboard", get(|| async { ([(header::CONTENT_TYPE, "application/json")], LEADERBOARD) }))
+        .merge(data_routes())
         .route("/api/teams", get(|| async { Json(agora_core::presets()) }))
         .route("/api/skills", get(|| async { Json(agora_core::SKILLS) }))
         .route("/api/models", get(models))
@@ -413,6 +415,13 @@ pub fn app(config: HubConfig) -> Router {
         .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard_host))
         .layer(middleware::from_fn(access_log))
         .with_state(hub)
+}
+
+/// Fixed JSON the page reads: the benchmark results and the recorded replay.
+fn data_routes() -> Router<Arc<Hub>> {
+    Router::new()
+        .route("/api/leaderboard", get(|| async { ([(header::CONTENT_TYPE, "application/json")], LEADERBOARD) }))
+        .route("/replay.json", get(|| async { ([(header::CONTENT_TYPE, "application/json")], REPLAY) }))
 }
 
 /// The host a request names, without its port.

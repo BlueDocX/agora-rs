@@ -1,2 +1,4 @@
 # B9 sample output: a model-written threat model's example token code, not a credential.
 bench/b9_final_rows.jsonl:generic-api-key:22
+# The replay recording: chain.signed.key is the office's public verification key, printed in every receipt by design.
+crates/agora-server/static/replay.json:generic-api-key:1

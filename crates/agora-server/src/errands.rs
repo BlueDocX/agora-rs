@@ -1140,8 +1140,10 @@ pub(crate) struct Summary {
 pub(crate) struct Pending {
     pub tool: String,
     pub destinations: Vec<String>,
-    /// Who must answer; `None`: whoever may answer for the errand.
+    /// Who must answer, by name; `None`: whoever may answer for the errand.
     pub approver: Option<String>,
+    /// And by member id, as the server checks it.
+    pub approver_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1181,7 +1183,7 @@ impl ErrandRoom {
         // is: the waits were in memory).
         let live = self.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let awaiting_approval = inner.history.iter().rev().find_map(|e| match e {
-            ErrandEvent::Approval { id, tool, destinations, approver, .. } if live.contains_key(id) => Some(Pending { tool: tool.clone(), destinations: destinations.clone(), approver: approver.clone() }),
+            ErrandEvent::Approval { id, tool, destinations, approver, .. } => live.get(id).map(|w| Pending { tool: tool.clone(), destinations: destinations.clone(), approver: approver.clone(), approver_id: w.approver.clone() }),
             _ => None,
         });
         drop(live);

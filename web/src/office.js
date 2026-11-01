@@ -75,7 +75,7 @@ async function start(host) {
     hint.textContent = String(err.message || err);
     return;
   }
-  badge.textContent = "WebGL2";
+  badge.hidden = true; // the badge only speaks when the 3D office can't run
 
   const mobile = matchMedia("(pointer: coarse)").matches;
   const renderer = new WebGLRenderer({ antialias: true, alpha: true });

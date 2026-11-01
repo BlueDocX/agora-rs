@@ -11,3 +11,4 @@
 /web/models/node_modules
 /target-ui
 *.key
+/.taste-skill
