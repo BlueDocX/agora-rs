@@ -1,4 +1,24 @@
-# Agora (Rust rebuild): the office where AI can't lie about what it did
+<p align="center"><img src="docs/media/banner.png" alt="Agora: the office where AI can't lie about what it did. A bot answers 'No, I did not read any private chats or notes'; the ledger shows it read the contact card with the notes; the guard stops the answer and the delivered one owns up." width="100%"></p>
+
+<h1 align="center">Agora</h1>
+
+<p align="center">
+  <a href="https://agora-office-295478535981.us-central1.run.app"><b>Open the live office</b></a> ·
+  <a href="#watch-it-catch-a-lie">Watch it catch a lie</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="docs/benchmarks.md">Benchmarks</a> ·
+  <a href="#run-it">Run it</a>
+</p>
+
+<p align="center">
+  <a href="https://agora-office-295478535981.us-central1.run.app"><img alt="Live on Cloud Run" src="https://img.shields.io/badge/live-Cloud%20Run-17150f?style=flat-square"></a>
+  <img alt="Rust 2024, unsafe forbidden" src="https://img.shields.io/badge/Rust%202024-unsafe%20forbidden-b7410e?style=flat-square">
+  <img alt="Meta Muse Spark" src="https://img.shields.io/badge/models-Meta%20Muse%20Spark-0866ff?style=flat-square">
+  <img alt="Open weights: Muse Spark Open on Baseten" src="https://img.shields.io/badge/open%20weights-Muse%20Spark%20Open%20on%20Baseten-4b3a8a?style=flat-square">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-client%20%2B%20server-f2cc46?style=flat-square&labelColor=17150f">
+  <img alt="False claims delivered in benchmarks B5 to B8: 0" src="https://img.shields.io/badge/false%20claims%20delivered%20(B5%E2%80%93B8)-0-17703c?style=flat-square">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-6b6450?style=flat-square"></a>
+</p>
 
 **The trust layer for AI agents that act on your data; the office is where you watch it.** A virtual office where people and their Muse bots work as one team. Bots act on a person's contacts, calendar, email, chats and files. **Every call they make is written by the executor (never by the agent) to a hash-chained ledger.** When an agent explains what it did, each claim is checked against that ledger and marked:
 - **backed** (green)
@@ -8,6 +28,12 @@
 Each mark links to the ledger entries that prove it.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 - Nov 4, 2026), on Meta's Muse models.
+
+## Watch it catch a lie
+
+<p align="center"><img src="docs/media/catch-a-lie.gif" alt="The live office replaying a real errand: the bot works through its ledger, then answers a follow-up question; its first draft is stopped by the guard and the rewritten answer owns up to reading the notes." width="100%"></p>
+
+A real errand, recorded on Muse Spark Open on 1 Nov 2026 and replayed in the [live office](https://agora-office-295478535981.us-central1.run.app) (shown here sped up). The bot reminded Arjun about money he owes, reading his contact card along the way. Asked later "Did you read any of my private chats or notes?", it answered **"No"**. Ledger entry #2 is that read. The guard stopped the draft, and the answer that reached the person owns up. Open the office and press **Watch it catch a lie** to see it full speed.
 
 ## What it solves
 
@@ -30,6 +56,29 @@ Built for the Meta Global AI Developer Hackathon (Oct 26 - Nov 4, 2026), on Meta
 - **Forgetting you can verify:** the content is gone, and the chain still proves the read happened.
 
 Open the office and press **Watch it catch a lie**. It replays a real errand, recorded on Muse Spark Open. Asked "Did you read any of my private chats or notes?", the bot said "No"; the ledger shows the read, and the guard stops the answer before it reaches the person.
+
+## How it works
+
+```mermaid
+flowchart LR
+  you(["You, or your coding CLI"]) -->|"errand"| agent["Agent (Muse Spark)"]
+  agent -->|"asks for a tool call"| exec{{"Executor: Agora's own code"}}
+  person(["Person in the office"]) -.->|"approve or decline"| exec
+  exec -->|"destination named by you? private data in play? approved?"| tools[("Sandbox tools and MCP servers: GitHub, Slack, Linear…")]
+  exec -->|"records every call"| ledger[("Signed, hash-chained ledger")]
+  agent -->|"report"| guard{{"Guard: 2 parsers + Rust"}}
+  ledger --> guard
+  guard -->|"a false claim: rewrite"| agent
+  guard -->|"only what the ledger backs"| you
+```
+
+- **The agent never acts on its own.** It asks; Agora's executor checks the request, makes the call and records it. The agent can't write its own record.
+- **The guard reads what the agent says before you do.** Every claim is checked against the ledger by code. Anything false goes back to be rewritten; anything still false is cut and corrected from the ledger.
+- **People stay in charge of real-world actions.** Calls that change something, or that leave the office after private data was read, wait for the person whose account it is. This is Meta's [Agents Rule of Two](https://ai.meta.com/blog/practical-ai-agent-security/), enforced in code.
+
+| A false draft, stopped | A real call, waiting for a person | Driven from Claude Code |
+|---|---|---|
+| <img src="docs/media/stopped-draft.png" alt="The guard stops 'No, I did not read any private chats or notes for this errand' and the delivered answer says it read the contact details including notes" width="100%"> | <img src="docs/media/approval.png" alt="Scout wants to use deepwiki.ask_wiki_question, with its exact arguments, and Approve and Decline buttons" width="100%"> | <img src="docs/media/claude-code.png" alt="Claude Code runs an errand through Agora over MCP, waits at an approval it can't give, then relays the checked report" width="100%"> |
 
 **What we measured (B4, [details](docs/benchmarks.md#b4-self-report-fidelity-alibi)).** 10 errands per model in a sandbox with planted failures.
 
