@@ -399,9 +399,10 @@ async fn server_of(hub: &Hub, id: &str) -> Result<agora_mcp::Server, String> {
     Ok(agora_mcp::Server { url, token, allow_local })
 }
 
-/// The owner decides about connected tools, once someone owns the office.
+/// The owner decides about connected tools, once someone owns the office; never
+/// through a CLI key (an agent must not widen what it may do).
 fn may_manage(hub: &Hub, headers: &HeaderMap) -> bool {
-    crate::office::may_run_office(hub, headers).is_some()
+    crate::cli::key_of(headers).is_none() && crate::office::may_run_office(hub, headers).is_some()
 }
 
 fn slug(name: &str) -> String {

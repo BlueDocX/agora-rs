@@ -173,6 +173,12 @@
   dialog#agentbox input, dialog#agentbox select { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 14px var(--sans); background: var(--stone); }
   dialog#agentbox .dests { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; } dialog#agentbox .dests label { display: inline-flex; gap: 4px; margin: 0; font-weight: 600; color: var(--ink); }
   dialog#agentbox .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  dialog#clibox { border: 0; border-radius: 24px; padding: 22px 24px; width: min(560px, calc(100vw - 32px)); background: var(--paper); color: var(--ink); }
+  dialog#clibox h3 { margin: 0 0 4px; } dialog#clibox p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+  dialog#clibox label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 10px 0 4px; }
+  dialog#clibox select { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 14px var(--sans); background: var(--stone); }
+  dialog#clibox pre { white-space: pre-wrap; word-break: break-all; background: var(--stone); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 12px/1.5 ui-monospace, monospace; margin: 6px 0; }
+  dialog#clibox .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   dialog#joinbox { border: 0; border-radius: 24px; padding: 22px 24px; width: min(420px, calc(100vw - 32px)); background: var(--paper); color: var(--ink); }
   dialog#joinbox h3 { margin: 0 0 4px; } dialog#joinbox p { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
   dialog#joinbox label { display: block; font: 700 11px var(--sans); color: var(--muted); margin: 10px 0 4px; }
@@ -593,6 +599,8 @@
     <div class="folks" id="people"><p class="note">Nobody has joined yet. Join to get your own bot; the owner can make people leads of areas.</p></div>
     <div class="sect"><span class="label">Agents</span><button class="pill ghost mini" id="addagent" type="button">+ Add an agent</button></div>
     <div class="folks" id="agentlist"><p class="note">Add agents of your own: a role, a model, the tools they may use. They work on the same executor, so everything they do is ledgered and checked.</p></div>
+    <div class="sect"><span class="label">Coding CLIs</span><button class="pill ghost mini" id="clibtn" type="button">Connect a CLI</button></div>
+    <p class="note" id="clisum">Work from your own terminal: Claude Code, Codex, OpenCode or Gemini CLI can run errands here as you, with every call ledgered and checked.</p>
     <div class="sect"><span class="label">Connected tools</span><button class="pill ghost mini" id="toolsbtn" type="button">Manage</button></div>
     <p class="note" id="toolsum">None yet: bots work in the sandbox. Connect GitHub, Slack, Linear or any MCP server to let them do real work, every call ledgered and checked.</p>
     <div class="sect"><span class="label">Team</span></div>
@@ -656,6 +664,15 @@
   <label>Connected tools it may use</label><div id="agenttools" class="dests"></div>
   <p class="note" id="agentnote"></p>
   <div class="row"><button class="pill ghost" type="button" id="agentcancel">Cancel</button><button class="pill butter" id="agentgo">Add</button></div>
+</form></dialog>
+<dialog id="clibox" aria-label="Connect a coding CLI"><form method="dialog" id="cliform">
+  <h3>Connect a coding CLI</h3>
+  <p>Your CLI gets its own key: it acts as you (your errands, your @mentions) and can be revoked here any time. It can never approve a call: approvals stay with people, in the office.</p>
+  <label for="clitool">Which CLI</label>
+  <select id="clitool"><option>Claude Code</option><option>Codex</option><option>OpenCode</option><option>Gemini CLI</option></select>
+  <div id="clinew"></div>
+  <label>Your keys</label><div id="clikeys" class="folks"></div>
+  <div class="row"><button class="pill ghost" type="button" id="clicancel">Close</button><button class="pill butter" id="cligo">Make a key</button></div>
 </form></dialog>
 <dialog id="tools" aria-label="Connected tools"><div class="tl">
   <nav class="tl-list"><h3>Connected tools</h3><div id="tllist"></div>
@@ -1988,6 +2005,54 @@ $("agentform").onsubmit = async (ev) => {
 };
 loadAgents();
 
+// ---- Coding CLIs: a key per CLI, minted with the browser's own member cookie. The
+// key is shown once, inside the setup command for that CLI.
+function cliSetup(tool, key) {
+  const url = location.origin + "/mcp";
+  switch (tool) {
+    case "Codex": return `# Codex reads the key from AGORA_KEY each time it starts: put this line in your shell profile (~/.bashrc or ~/.zshrc)\nexport AGORA_KEY=${key}\ncodex mcp add agora --url ${url} --bearer-token-env-var AGORA_KEY`;
+    case "OpenCode": return `Add to opencode.json:\n${JSON.stringify({ mcp: { agora: { type: "remote", url, oauth: false, headers: { Authorization: `Bearer ${key}` } } } }, null, 2)}`;
+    case "Gemini CLI": return `gemini mcp add --transport http --header "Authorization: Bearer ${key}" agora ${url}`;
+    default: return `claude mcp add --transport http agora ${url} --header "Authorization: Bearer ${key}"`;
+  }
+}
+async function loadCliKeys() {
+  const res = await fetch("/api/cli/keys").catch(() => null);
+  if (!res?.ok) { $("clikeys").replaceChildren(el("p", "note", (await res?.json().catch(() => ({})))?.error || "Join the office first: a CLI key acts as you.")); $("cligo").disabled = true; return; }
+  $("cligo").disabled = false;
+  const keys = await res.json();
+  $("clikeys").replaceChildren(...(keys.length ? keys.map((k) => {
+    const row = el("div", "person"), who = el("span", "who");
+    who.append(el("b", null, k.label), el("small", null, k.used_ms ? `last used ${new Date(k.used_ms).toLocaleString()}` : "not used yet"));
+    row.append(who);
+    const acts = el("div", "acts");
+    button("Revoke", null, async () => {
+      const gone = await fetch(`/api/cli/keys/${encodeURIComponent(k.id)}`, { method: "DELETE" }).catch(() => null);
+      if (gone?.ok) loadCliKeys(); else toast("Couldn't revoke it");
+    }, acts);
+    row.append(acts);
+    return row;
+  }) : [el("p", "note", "None yet.")]));
+  $("clisum").textContent = keys.length ? `${plural(keys.length, "CLI key")} of yours. Ask your CLI: "use agora to …"` : "Work from your own terminal: Claude Code, Codex, OpenCode or Gemini CLI can run errands here as you, with every call ledgered and checked.";
+}
+$("clibtn").onclick = () => { $("clinew").replaceChildren(); loadCliKeys(); $("clibox").showModal(); };
+$("clicancel").onclick = () => $("clibox").close();
+$("cliform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  $("cligo").disabled = true;
+  const tool = $("clitool").value;
+  const res = await fetch("/api/cli/keys", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ label: tool }) }).catch(() => null);
+  $("cligo").disabled = false;
+  const body = await res?.json().catch(() => ({}));
+  if (!res?.ok) { $("clinew").replaceChildren(el("p", "note", body?.error || "Couldn't make a key.")); return; }
+  const setup = el("pre", null, cliSetup(tool, body.key));
+  const copy = el("div", "acts");
+  button("Copy", null, () => navigator.clipboard?.writeText(setup.textContent).then(() => toast("Copied")), copy);
+  $("clinew").replaceChildren(el("label", null, `Run this once (the key is shown only now)`), setup, copy,
+    el("p", null, `Then ask ${tool}: "use agora to file the login bug in octo/demo". The checked report comes back to your terminal; anything that needs approval waits for a person here.`));
+  loadCliKeys();
+};
+
 // ---- Connected tools: real MCP servers. Every tool starts off; the owner decides
 // what each may do. An act waits for its bot owner's OK in the errand.
 function approvalCard(e, events) {
@@ -2647,7 +2712,7 @@ function renderPeople() {
     const dot = el("span", "dot"); dot.style.background = m.color;
     const who = el("span", "who");
     const plays = m.bot_role ? ` as ${m.bot_role.name}` : "";
-    who.append(el("b", null, m.name + (m.id === mine?.id ? " (you)" : "")), el("small", null, `bot ${m.bot}${plays}${m.online ? " · online" : ""}`));
+    who.append(el("b", null, m.name + (m.id === mine?.id ? " (you)" : "")), el("small", null, `bot ${m.bot}${plays}${m.online ? " · online" : ""}${m.on_cli ? " · on a CLI" : ""}`));
     row.append(dot, who, el("span", "role " + m.role, memberLabel(m)));
     if (m.bot_role?.kit?.length) { const k = kitChips(m.bot_role.kit); k.style.gridColumn = "2 / 4"; row.append(k); }
     if (m.id === mine?.id || mine?.role === "owner") {
@@ -2936,7 +3001,7 @@ $("callclose").onclick = closeCall;
 // The office shows the company's bots at their desks (each labelled with its owner).
 function companyTeam() {
   if (!company.members.length && !agents.length) return null;
-  const bots = company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m), color: m.color }));
+  const bots = company.members.map((m) => ({ id: m.id, name: `${m.bot} · ${m.name}`, role: memberLabel(m) + (m.on_cli ? " · CLI" : ""), color: m.color }));
   const added = agents.map((a) => ({ id: a.id, name: `${a.name} · agent`, role: a.preset || "agent", color: a.color }));
   const kind = [company.members.length && plural(company.members.length, "person", "people"), agents.length && plural(agents.length, "agent")].filter(Boolean).join(" · ");
   return { id: "company", name: "The office", kind, agents: [...bots, ...added] };

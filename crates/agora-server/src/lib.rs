@@ -43,6 +43,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod agents;
 mod attach;
 mod chat;
+mod cli;
 mod company;
 mod connectors;
 mod errands;
@@ -239,6 +240,7 @@ struct Hub {
     company: Mutex<company::Company>,
     connectors: connectors::Shared,
     agents: agents::Shared,
+    cli_keys: cli::Shared,
     signer: Arc<Signer>,
     store: Option<store::Store>,
     /// Seconds of audio transcribed while the server runs.
@@ -256,6 +258,10 @@ struct Hub {
 impl Hub {
     pub(crate) fn connectors(&self) -> std::sync::MutexGuard<'_, connectors::Connectors> {
         self.connectors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn cli_keys(&self) -> std::sync::MutexGuard<'_, cli::CliKeys> {
+        self.cli_keys.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub(crate) fn agents(&self) -> std::sync::MutexGuard<'_, agents::Agents> {
@@ -343,6 +349,7 @@ pub fn app(config: HubConfig) -> Router {
     });
     let Ok(memory) = memory else { panic!("SQLite can't open even an in-memory database") };
     let agents = agents::Agents::new(&loaded.kv, store.clone());
+    let cli_keys = cli::CliKeys::new(&loaded.kv, store.clone());
     let connectors = connectors::Connectors::new(&loaded.kv, config.secret_key.as_deref(), store.clone(), config.allow_local_mcp);
     let today = loaded.kv.iter().find(|(k, _)| k == "day").and_then(|(_, v)| v.parse().ok()).unwrap_or(0usize);
     let hub = Arc::new(Hub {
@@ -354,6 +361,7 @@ pub fn app(config: HubConfig) -> Router {
         company: Mutex::new(company),
         connectors: Mutex::new(connectors),
         agents: Mutex::new(agents),
+        cli_keys: Mutex::new(cli_keys),
         signer: Arc::new(signer),
         store,
         transcribed_s: std::sync::atomic::AtomicU64::new(0),
@@ -398,9 +406,10 @@ pub fn app(config: HubConfig) -> Router {
         .route("/api/errands/{id}/receipt", get(errands::receipt))
         .route("/api/errands/{id}/approvals/{approval}", post(errands::decide))
         .merge(connectors::routes())
-        .merge(agents::routes())
+        .merge(agents::routes().merge(cli::routes()))
         .merge(office::routes())
         .route("/api/transcribe", post(voice::transcribe).layer(DefaultBodyLimit::max(voice::MAX_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)))
+        .layer(middleware::from_fn(cli::only_at_mcp))
         .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard_host))
         .layer(middleware::from_fn(access_log))
         .with_state(hub)
@@ -581,6 +590,11 @@ fn same(a: &[u8], b: &[u8]) -> bool {
 
 /// The bearer header, or the session cookie.
 fn authorized(hub: &Hub, headers: &HeaderMap) -> bool {
+    // A member's CLI key stands for the token (only someone let in could mint it); a
+    // revoked or made-up one is refused even in an office without a token.
+    if let Some(key) = cli::key_of(headers) {
+        return hub.cli_keys().member_of(key).is_some_and(|id| hub.company().by_id(&id).is_some());
+    }
     let Some(token) = &hub.config.token else { return true };
     let given = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::to_string).or_else(|| cookie(headers, TOKEN_COOKIE));
     given.is_some_and(|g| same(g.as_bytes(), token.as_bytes()))

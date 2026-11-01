@@ -117,6 +117,38 @@ The owner approves everything it offers, as is: the worst case. Results:
 
 **Agents of your own.** Anyone in the office can add agents: a name, a preset role with its skills, a model, and the connected tools it may use. An agent works under its own name, takes errands and `@mentions`, sits at its own desk, and runs on the same executor, so everything it does is ledgered and checked. Its owner answers its approvals, except for a connected tool's acts: those are answered by whoever connected that tool.
 
+## Work from your own terminal: Claude Code, Codex, OpenCode, Gemini CLI
+
+Everyone in the office can drive it from the coding CLI they already use. **Connect a CLI** on the office page makes a key for you, one per CLI, and shows the one-line setup:
+
+```sh
+claude mcp add --transport http agora http://127.0.0.1:8080/mcp --header "Authorization: Bearer agk_…"
+codex mcp add agora --url http://127.0.0.1:8080/mcp --bearer-token-env-var AGORA_KEY
+gemini mcp add --transport http --header "Authorization: Bearer agk_…" agora http://127.0.0.1:8080/mcp
+```
+
+OpenCode takes the same URL and header in `opencode.json`.
+
+Then ask your CLI: *"use agora to file the login bug in octo/demo and tell Priya"*. Your bot does the errand through the guard. `run_errand` waits for the report, and your CLI gets the checked text back, with its receipts. Teammates on their own CLIs share the same office, channels and bots. A key acts as you: it is stored only as a hash, shown once, and revocable. People working from a CLI are marked as such in the office.
+
+**What a CLI can never do.** A CLI key works only at `/mcp`, and every other route refuses it. So an agent with a shell can do exactly what the MCP tools allow, and nothing more:
+- **Approve a call.** There is no approval tool. A call that needs approval answers *"waiting: … needs approval from Ritesh in the Agora office"*, and a person answers it there.
+- **Widen its own reach.** Connecting tools, turning them on, editing allowlists, changing roles, reading the invite and making more keys all need a person in the browser.
+
+Waits stay under common client and host timeouts: 45 s by default, at most 240 s. When an errand is still working, the tool says to call `errand_result` with its id rather than start it again. A failed errand comes back as an error with its reason.
+
+**Tested for real** on 2026-11-01:
+- **Claude Code** (headless):
+  - it read who was in the office;
+  - it ran an errand and relayed the checked report (2 claims backed, 0 false);
+  - it posted in #general as its member;
+  - it stopped at a DeepWiki call that needed approval, and said who had to approve it;
+  - the CLI key's own attempt to approve was refused (403);
+  - once the person approved in the office, it relayed the result (1 claim backed, 0 false).
+- **OpenCode** connected with the generated config.
+
+Agora vouches only for its own report. What the CLI's model then says about it is outside the guard.
+
 ## A company in one office, on your glasses, and reachable by Meta AI
 
 - **Company rooms.**
@@ -138,9 +170,9 @@ The owner approves everything it offers, as is: the worst case. Results:
   Install it on glasses in Developer Mode via Meta AI app → Web Apps → Connect Web App, using its HTTPS URL. To test without hardware, use Meta's Chrome simulator extension.
 - **Meta AI on the glasses can drive Agora.** The glasses app registers **WebMCP** tools with `document.modelContext.registerTool`: `agora_run_errand`, `agora_errand_result`, `agora_ask_errand` and `agora_office_status`. "Hey Meta, have my bot remind Arjun about the money" then runs through the guard, and Meta AI reads back the checked result.
 - **Agora as an MCP server** (`POST /mcp`, JSON-RPC over Streamable HTTP):
-  - tools: `office_status`, `run_errand`, `errand_result`, `ask_errand`, `verify_ledger`
+  - tools: `office_status`, `run_errand`, `errand_result`, `ask_errand`, `ask_about_week`, `post_message`, `verify_ledger`
   - It's ready for **Meta AI Connectors**, which is in a developer preview with a waitlist, so it is not live for us yet. Any MCP client can use it today.
-  - The hub token, if set, is required; `X-Agora-Member` says whose bot acts.
+  - A member's CLI key says who acts (see below); so does the hub token with `X-Agora-Member`.
 
 The Wearables Device Access Toolkit (camera, mic and sensors from the glasses) is native iOS/Android only, so this web project uses Web Apps and WebMCP instead.
 

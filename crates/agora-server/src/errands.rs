@@ -1131,6 +1131,17 @@ pub(crate) struct Summary {
     pub poisoned: bool,
     /// When it was asked for, if known.
     pub at_ms: Option<u64>,
+    /// A connected tool's call waiting for a person's answer, if one is.
+    pub awaiting_approval: Option<Pending>,
+}
+
+/// A call waiting for approval, as anyone in the office may see it.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Pending {
+    pub tool: String,
+    pub destinations: Vec<String>,
+    /// Who must answer; `None`: whoever may answer for the errand.
+    pub approver: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1166,7 +1177,16 @@ impl ErrandRoom {
             }),
             _ => None,
         });
+        // The newest approval, if a call is still waiting on it (after a restart nothing
+        // is: the waits were in memory).
+        let live = self.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let awaiting_approval = inner.history.iter().rev().find_map(|e| match e {
+            ErrandEvent::Approval { id, tool, destinations, approver, .. } if live.contains_key(id) => Some(Pending { tool: tool.clone(), destinations: destinations.clone(), approver: approver.clone() }),
+            _ => None,
+        });
+        drop(live);
         Summary {
+            awaiting_approval,
             id: self.id.clone(),
             brief: self.brief.clone(),
             agent: self.agent.clone(),
@@ -1182,6 +1202,11 @@ impl ErrandRoom {
 }
 
 impl Hub {
+    /// The newest errand's id.
+    pub(crate) fn newest_errand(&self) -> Option<String> {
+        self.errands().rooms.last().map(|r| r.id.clone())
+    }
+
     /// Every errand kept, newest first.
     pub(crate) fn errand_summaries(&self) -> Vec<Summary> {
         let rooms: Vec<Arc<ErrandRoom>> = self.errands().rooms.clone();
@@ -1371,6 +1396,10 @@ pub(crate) struct Answer {
 pub(crate) async fn decide(State(hub): State<Arc<Hub>>, Path((id, approval)): Path<(String, String)>, headers: HeaderMap, body: Result<Json<Answer>, JsonRejection>) -> Response {
     if !authorized(&hub, &headers) {
         return unauthorized();
+    }
+    // A CLI key is an agent in someone's terminal: it never answers for the person.
+    if crate::cli::key_of(&headers).is_some() {
+        return error(StatusCode::FORBIDDEN, "approvals are answered by a person in the office, never with a CLI key");
     }
     let Ok(Json(Answer { approve })) = body else { return error(StatusCode::BAD_REQUEST, "send {\"approve\": true or false}") };
     let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };

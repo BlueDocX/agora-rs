@@ -484,8 +484,8 @@ async fn mcp_clients_list_the_tools_and_call_them() {
     assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
     let tools: Value = rpc(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await.unwrap().json().await.unwrap();
     let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["office_status", "run_errand", "errand_result", "ask_errand", "ask_about_week", "verify_ledger"]);
-    let run: Value = rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "run_errand", "arguments": {"brief": "Ask Priya to lunch"}}})).await.unwrap().json().await.unwrap();
+    assert_eq!(names, ["office_status", "run_errand", "errand_result", "ask_errand", "ask_about_week", "post_message", "verify_ledger"]);
+    let run: Value = rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "run_errand", "arguments": {"brief": "Ask Priya to lunch", "wait_seconds": 0}}})).await.unwrap().json().await.unwrap();
     let id = run["result"]["structuredContent"]["id"].as_str().unwrap().to_string();
     let mut stream = http.get(format!("{base}/api/errands/{id}/events")).send().await.unwrap();
     read_until(&mut stream, r#""type":"idle""#).await;
@@ -497,6 +497,62 @@ async fn mcp_clients_list_the_tools_and_call_them() {
     assert_eq!(rpc(json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).await.unwrap().status(), 202);
     let form = http.post(format!("{base}/mcp")).header("Content-Type", "text/plain").body("{}").send().await.unwrap();
     assert_eq!(form.status(), 403);
+}
+
+/// A coding CLI connects with a member's own key: one header, acting as them, never
+/// able to mint more keys, and gone the moment it is revoked.
+#[tokio::test]
+async fn a_cli_key_acts_as_its_member_over_mcp_until_revoked() {
+    let base = hub(Some("s3cret")).await;
+    let http = reqwest::Client::new();
+    let asha: Value = http.post(format!("{base}/api/company/join")).bearer_auth("s3cret").json(&json!({"name": "Asha"})).send().await.unwrap().json().await.unwrap();
+    let asha_key = asha["key"].as_str().unwrap();
+    let minted: Value = http.post(format!("{base}/api/cli/keys")).bearer_auth("s3cret").header("X-Agora-Member", asha_key).json(&json!({"label": "Claude Code"})).send().await.unwrap().json().await.unwrap();
+    let cli = minted["key"].as_str().unwrap().to_string();
+    assert!(cli.starts_with("agk_"));
+    // A CLI key can't make another (a leaked one can't keep itself alive).
+    let again = http.post(format!("{base}/api/cli/keys")).bearer_auth(&cli).json(&json!({"label": "x"})).send().await.unwrap();
+    assert_eq!(again.status(), 403);
+    let rpc = |key: String, body: Value| http.post(format!("{base}/mcp")).bearer_auth(key).json(&body).send();
+    let init: Value = rpc(cli.clone(), json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}})).await.unwrap().json().await.unwrap();
+    assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
+    let run: Value = rpc(cli.clone(), json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "run_errand", "arguments": {"brief": "Ask Priya to lunch", "wait_seconds": 60}}})).await.unwrap().json().await.unwrap();
+    let done = &run["result"]["structuredContent"];
+    assert!(done["status"].as_str().unwrap().starts_with("done"), "{run}");
+    assert_eq!(done["people"]["asked_by"][1], "Asha", "the errand is Asha's");
+    assert_eq!(done["said"]["false_delivered"], 0);
+    let said: Value = rpc(cli.clone(), json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "post_message", "arguments": {"to": "#general", "text": "Pushed the fix from my terminal"}}})).await.unwrap().json().await.unwrap();
+    assert_eq!(said["result"]["isError"], false, "{said}");
+    let status: Value = rpc(cli.clone(), json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "office_status", "arguments": {}}})).await.unwrap().json().await.unwrap();
+    assert_eq!(status["result"]["structuredContent"]["people"][0]["on_cli"], true);
+    // Through the plain API too, a CLI key can't approve a call or change the tools.
+    let errand = done["id"].as_str().unwrap();
+    let approve = http.post(format!("{base}/api/errands/{errand}/approvals/x")).bearer_auth(&cli).json(&json!({"approve": true})).send().await.unwrap();
+    assert_eq!(approve.status(), 403);
+    let connect = http.post(format!("{base}/api/connectors")).bearer_auth(&cli).json(&json!({"name": "Evil", "url": "https://evil.example/mcp"})).send().await.unwrap();
+    assert_eq!(connect.status(), 403);
+    // Nor read the invite, or anything else off /mcp.
+    let whoami = http.get(format!("{base}/api/company/whoami")).bearer_auth(&cli).send().await.unwrap();
+    assert_eq!(whoami.status(), 403);
+    // Revoked: refused at once. A made-up key never worked.
+    let mine: Value = http.get(format!("{base}/api/cli/keys")).bearer_auth("s3cret").header("X-Agora-Member", asha_key).send().await.unwrap().json().await.unwrap();
+    assert_eq!(mine[0]["label"], "Claude Code");
+    assert!(mine[0].get("hash").is_none());
+    let gone = http.delete(format!("{base}/api/cli/keys/{}", mine[0]["id"].as_str().unwrap())).bearer_auth("s3cret").header("X-Agora-Member", asha_key).send().await.unwrap();
+    assert_eq!(gone.status(), 204);
+    for key in [cli, "agk_made_up".to_string()] {
+        let refused = rpc(key, json!({"jsonrpc": "2.0", "id": 5, "method": "tools/list"})).await.unwrap();
+        assert_eq!(refused.status(), 401);
+    }
+    // An office without a token refuses a revoked key just the same.
+    let open = hub(None).await;
+    let me: Value = http.post(format!("{open}/api/company/join")).json(&json!({"name": "Dev"})).send().await.unwrap().json().await.unwrap();
+    let dev_key = me["key"].as_str().unwrap();
+    let minted: Value = http.post(format!("{open}/api/cli/keys")).header("X-Agora-Member", dev_key).json(&json!({"label": "Codex"})).send().await.unwrap().json().await.unwrap();
+    let id = minted["id"].as_str().unwrap();
+    http.delete(format!("{open}/api/cli/keys/{id}")).header("X-Agora-Member", dev_key).send().await.unwrap();
+    let refused = http.post(format!("{open}/mcp")).bearer_auth(minted["key"].as_str().unwrap()).json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).send().await.unwrap();
+    assert_eq!(refused.status(), 401);
 }
 
 #[tokio::test]

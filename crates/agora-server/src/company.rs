@@ -78,6 +78,8 @@ pub(crate) struct Member {
     /// which brings that agent's role and skills to its errands. `None` = a plain assistant.
     pub bot_role: Option<BotRole>,
     pub online: bool,
+    /// They have worked from a coding CLI (with a CLI key) since the office started.
+    pub on_cli: bool,
     /// SHA-256 of their key: the key itself is only ever in their hands.
     #[serde(skip)]
     key_hash: String,
@@ -243,6 +245,7 @@ impl Company {
                 color: s.color,
                 bot: s.bot,
                 online: false,
+                on_cli: false,
                 key_hash: s.key_hash,
                 streams: 0,
             })
@@ -448,6 +451,7 @@ impl Company {
             bot: bot.to_string(),
             bot_role,
             online: false,
+            on_cli: false,
             key_hash: hash_key(&key),
             streams: 0,
         };
@@ -530,6 +534,17 @@ impl Company {
         Some(gone)
     }
 
+    /// `id` is working from a CLI (or, `false`, has no CLI key left).
+    pub(crate) fn set_on_cli(&mut self, id: &str, on: bool) {
+        if let Some(m) = self.members.iter_mut().find(|m| m.id == id)
+            && m.on_cli != on
+        {
+            m.on_cli = on;
+            let member = m.clone();
+            self.send(CompanyEvent::Member { member });
+        }
+    }
+
     fn set_online(&mut self, id: &str, delta: isize) {
         if let Some(m) = self.members.iter_mut().find(|m| m.id == id) {
             m.streams = m.streams.saturating_add_signed(delta);
@@ -548,8 +563,15 @@ impl Hub {
         self.company.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// The member acting on this request: by their key header, or the session cookie.
+    /// The member acting on this request: by their CLI key, their key header, or the
+    /// session cookie.
     pub(crate) fn member(&self, headers: &HeaderMap) -> Option<Member> {
+        if let Some(key) = crate::cli::key_of(headers) {
+            let id = self.cli_keys().member_of(key)?;
+            let mut company = self.company();
+            company.set_on_cli(&id, true);
+            return company.by_id(&id).cloned();
+        }
         let key = headers.get(MEMBER_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string).or_else(|| crate::cookie(headers, MEMBER_COOKIE)).unwrap_or_default();
         self.company().by_key(&key).cloned()
     }
@@ -631,6 +653,8 @@ pub(crate) async fn leave(State(hub): State<Arc<Hub>>, Path(id): Path<String>, h
             if me.id != id {
                 company.rotate_invite();
             }
+            drop(company);
+            hub.cli_keys().drop_member(&id); // their CLI keys go with them
             StatusCode::NO_CONTENT.into_response()
         }
         None => error(StatusCode::NOT_FOUND, "no such member"),
