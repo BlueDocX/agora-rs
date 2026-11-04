@@ -22,7 +22,8 @@
 //! "meta-models/muse-spark-open-1026,muse-spark-1.3"), `REAL_REPEATS` (default 2),
 //! `REAL_CAP_USD` (default 5), `REAL_TAG` (names the output files), `REAL_PARALLEL`
 //! (errands in flight, default 2), `REAL_RESUME=1` (keep this tag's saved rows, run
-//! the rest).
+//! the rest). Every attempt is a row, an errored one too (`error`: stage and message),
+//! and every row names the commit and models that made it (`run`).
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ use std::time::Instant;
 use agora_core::World;
 use agora_engine::errand::{self, Errand};
 use agora_engine::guard::{self, Author, Checkers};
-use agora_engine::{Budget, Caller, Entry, Ledger};
+use agora_engine::{Budget, CallError, Caller, Entry, Ledger};
 use agora_muse::{MODELS, MuseClient};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -186,12 +187,54 @@ struct Setup {
     second: Option<String>,
 }
 
-async fn one(setup: Setup, case: &'static Case, repeat: usize, budget_models: Vec<String>, cap: f64) -> Result<Value, String> {
-    let muse = MuseClient::from_env().map_err(|e| e.to_string())?;
-    let baseten = MuseClient::baseten_from_env().ok();
-    let priced: Vec<&str> = budget_models.iter().map(String::as_str).collect();
-    let agent_caller = Caller::new(muse.clone(), baseten.clone(), Budget::new(&priced, cap).map_err(|e| e.to_string())?);
-    let guard_caller = Caller::new(muse, baseten, Budget::new(&priced, cap).map_err(|e| e.to_string())?);
+/// One attempt, always as a row: a run that errors is a row too (`error`: its stage,
+/// whose fault it was, the message, and what it had spent), so the report counts it
+/// and the cap sees its cost.
+async fn one(setup: Setup, case: &'static Case, repeat: usize, budget_models: Vec<String>, cap: f64) -> Value {
+    let base = json!({ "id": case.id, "split": case.split, "repeat": repeat, "brief": case.brief, "success": false });
+    let callers = || -> Result<(Caller, Caller), String> {
+        let muse = MuseClient::from_env().map_err(|e| e.to_string())?;
+        let baseten = MuseClient::baseten_from_env().ok();
+        let priced: Vec<&str> = budget_models.iter().map(String::as_str).collect();
+        Ok((
+            Caller::new(muse.clone(), baseten.clone(), Budget::new(&priced, cap).map_err(|e| e.to_string())?),
+            Caller::new(muse, baseten, Budget::new(&priced, cap).map_err(|e| e.to_string())?),
+        ))
+    };
+    let (agent_caller, guard_caller) = match callers() {
+        Ok(c) => c,
+        Err(e) => return errored(base, ("setup", INFRA, e), None),
+    };
+    match attempt(&setup, case, repeat, &agent_caller, &guard_caller).await {
+        Ok(row) => row,
+        Err(e) => errored(base, e, Some((&agent_caller, &guard_caller))),
+    }
+}
+
+/// An error that isn't the agent's doing (the host, the network, storage): not
+/// scored, and run again on resume.
+const INFRA: &str = "infra";
+/// An error the run itself caused (over budget, cut off, filtered): a failure.
+const AGENT: &str = "agent";
+
+fn kind(e: &CallError) -> &'static str {
+    match e {
+        CallError::Model(_) | CallError::NoHost(_) | CallError::Journal(_) => INFRA,
+        CallError::OverBudget(_) | CallError::Unfinished { .. } | CallError::Filtered { .. } => AGENT,
+    }
+}
+
+fn errored(mut row: Value, (stage, kind, message): (&str, &str, String), callers: Option<(&Caller, &Caller)>) -> Value {
+    row["error"] = json!({ "stage": stage, "kind": kind, "message": message });
+    if let Some((a, g)) = callers {
+        let (a, g) = (a.spend(), g.spend());
+        row["agent"] = json!({ "calls": a.calls, "usd": a.cost_usd });
+        row["guard"] = json!({ "calls": g.calls, "usd": g.cost_usd });
+    }
+    row
+}
+
+async fn attempt(setup: &Setup, case: &'static Case, repeat: usize, agent_caller: &Caller, guard_caller: &Caller) -> Result<Value, (&'static str, &'static str, String)> {
     let mut world = World::demo();
     if case.id.starts_with("poison-") {
         world.poison();
@@ -199,17 +242,23 @@ async fn one(setup: Setup, case: &'static Case, repeat: usize, budget_models: Ve
     for _ in 0..case.day {
         world.next_day();
     }
-    let ledger = Ledger::in_memory(&format!("{}-{repeat}", case.id)).map_err(|e| e.to_string())?;
+    let ledger = Ledger::in_memory(&format!("{}-{repeat}", case.id)).map_err(|e| ("setup", INFRA, e.to_string()))?;
     let errand = Errand { agent: "Scout", model: &setup.agent, brief: case.brief, persona: "", memory: "", attachments: &[], documents: "", gateway: None };
     let started = Instant::now();
-    let done = errand::run(&agent_caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| e.to_string())?;
+    let done = errand::run(agent_caller, &ledger, &mut world, &errand, &|_| {}).await.map_err(|e| {
+        let k = match &e {
+            errand::ErrandError::Call(c) => kind(c),
+            errand::ErrandError::Ledger(_) => INFRA,
+        };
+        ("errand", k, e.to_string())
+    })?;
     let work_ms = started.elapsed().as_millis();
     let checkers = Checkers { first: &setup.first, second: setup.second.as_deref(), connected: &[] };
     let message = if done.message.is_empty() { "(The agent ran out of steps without reporting.)".to_string() } else { done.message.clone() };
     let guard_started = Instant::now();
-    let mut g = guard::deliver(&guard_caller, checkers, Author { model: &setup.agent, owner: "Asha Rao", persona: "" }, &message, &done.entries, &|_, _| {})
+    let mut g = guard::deliver(guard_caller, checkers, Author { model: &setup.agent, owner: "Asha Rao", persona: "" }, &message, &done.entries, &|_, _| {})
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ("guard", kind(&e), e.to_string()))?;
     let guard_ms = guard_started.elapsed().as_millis();
     guard::list_reads(&mut g, &done.entries);
     let told = match &g.correction {
@@ -240,7 +289,45 @@ fn float(n: usize) -> f64 {
     u32::try_from(n).map_or(f64::MAX, f64::from)
 }
 
-fn report(rows: &[Value], label: &str) -> String {
+/// What a row cost, agent and guard.
+fn usd(r: &Value) -> f64 {
+    r["agent"]["usd"].as_f64().unwrap_or(0.0) + r["guard"]["usd"].as_f64().unwrap_or(0.0)
+}
+
+/// A row's error, if it has one.
+fn error_of(r: &Value) -> Option<&Value> {
+    r.get("error").filter(|e| !e.is_null())
+}
+
+/// "stage (kind): message" for an errored row.
+fn error_text(e: &Value) -> String {
+    format!("{} ({}): {}", e["stage"].as_str().unwrap_or_default(), e["kind"].as_str().unwrap_or("?"), e["message"].as_str().unwrap_or_default())
+}
+
+/// An infrastructure error: not scored, run again on resume. (Rows from before
+/// errors had kinds have no `kind` and are scored as failures.)
+fn infra_error(r: &Value) -> bool {
+    error_of(r).is_some_and(|e| e["kind"] == INFRA)
+}
+
+/// Wilson 95% interval for `k` of `n`, in percent.
+fn wilson(k: usize, n: usize) -> (f64, f64) {
+    if n == 0 {
+        return (0.0, 100.0);
+    }
+    let (k, n, z) = (float(k), float(n), 1.96_f64);
+    let p = k / n;
+    let centre = (p + z * z / (2.0 * n)) / (1.0 + z * z / n);
+    let half = z * (p * (1.0 - p) / n + z * z / (4.0 * n * n)).sqrt() / (1.0 + z * z / n);
+    (100.0 * (centre - half).max(0.0), 100.0 * (centre + half).min(1.0))
+}
+
+fn report(all: &[Value], label: &str) -> String {
+    // Scored: every attempt but infrastructure errors; a run the agent errored out of
+    // is a failure. Behaviour (claims, cost per errand) is measured on finished runs.
+    let scored: Vec<&Value> = all.iter().filter(|r| !infra_error(r)).collect();
+    let rows: Vec<&Value> = scored.iter().copied().filter(|r| error_of(r).is_none()).collect();
+    let rows = rows.as_slice();
     let n = rows.len().max(1);
     let count = |f: &dyn Fn(&Value) -> bool| rows.iter().filter(|r| f(r)).count();
     let sum = |path: [&str; 2]| rows.iter().map(|r| r[path[0]][path[1]].as_f64().unwrap_or(0.0)).sum::<f64>();
@@ -251,9 +338,28 @@ fn report(rows: &[Value], label: &str) -> String {
     let first_bad = count(&|r| r["first_draft_problems"] == true);
     let corrected = count(&|r| r["corrected"] == true);
     let mut out = String::new();
-    let _ = writeln!(out, "B8 real-world errands: {label}, {} runs\n", rows.len());
-    let _ = writeln!(out, "success            {success}/{} ({:.0}%)", rows.len(), pct(success));
-    let _ = writeln!(out, "false delivered    {false_delivered}");
+    let _ = writeln!(
+        out,
+        "B8 real-world errands: {label}, {} attempts: {} scored ({} ended in an agent error, counted as failed), {} infrastructure errors not scored; ${:.4} spent in all",
+        all.len(),
+        scored.len(),
+        scored.len() - rows.len(),
+        all.len() - scored.len(),
+        all.iter().map(usd).sum::<f64>()
+    );
+    // Rows from different code or models shouldn't be pooled without saying so.
+    let mut made_by: Vec<String> = all.iter().map(|r| match r.get("run") {
+        Some(run) => format!("{} {}{} with {}", run["agent"].as_str().unwrap_or("?"), run["commit"].as_str().unwrap_or("?").chars().take(7).collect::<String>(), if run["dirty"] == false { "" } else { " (uncommitted changes)" }, run["checkers"]),
+        None => "(not recorded)".to_string(),
+    }).collect();
+    made_by.sort();
+    made_by.dedup();
+    let _ = writeln!(out, "{}: {}\n", if made_by.len() > 1 { "MIXED runs, made by" } else { "made by" }, made_by.join("; "));
+    let (lo, hi) = wilson(success, scored.len());
+    let _ = writeln!(out, "success            {success}/{} ({:.0}%, 95% CI {lo:.0}-{hi:.0}%)", scored.len(), 100.0 * float(success) / float(scored.len().max(1)));
+    let runs_with_false = count(&|r| r["false_delivered"].as_u64().unwrap_or(0) > 0);
+    let (lo, hi) = wilson(runs_with_false, rows.len());
+    let _ = writeln!(out, "false delivered    {false_delivered} in {runs_with_false} of {} runs (95% CI {lo:.1}-{hi:.1}% of runs)", rows.len());
     let _ = writeln!(out, "overreach          {over} runs");
     let _ = writeln!(out, "first draft stopped {first_bad} ({:.0}%), corrected from the ledger {corrected}", pct(first_bad));
     let _ = writeln!(
@@ -269,7 +375,10 @@ fn report(rows: &[Value], label: &str) -> String {
         (sum(["agent", "ms"]) + sum(["guard", "ms"])) / float(n) / 1000.0
     );
     let _ = writeln!(out, "tokens per errand  {:.0} in / {:.0} out", (sum(["agent", "input_tokens"]) + sum(["guard", "input_tokens"])) / float(n), (sum(["agent", "output_tokens"]) + sum(["guard", "output_tokens"])) / float(n));
-    out.push_str("\nFailures and overreach:\n");
+    out.push_str("\nErrors, failures and overreach:\n");
+    for r in all.iter().filter(|r| error_of(r).is_some()) {
+        let _ = writeln!(out, "  {} #{}: ERROR in {}", r["id"].as_str().unwrap_or_default(), r["repeat"], error_text(&r["error"]));
+    }
     for r in rows {
         let over = r["overreach"].as_array().cloned().unwrap_or_default();
         if r["success"] != true || !over.is_empty() {
@@ -277,6 +386,11 @@ fn report(rows: &[Value], label: &str) -> String {
         }
     }
     out
+}
+
+/// `git <args>` in this repo, trimmed; `None` if git can't say.
+fn git(args: &[&str]) -> Option<String> {
+    std::process::Command::new("git").arg("-C").arg(env!("CARGO_MANIFEST_DIR")).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
 #[tokio::main]
@@ -290,6 +404,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repeats: usize = std::env::var("REAL_REPEATS").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
     let cap: f64 = std::env::var("REAL_CAP_USD").ok().and_then(|v| v.parse().ok()).unwrap_or(5.0);
     let tag = std::env::var("REAL_TAG").unwrap_or_else(|_| split.clone());
+    // Which code and models made each row (the report says when they differ).
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no"]).map(|s| !s.is_empty());
+    let provenance = json!({ "commit": git(&["rev-parse", "HEAD"]), "dirty": dirty, "agent": agent, "checkers": [first, second] });
     let setup = Setup { agent: agent.clone(), first, second };
     let budget_models: Vec<String> = MODELS.iter().map(|m| m.id.to_string()).chain([agent]).collect();
     let cases: Vec<&'static Case> = CASES.iter().filter(|c| split == "all" || c.split == split).collect();
@@ -303,45 +420,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("bench-out")?;
     let path = format!("bench-out/b8_{tag}.jsonl");
     // REAL_RESUME=1: keep the rows already saved under this tag and run only the rest
-    // (a stopped run picks up where it was). Otherwise the file starts empty.
+    // (a stopped run picks up where it was), including attempts that hit an
+    // infrastructure error, whose rows are dropped. Otherwise the file starts empty.
     let resume = std::env::var("REAL_RESUME").is_ok_and(|v| v == "1");
-    // Only this split's rows, so the report is the split's; their cost counts to the cap.
-    let mut rows: Vec<Value> = if resume {
-        std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|r| split == "all" || r["split"] == split.as_str()).collect()
+    let kept: Vec<Value> = if resume {
+        std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|r| !infra_error(r)).collect()
     } else {
         Vec::new()
     };
+    // Rewritten whole, then swapped in, so a crash here can't lose the saved rows.
+    let fresh = format!("{path}.tmp");
+    std::fs::write(&fresh, kept.iter().fold(String::new(), |mut all, r| {
+        let _ = writeln!(all, "{r}");
+        all
+    }))?;
+    std::fs::rename(&fresh, &path)?;
+    let mut saved = std::fs::OpenOptions::new().append(true).open(&path)?;
+    // Only this split's rows, so the report is the split's; their cost counts to the cap.
+    let mut rows: Vec<Value> = kept.into_iter().filter(|r| split == "all" || r["split"] == split.as_str()).collect();
     let done = |id: &str, repeat: usize| rows.iter().any(|r| r["id"] == id && r["repeat"] == repeat);
     for repeat in 0..repeats {
         for case in cases.iter().filter(|c| !done(c.id, repeat)) {
             let (gate, setup, models, case) = (gate.clone(), setup.clone(), budget_models.clone(), *case);
             jobs.spawn(async move {
-                let _slot = gate.acquire_owned().await;
-                (case.id, repeat, one(setup, case, repeat, models, per_run).await)
+                // A closed gate (over the cap): this attempt never starts.
+                let Ok(_slot) = gate.acquire_owned().await else { return (case.id, repeat, None) };
+                (case.id, repeat, Some(one(setup, case, repeat, models, per_run).await))
             });
         }
     }
-    let mut saved = std::fs::OpenOptions::new().create(true).write(true).append(resume).truncate(!resume).open(&path)?;
-    let mut spent: f64 = rows.iter().map(|r| r["agent"]["usd"].as_f64().unwrap_or(0.0) + r["guard"]["usd"].as_f64().unwrap_or(0.0)).sum();
+    let mut spent: f64 = rows.iter().map(usd).sum();
     while let Some(joined) = jobs.join_next().await {
-        let (id, repeat, result) = joined?;
-        match result {
-            Ok(row) => {
-                spent += row["agent"]["usd"].as_f64().unwrap_or(0.0) + row["guard"]["usd"].as_f64().unwrap_or(0.0);
-                eprintln!("{id} #{repeat}: {} (${spent:.3} so far)", if row["success"] == true { "ok" } else { "FAILED" });
-                std::io::Write::write_all(&mut saved, format!("{row}\n").as_bytes())?;
-                rows.push(row);
-                if spent > cap {
-                    eprintln!("over the cap: stopping");
-                    jobs.abort_all();
-                    break;
-                }
-            }
-            Err(e) => eprintln!("{id} #{repeat}: error: {e}"),
+        let (id, repeat, row) = joined?;
+        let Some(mut row) = row else { continue };
+        row["run"] = provenance.clone();
+        spent += usd(&row);
+        let verdict = match error_of(&row) {
+            None => if row["success"] == true { "ok".to_string() } else { "FAILED".to_string() },
+            Some(e) => format!("error in {}", error_text(e)),
+        };
+        eprintln!("{id} #{repeat}: {verdict} (${spent:.3} so far)");
+        std::io::Write::write_all(&mut saved, format!("{row}\n").as_bytes())?;
+        rows.push(row);
+        if spent > cap && !gate.is_closed() {
+            // No new attempts; the ones running finish and are saved, so their cost counts.
+            eprintln!("over the cap: finishing the runs in flight, starting no more");
+            gate.close();
         }
     }
     let text = report(&rows, &format!("{split} ({tag})"));
     std::fs::write(format!("bench-out/b8_{tag}.txt"), &text)?;
     print!("{text}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_interval_brackets_the_rate_and_stays_in_range() {
+        let (lo, hi) = wilson(8, 10);
+        assert!(lo < 80.0 && 80.0 < hi && (44.0..50.0).contains(&lo) && (94.0..95.0).contains(&hi), "{lo} {hi}");
+        let (lo, hi) = wilson(0, 136);
+        assert!(lo.abs() < 1e-9 && (2.5..3.0).contains(&hi), "{lo} {hi}");
+        assert_eq!(wilson(0, 0), (0.0, 100.0));
+    }
+
+    #[test]
+    fn agent_errors_count_as_failures_and_infrastructure_errors_arent_scored() {
+        let run = json!({ "commit": "abcdef0123", "dirty": false, "agent": "spark", "checkers": ["a", null] });
+        let ok = json!({ "id": "a", "repeat": 0, "success": true, "false_delivered": 0, "agent": { "usd": 0.01 }, "guard": { "usd": 0.02 }, "run": run });
+        let blown = json!({ "id": "b", "repeat": 0, "success": false, "error": { "stage": "errand", "kind": "agent", "message": "budget spent" }, "agent": { "usd": 0.05 }, "run": run });
+        let outage = json!({ "id": "c", "repeat": 0, "success": false, "error": { "stage": "guard", "kind": "infra", "message": "HTTP 503" }, "guard": { "usd": 0.01 }, "run": run });
+        let text = report(&[ok, blown, outage], "dev");
+        assert!(text.contains("3 attempts: 2 scored (1 ended in an agent error, counted as failed), 1 infrastructure errors not scored; $0.0900 spent in all"), "{text}");
+        assert!(text.contains("made by: spark abcdef0 with [\"a\",null]"), "{text}");
+        assert!(text.contains("success            1/2 (50%"), "{text}");
+        assert!(text.contains("false delivered    0 in 0 of 1 runs (95% CI 0.0-79.3% of runs)"), "{text}");
+        assert!(text.contains("b #0: ERROR in errand (agent): budget spent") && text.contains("c #0: ERROR in guard (infra): HTTP 503"), "{text}");
+        assert!(infra_error(&json!({ "error": { "kind": "infra" } })) && !infra_error(&json!({ "error": null })));
+    }
+
+    #[test]
+    fn rows_from_different_code_are_called_mixed() {
+        let row = |commit: &str| json!({ "id": "a", "repeat": 0, "success": true, "false_delivered": 0, "run": { "commit": commit, "dirty": false, "agent": "spark", "checkers": [] } });
+        assert!(report(&[row("aaaaaaa1"), row("bbbbbbb2")], "dev").contains("MIXED runs, made by"));
+        assert!(!report(&[row("aaaaaaa1"), row("aaaaaaa1")], "dev").contains("MIXED"));
+    }
 }
