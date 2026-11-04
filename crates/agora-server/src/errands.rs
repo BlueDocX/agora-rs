@@ -131,6 +131,9 @@ pub(crate) enum ErrandEvent {
     NotLearned { reason: String },
     /// Another bot is working in the office; this errand starts when it's done.
     Waiting,
+    /// Picked up again after a restart cut it off, from its own ledger: `note` is what
+    /// the bot was told (written by code from the ledger).
+    Resumed { note: String },
     /// A call to a connected tool that changes something waits for the person: the
     /// exact arguments and where it goes. Answer at `.../approvals/{id}`.
     Approval { id: String, tool: String, args: Value, destinations: Vec<String>, approver: Option<String> },
@@ -190,6 +193,13 @@ struct Meta {
     /// The office day it ran on.
     #[serde(default)]
     day: usize,
+    /// An added agent's connected tools (`None`: a person's bot, every tool on).
+    #[serde(default)]
+    only_tools: Option<Vec<String>>,
+    /// Stored with `only_tools`, so it can be resumed with the same tools. (False in
+    /// errands stored before: their tools aren't known, so they aren't resumed.)
+    #[serde(default)]
+    resumable: bool,
 }
 
 pub(crate) struct ErrandRoom {
@@ -213,6 +223,8 @@ pub(crate) struct ErrandRoom {
     approvals: Mutex<BTreeMap<String, Waiting>>,
     /// An added agent's connected tools (`None` = a person's bot: every tool on).
     only_tools: Option<Vec<String>>,
+    /// Its tools are known (see `Meta::resumable`), so it can be resumed after a restart.
+    resumable: bool,
     /// The connected tools it had (id and weight), for the guard's parsers.
     available: Mutex<Vec<(String, agora_core::Weight)>>,
     /// When it was asked for.
@@ -285,6 +297,8 @@ impl ErrandRoom {
             poisoned: self.poisoned,
             at_ms: self.at_ms,
             day: self.day(),
+            only_tools: self.only_tools.clone(),
+            resumable: self.resumable,
         }
     }
 
@@ -657,6 +671,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         approvals: Mutex::default(),
         available: Mutex::default(),
         only_tools: agent_bot.map(|a| a.tools),
+        resumable: true,
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
         day: std::sync::atomic::AtomicUsize::new(hub.day()),
@@ -695,7 +710,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         room.push(ErrandEvent::Recalled { text: recalled });
     }
     room.push(ErrandEvent::Busy { turn: 0, question: None });
-    tokio::spawn(work(Arc::clone(hub), room));
+    tokio::spawn(work(Arc::clone(hub), room, None));
     Ok(id)
 }
 
@@ -713,14 +728,24 @@ fn announce(hub: &Hub, people: &People, agent: &str, brief: &str, id: &str) {
     hub.company().note(owner_id, format!("{asker} asked {whose}: {brief}"), Some(id.to_string()));
 }
 
+/// How a restored errand's failure starts when a restart cut it off.
+const RESTARTED: &str = "the office restarted while this was running";
+
 /// Run the errand, streaming each ledger entry as it is written, then check the report.
-async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>) {
-    let recalled = room.recalled();
+/// `resumed`: picked up after a restart, with this note from its ledger.
+async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>, resumed: Option<String>) {
+    let recalled = match &resumed {
+        // In the memory slot, so the run counts as holding private data (its earlier
+        // reads were): its connected calls ask the person, as they would have.
+        Some(note) => format!("{}\n\n{note}", room.recalled()).trim().to_string(),
+        None => room.recalled(),
+    };
     // The files go to this run once; the room doesn't keep the bytes, and they're
     // dropped as soon as the work is done (before the guard and memory calls).
     let files = room.files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take().unwrap_or_default();
-    if room.poisoned {
+    if room.poisoned && resumed.is_none() {
         // The red-team copy: the office as it is now, with the injection planted.
+        // (A resumed one keeps its copy, its own calls replayed into it.)
         let mut copy = hub.office.lock().await.clone();
         copy.poison();
         *room.world.lock().await = copy;
@@ -840,6 +865,52 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
         }
         finish(&room);
     });
+    StatusCode::ACCEPTED.into_response()
+}
+
+/// What a resumed run is told: its calls so far, from the ledger, by code.
+fn recovery_note(entries: &[Entry]) -> String {
+    format!(
+        "The office restarted while you were doing this errand. Your action log so far (written by the system: \
+         these calls happened, or are marked as unknown):\n{}\n\nCarry on from here. Don't repeat a call that already \
+         went through. A call whose result says \"Outcome unknown\" may or may not have happened: check before \
+         repeating it. Files attached to the errand aren't available any more.",
+        if entries.is_empty() { "(no calls yet)".to_string() } else { guard::log(entries) }
+    )
+}
+
+/// `POST /api/errands/{id}/resume`: pick up an errand a restart cut off before it
+/// reported, from its ledger. Only on request (the office never acts on its own after
+/// a restart), by whoever may ask about it; its calls that change something ask the
+/// person again, as any call does.
+pub(crate) async fn resume(State(hub): State<Arc<Hub>>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    if !authorized(&hub, &headers) {
+        return unauthorized();
+    }
+    let Some(room) = hub.errand(&id) else { return error(StatusCode::NOT_FOUND, "no such errand") };
+    if !room.may_act(hub.member(&headers).as_ref(), hub.company().members_view().is_empty()) {
+        return error(StatusCode::FORBIDDEN, "only whoever asked for this errand, its bot's owner, or the office owner can resume it");
+    }
+    if !room.resumable {
+        return error(StatusCode::CONFLICT, "this errand was stored before resuming existed, so its tools aren't known: start it again instead");
+    }
+    let committed = hub.errands().committed_usd();
+    let could_spend = ERRAND_CAP_USD - room.caller.spend().cost_usd;
+    if committed + could_spend > hub.config.errands_cap_usd {
+        return error(StatusCode::PAYMENT_REQUIRED, &format!("the office's errand budget is spent (${committed:.2} of ${:.2})", hub.config.errands_cap_usd));
+    }
+    {
+        let mut inner = room.lock();
+        let cut_off = inner.history.iter().rev().find(|e| !matches!(e, ErrandEvent::Idle)).is_some_and(|e| matches!(e, ErrandEvent::Failed { turn: 0, reason } if reason.starts_with(RESTARTED)));
+        if inner.busy || inner.report.is_some() || !cut_off {
+            return error(StatusCode::CONFLICT, "only an errand a restart cut off before it reported can be resumed");
+        }
+        inner.busy = true;
+    }
+    let note = recovery_note(&room.ledger.entries().unwrap_or_default());
+    room.push(ErrandEvent::Resumed { note: note.clone() });
+    room.push(ErrandEvent::Busy { turn: 0, question: None });
+    tokio::spawn(work(hub, room, Some(note)));
     StatusCode::ACCEPTED.into_response()
 }
 
@@ -1304,8 +1375,8 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
         let calls = if unknown == 1 { "1 call".to_string() } else { format!("{unknown} calls") };
         if cut_off {
             let reason = match unknown {
-                0 => "the office restarted while this was running".to_string(),
-                _ => format!("the office restarted while this was running; {calls} may or may not have happened (see the ledger)"),
+                0 => RESTARTED.to_string(),
+                _ => format!("{RESTARTED}; {calls} may or may not have happened (see the ledger)"),
             };
             history.push(ErrandEvent::Failed { turn: turns, reason });
             history.push(ErrandEvent::Idle);
@@ -1338,7 +1409,8 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             files: Mutex::new(None),
             approvals: Mutex::default(),
         available: Mutex::default(),
-            only_tools: None,
+            only_tools: meta.only_tools.clone(),
+            resumable: meta.resumable,
             at_ms: meta.at_ms,
             day: std::sync::atomic::AtomicUsize::new(meta.day),
             caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),

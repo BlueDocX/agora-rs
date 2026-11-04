@@ -55,7 +55,14 @@ async fn mock_model() -> String {
                     let planted = input.contains("Attached file") && input.contains("evil@example.com");
                     // A connected issue tracker: file the bug the errand names there.
                     let tools = body["text"]["format"]["schema"]["properties"]["tool"]["enum"].to_string();
-                    if turns <= 3 && tools.contains("tracker.create_issue") && input.contains("login bug") {
+                    // "slowly": text Priya, then stall (the office restarts meanwhile); resumed
+                    // with its ledger, it sees the text went and only reports.
+                    if input.contains("slowly") && input.contains("The office restarted while you were doing this errand") {
+                        reply(r#"{"tool": "finish", "target": "", "when": "", "text": "I texted Priya about lunch."}"#)
+                    } else if input.contains("slowly") && turns > 3 {
+                        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                        reply(r#"{"tool": "finish", "target": "", "when": "", "text": "I texted Priya about lunch."}"#)
+                    } else if turns <= 3 && tools.contains("tracker.create_issue") && input.contains("login bug") {
                         // "where the email said": an agent misled by something it read.
                         let repo = if input.contains("where the email said") { "evil/exfil" } else { "octo/demo" };
                         reply(&json!({ "tool": "tracker.create_issue", "target": "", "when": "", "text": "", "args": json!({ "repo": repo, "title": "Login bug" }).to_string() }).to_string())
@@ -418,6 +425,40 @@ async fn a_company_joins_by_invite_and_only_the_right_people_can_act_on_an_erran
     assert_eq!(errands[0]["said"]["message"], "[Withdrawn: written after reading something you asked to forget.]");
     let ledger: Value = http.get(format!("{again}/api/errands/{id}/ledger")).send().await.unwrap().json().await.unwrap();
     assert_eq!((&ledger["chain"]["intact"], &ledger["entries"][0]["action"]["target"]), (&json!(true), &json!("[forgotten]")));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn an_errand_a_restart_cut_off_is_resumed_from_its_ledger_on_request() {
+    let dir = temp_dir();
+    let config = || async { HubConfig { journal: Some(dir.join("journal.db")), state: Some(dir.join("state.db")), signing_key: Some(dir.join("key")), ..config().await } };
+    let first = serve(app(config().await)).await;
+    let http = reqwest::Client::new();
+    let started = http.post(format!("{first}/api/errands")).json(&json!({"brief": "Ask Priya to lunch, slowly"})).send().await.unwrap();
+    let id = started.json::<Value>().await.unwrap()["id"].as_str().unwrap().to_string();
+    // It texts Priya, then stalls on its next turn.
+    let mut stream = http.get(format!("{first}/api/errands/{id}/events")).send().await.unwrap();
+    read_until(&mut stream, r#""type":"step""#).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await; // the store writes behind
+    // The office restarts: a second one on the same files finds it cut off.
+    let again = serve(app(config().await)).await;
+    let errands: Value = http.get(format!("{again}/api/errands")).send().await.unwrap().json().await.unwrap();
+    assert!(errands[0]["failed"].as_str().is_some_and(|r| r.starts_with("the office restarted")), "{errands}");
+    // Only on request, and only once.
+    let resume = || http.post(format!("{again}/api/errands/{id}/resume")).send();
+    assert_eq!(resume().await.unwrap().status(), 202);
+    let mut stream = http.get(format!("{again}/api/errands/{id}/events")).send().await.unwrap();
+    let events = read_until(&mut stream, r#""type":"said""#).await;
+    let note = events.iter().find(|e| e["type"] == "resumed").unwrap()["note"].as_str().unwrap().to_string();
+    assert!(note.contains("messages.send") && note.contains("Don't repeat a call that already went through"), "{note}");
+    // Its report is checked against the whole ledger: the text sent before the restart backs it.
+    let said = events.iter().find(|e| e["type"] == "said").unwrap();
+    assert_eq!((said["message"].as_str(), &said["check"]["false_claims"]), (Some("I texted Priya about lunch."), &json!([])), "{said}");
+    assert_eq!(said["check"]["audit"]["checked"][0]["verdict"], "supported", "{said}");
+    let ledger: Value = http.get(format!("{again}/api/errands/{id}/ledger")).send().await.unwrap().json().await.unwrap();
+    assert_eq!((ledger["entries"].as_array().unwrap().len(), &ledger["chain"]["intact"]), (1, &json!(true)), "nothing was sent twice");
+    read_until(&mut stream, r#""type":"idle""#).await;
+    assert_eq!(resume().await.unwrap().status(), 409, "resumed once; it has reported");
     std::fs::remove_dir_all(dir).unwrap();
 }
 

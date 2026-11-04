@@ -344,7 +344,9 @@ pub async fn run(
 ) -> Result<Done, ErrandError> {
     let connected = connected_tools(errand);
     let mut input = opening(world, errand);
-    let mut entries = Vec::new();
+    // What it has done so far: nothing, or (resumed after a restart) the calls already
+    // on its ledger, which its report must own and whose private reads still count.
+    let mut entries = ledger.entries().map_err(ErrandError::Ledger)?;
     let mut invalid_turns = Vec::new();
     let (mut nudges, mut checked) = (0, false);
     for _ in 0..MAX_STEPS {

@@ -1659,6 +1659,16 @@ function verdictItem(steps) {
     if (failed && !errandBusy()) {
       li.classList.add("bad");
       li.append(el("span", "big", "✗ It couldn't finish"), el("span", "why", failed.reason));
+      // Cut off by a restart: the person may pick it up again from its ledger.
+      if (failed.reason.startsWith("the office restarted") && !errand.replay) {
+        const b = el("button", "resume", "Resume from its ledger");
+        b.onclick = async () => {
+          b.disabled = true;
+          const res = await fetch(`/api/errands/${encodeURIComponent(errand.id)}/resume`, { method: "POST", headers: JSON_HEADERS });
+          if (!res.ok) { const r = await res.json().catch(() => ({})); b.textContent = r.error || "Couldn't resume"; }
+        };
+        li.append(b);
+      }
     } else {
       li.classList.add("busy");
       li.append(el("span", "big", `${agent} is working…`),
@@ -1865,6 +1875,7 @@ function renderAlibi(feed) {
       feed.append(li);
     } else if (e.type === "learned") feed.append(learnedItem(e.learned));
     else if (e.type === "not_learned") feed.append(el("li", "note", `Memory not updated this time (${e.reason}). The errand itself is done.`));
+    else if (e.type === "resumed") feed.append(el("li", "note", "Resumed after the office restarted: it was given its ledger so far and told not to repeat what already went through."));
     else if (e.type === "waiting") feed.append(el("li", "note", "Waiting for the office: another bot is working in it. This errand starts when it's done."));
     else if (e.type === "approval") feed.append(approvalCard(e, errand.events));
     else if (e.type === "decided") feed.append(el("li", "note", `${e.approved ? "Approved" : "Declined"} by ${e.by}.`));

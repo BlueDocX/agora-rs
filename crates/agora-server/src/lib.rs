@@ -402,7 +402,7 @@ pub fn app(config: HubConfig) -> Router {
         .merge(company::routes())
         .route("/api/errands", post(errands::start).layer(DefaultBodyLimit::max(attach::MAX_BODY_BYTES)).layer(middleware::from_fn_with_state(Arc::clone(&hub), signed_in)).get(errands::list))
         .route("/api/errands/{id}/events", get(errands::events))
-        .route("/api/errands/{id}/ask", post(errands::ask))
+        .route("/api/errands/{id}/ask", post(errands::ask)).route("/api/errands/{id}/resume", post(errands::resume))
         .route("/api/errands/{id}/ledger", get(errands::ledger))
         .route("/api/errands/{id}/forget", post(errands::forget))
         .route("/api/errands/{id}/receipt", get(errands::receipt))
