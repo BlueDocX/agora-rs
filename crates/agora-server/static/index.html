@@ -1678,7 +1678,7 @@ function verdictItem(steps) {
   li.append(el("span", "big", big), el("span", "facts", facts.join(" · ")));
   if (said.turn > 0) li.append(el("span", "why", `Latest answer, to: ${said.question || "a question"}`));
   if (c.unverified) li.append(el("span", "why", "Why not fully checked: " + c.unverified));
-  if (errandBusy()) li.append(el("span", "why", `${agent} is answering a question…`));
+  if (errandBusy() && !errandSaving()) li.append(el("span", "why", `${agent} is answering a question…`));
   if (chain.signed && onServer()) {
     const a = el("a", null, "Download signed receipt");
     a.href = `/api/errands/${encodeURIComponent(errand.id)}/receipt`;
@@ -1866,7 +1866,13 @@ function renderAlibi(feed) {
   endGroup();
   if (busy) {
     const drafts = errand.events.filter((e) => e.type === "draft" && e.turn === busy.turn);
-    const what = drafts.length ? `The guard sent it back: ${agent} is rewriting it against the ledger (round ${drafts.length})…`
+    const saving = errand.events.some((e) => e.type === "said" && e.turn === busy.turn);
+    // Only drafts the guard stopped were sent back (the same test as the list above).
+    const stoppedDraft = (d) => started()?.guard !== false && Boolean(d.check.false_claims.length || d.check.unmentioned.length || d.check.unverified);
+    const sentBack = drafts.filter(stoppedDraft).length, passed = started()?.guard !== false && drafts.length && !stoppedDraft(drafts[drafts.length - 1]);
+    const what = saving ? `${agent} is saving what it learned…`
+      : passed ? `${agent}'s answer passed the check…`
+      : sentBack ? `The guard sent it back: ${agent} is rewriting it against the ledger (round ${sentBack})…`
       : busy.turn === 0 ? `${agent} is working…` : `${agent} is answering…`;
     feed.append(el("li", "ab-busy", what));
   }
@@ -1894,6 +1900,8 @@ function learnedItem(l) {
 }
 const errandIdle = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "idle";
 const errandBusy = () => errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop()?.type === "busy";
+// Busy, but the answer for that turn is already out: the bot is saving what it learned.
+const errandSaving = () => { const b = errand?.events.filter((e) => e.type === "busy" || e.type === "idle").pop(); return b?.type === "busy" && errand.events.some((e) => e.type === "said" && e.turn === b.turn); };
 const hasReport = () => errand?.events.some((e) => e.type === "said" && e.turn === 0);
 function renderErrandChips() {
   const box = $("errandchips");
@@ -2937,8 +2945,9 @@ function companyNote(a, live) {
   if (live && a.member === "office") { toast(a.text); refreshOfficeSoon(); }
   if (live) dispatchEvent(new CustomEvent("agora:company", { detail: { members: company.members, activity: a } }));
 }
-function openJoin() {
+async function openJoin() {
   if (me) return;
+  if (!presets.length) await loadTeams(); // an invite link opens this before the teams arrive
   botRoleOptions($("joinrole"), "");
   // The first person in owns the office; everyone after needs the owner's invite.
   const first = !company.members.length;
