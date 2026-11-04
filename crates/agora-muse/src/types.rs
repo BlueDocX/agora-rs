@@ -9,6 +9,12 @@ pub enum Role {
     System,
     User,
     Assistant,
+    /// From the harness mid-run ("Not finished: ..."), neither the person nor data.
+    /// The Responses API takes it as `developer`, so a model can tell it from the
+    /// person's words and from quoted tool results; Chat Completions hosts get it as
+    /// `user`, exactly as before (many open-weight templates take one leading system
+    /// turn and alternating user/assistant after it).
+    Notice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +40,30 @@ impl Message {
         Self { role: Role::Assistant, content: content.into(), attachments: Vec::new() }
     }
 
+    /// A message from the harness itself, mid-run (see [`Role::Notice`]).
+    pub fn notice(content: impl Into<String>) -> Self {
+        Self { role: Role::Notice, content: content.into(), attachments: Vec::new() }
+    }
+
+    /// The role as the Responses API names it.
+    fn input_role(&self) -> &'static str {
+        match self.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Notice => "developer",
+        }
+    }
+
+    /// The role as Chat Completions hosts name it.
+    fn chat_role(&self) -> &'static str {
+        match self.role {
+            Role::System => "system",
+            Role::User | Role::Notice => "user",
+            Role::Assistant => "assistant",
+        }
+    }
+
     /// This user message with `attachments` after its text.
     #[must_use]
     pub fn with(mut self, attachments: Vec<Attachment>) -> Self {
@@ -45,7 +75,7 @@ impl Message {
     /// attached (so cached prefixes stay the same), else typed content blocks.
     fn to_input(&self) -> Value {
         if self.attachments.is_empty() {
-            return json!({ "role": self.role, "content": self.content });
+            return json!({ "role": self.input_role(), "content": self.content });
         }
         let mut parts = vec![json!({ "type": "input_text", "text": self.content })];
         parts.extend(self.attachments.iter().map(|a| {
@@ -55,14 +85,14 @@ impl Message {
                 json!({ "type": "input_file", "filename": a.name, "file_data": a.data_url() })
             }
         }));
-        json!({ "type": "message", "role": self.role, "content": parts })
+        json!({ "type": "message", "role": self.input_role(), "content": parts })
     }
 
     /// The Chat Completions shape (Baseten): an image is an `image_url` object, a PDF a
     /// `file` block.
     fn to_chat(&self) -> Value {
         if self.attachments.is_empty() {
-            return json!({ "role": self.role, "content": self.content });
+            return json!({ "role": self.chat_role(), "content": self.content });
         }
         let mut parts = vec![json!({ "type": "text", "text": self.content })];
         parts.extend(self.attachments.iter().map(|a| {
@@ -72,7 +102,7 @@ impl Message {
                 json!({ "type": "file", "file": { "filename": a.name, "file_data": a.data_url() } })
             }
         }));
-        json!({ "role": self.role, "content": parts })
+        json!({ "role": self.chat_role(), "content": parts })
     }
 }
 
@@ -489,6 +519,15 @@ mod tests {
                 "max_tokens": 500
             })
         );
+    }
+
+    #[test]
+    fn a_notice_is_a_developer_turn_on_responses_and_a_user_turn_on_chat() {
+        let r = Request::new("m", vec![Message::system("s"), Message::user("errand"), Message::assistant("{}"), Message::notice("Not finished")]);
+        let roles = |v: &Value, key: &str| v[key].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(roles(&r.to_body(), "input"), ["system", "user", "assistant", "developer"]);
+        assert_eq!(roles(&r.to_chat_body(), "messages"), ["system", "user", "assistant", "user"]);
+        assert_eq!(r.to_chat_body()["messages"][3]["content"], "Not finished", "the text is the same either way");
     }
 
     #[test]

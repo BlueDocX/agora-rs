@@ -354,7 +354,7 @@ pub async fn run(
             // errand: ask for a shorter one. (A filtered reply ends it: see `CallError`.)
             Err(CallError::Unfinished { status }) => {
                 invalid_turns.push(format!("the reply was cut off ({status})"));
-                input.push(Message::user("Your last reply was cut off before it finished. Reply with one short tool call.".to_string()));
+                input.push(Message::notice("Your last reply was cut off before it finished. Reply with one short tool call.".to_string()));
                 continue;
             }
             Err(e) => return Err(ErrandError::Call(e)),
@@ -364,7 +364,7 @@ pub async fn run(
             Ok(t) => t,
             Err(e) => {
                 invalid_turns.push(format!("{e}: {}", reply.text.chars().take(300).collect::<String>()));
-                input.push(Message::user(format!("That was not a valid tool call ({e}). Reply with one call in the JSON shape.")));
+                input.push(Message::notice(format!("That was not a valid tool call ({e}). Reply with one call in the JSON shape.")));
                 continue;
             }
         };
@@ -372,7 +372,7 @@ pub async fn run(
             let text = turn.text.trim();
             if let Some(why) = finish_refusal(text, &entries, &mut nudges, &mut checked) {
                 invalid_turns.push(format!("finish sent back: {}", why.lines().next().unwrap_or_default()));
-                input.push(Message::user(why));
+                input.push(Message::notice(why));
                 continue;
             }
             // Nudged and still nothing done: whatever it promises, nothing will happen,
@@ -389,7 +389,7 @@ pub async fn run(
         let target = turn.target.trim();
         if Tool::from_name(target).is_some() || target == FINISH || target.starts_with('{') || target.starts_with('[') || target.starts_with('"') {
             invalid_turns.push(format!("bad target: {}", target.chars().take(60).collect::<String>()));
-            input.push(Message::user(format!(
+            input.push(Message::notice(format!(
                 "[System] \"{}\" isn't a target. tool is one tool's name; target is plain text, e.g. Neha or notes/todo.md (\"\" when the tool needs none). One call per turn.",
                 target.chars().take(60).collect::<String>()
             )));
@@ -413,12 +413,12 @@ pub async fn run(
         }
         if let Some(why) = content_refusal(&turn) {
             invalid_turns.push(format!("{} with no real content", turn.tool));
-            input.push(Message::user(why));
+            input.push(Message::notice(why));
             continue;
         }
         let Some(tool) = Tool::from_name(&turn.tool) else {
             invalid_turns.push(format!("unknown tool {}", turn.tool));
-            input.push(Message::user(format!("There is no tool \"{}\".", turn.tool)));
+            input.push(Message::notice(format!("There is no tool \"{}\".", turn.tool)));
             continue;
         };
         let action = Action { tool, target: turn.target, when: turn.when, text: turn.text, call: None };
@@ -455,11 +455,12 @@ async fn wrap_up(caller: &Caller, model: &str, mut input: Vec<Message>, connecte
     const LAST: &str = "[System] That was your last tool call. Reply now with finish: answer from what you found, say what you did and what you couldn't find or do.";
     // The last message is the last call's result: add to it, so roles still alternate.
     match input.last_mut() {
-        Some(m) if m.role == agora_muse::Role::User => {
+        // (A notice is a user turn to Chat Completions hosts: add to it the same way.)
+        Some(m) if matches!(m.role, agora_muse::Role::User | agora_muse::Role::Notice) => {
             m.content.push_str("\n\n");
             m.content.push_str(LAST);
         }
-        _ => input.push(Message::user(LAST.to_string())),
+        _ => input.push(Message::notice(LAST.to_string())),
     }
     let text = match caller.call(&turn_request(model, input, connected)).await {
         Ok(reply) => serde_json::from_str::<Turn>(&reply.text).ok().filter(|t| t.tool == FINISH).map(|t| t.text.trim().to_string()).unwrap_or_default(),
