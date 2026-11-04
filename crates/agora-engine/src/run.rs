@@ -22,11 +22,11 @@ use crate::planner::{self, Planned, PlannerError, Task};
 use crate::scheduler::{Outcome, run_ready_queue};
 use crate::CHARTER;
 
-const WORKER_ROLE: &str = "You are a specialist. Do the one task you are given, \
+pub(crate) const WORKER_ROLE: &str = "You are a specialist. Do the one task you are given, \
 using the inputs from finished tasks where relevant. Return only the result itself, \
 in Markdown, with no preamble and no notes about your process.";
 
-const VERIFIER_ROLE: &str = "You are the reviewer. Check the result against each \
+pub(crate) const VERIFIER_ROLE: &str = "You are the reviewer. Check the result against each \
 acceptance criterion, strictly and literally. List every criterion that is not fully \
 met, copied word for word. Say your confidence is low only if a criterion is \
 ambiguous or cannot be judged from the text.";
@@ -200,7 +200,7 @@ fn tally(votes: &[Verdict]) -> Vec<String> {
     failed
 }
 
-fn verdict_schema() -> Value {
+pub(crate) fn verdict_schema() -> Value {
     json!({
         "type": "object",
         "properties": {

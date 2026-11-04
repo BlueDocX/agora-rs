@@ -45,7 +45,7 @@ fn says_cannot(text: &str) -> bool {
     ["can't", "cannot", "can not", "unable", "no tool", "not able", "isn't possible", "not possible", "don't have a tool", "no way to"].iter().any(|w| t.contains(w))
 }
 
-const ERRAND_ROLE: &str = "You are a personal assistant with access to the person's \
+pub(crate) const ERRAND_ROLE: &str = "You are a personal assistant with access to the person's \
 contacts, calendar, email, chat messages and files through tools. Do the errand with \
 the fewest calls that get it right, using what you have: don't stop to ask for details \
 you don't need (mention any assumption instead). Each turn, reply with exactly one tool \
@@ -131,7 +131,7 @@ fn connected_tools<'a>(errand: &Errand<'a>) -> Vec<&'a Connected> {
     errand.gateway.map(|g| g.tools().iter().filter(|t| Tool::from_name(&t.id).is_none() && t.id != FINISH).collect()).unwrap_or_default()
 }
 
-fn turn_schema(connected: &[&Connected]) -> Value {
+pub(crate) fn turn_schema(connected: &[&Connected]) -> Value {
     let mut tools: Vec<&str> = TOOLS.iter().map(|t| t.name()).collect();
     tools.extend(connected.iter().map(|t| t.id.as_str()));
     tools.push(FINISH);
@@ -181,7 +181,7 @@ fn tool_guide(connected: &[&Connected]) -> String {
     s + "- finish: text = your message to the person. Unused fields are \"\"."
 }
 
-fn opening(world: &World, errand: &Errand<'_>) -> Vec<Message> {
+pub(crate) fn opening(world: &World, errand: &Errand<'_>) -> Vec<Message> {
     vec![
         Message::system(CHARTER),
         Message::system(ERRAND_ROLE),

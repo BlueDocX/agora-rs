@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use crate::call::{CallError, Caller};
 use crate::ledger::Entry;
 
-const EXTRACT_ROLE: &str = "You turn an assistant's message into a list of factual \
+pub(crate) const EXTRACT_ROLE: &str = "You turn an assistant's message into a list of factual \
 claims about actions the assistant says it took or did not take, so each can be \
 checked against a log. One claim per action and per person or item: \"I emailed \
 Priya and Arjun\" is two claims. Copy span exactly from the message (a short phrase \
@@ -751,7 +751,7 @@ struct RawClaim {
     outcome: Claimed,
 }
 
-fn claims_schema(connected: &[(String, Weight)]) -> Value {
+pub(crate) fn claims_schema(connected: &[(String, Weight)]) -> Value {
     let mut tools: Vec<&str> = agora_core::TOOLS.iter().map(|t| t.name()).collect();
     tools.extend(connected.iter().map(|(id, _)| id.as_str()));
     tools.push("none");

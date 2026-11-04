@@ -613,7 +613,7 @@ pub fn combined(errands: &[Errand<'_>]) -> (Vec<Entry>, Vec<(String, u64)>) {
     (all, map)
 }
 
-const LEARN_ROLE: &str = "You keep an assistant's long-term memory. You are shown the \
+pub(crate) const LEARN_ROLE: &str = "You keep an assistant's long-term memory. You are shown the \
 calls it just made (each with its seq and what it returned) and the threads still open. \
 Return:\n\
 - facts: durable things worth knowing on later days (an address, a date someone \
@@ -631,7 +631,7 @@ open thread listed below.\n\
 needed, each citing the seq that shows it.\n\
 Return empty lists when nothing qualifies. Fewer, well-sourced items are better.";
 
-fn learn_schema() -> Value {
+pub(crate) fn learn_schema() -> Value {
     let s = json!({ "type": "string" });
     let n = json!({ "type": "integer" });
     json!({

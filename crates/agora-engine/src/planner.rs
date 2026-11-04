@@ -17,7 +17,7 @@ use crate::call::{CallError, Caller};
 const MAX_ATTEMPTS: usize = 3;
 pub const MAX_TASKS: usize = 8;
 
-const PLANNER_ROLE: &str = "You are the planner. Split the brief into at most 8 tasks that \
+pub(crate) const PLANNER_ROLE: &str = "You are the planner. Split the brief into at most 8 tasks that \
 specialists can do independently. Give each task a short kebab-case id, a title, \
 instructions a specialist can follow without seeing the other tasks, the ids it \
 depends on (only when it truly needs their output), and 2-4 acceptance criteria a \
@@ -88,7 +88,7 @@ impl std::fmt::Display for PlannerError {
 
 impl std::error::Error for PlannerError {}
 
-fn schema(team: Option<&Team>) -> Value {
+pub(crate) fn schema(team: Option<&Team>) -> Value {
     let strings = json!({"type": "array", "items": {"type": "string"}});
     let mut task = json!({
         "type": "object",

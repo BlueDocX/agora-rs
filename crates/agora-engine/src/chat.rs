@@ -19,7 +19,7 @@ pub const LEAD_COLOR: &str = "#f2cc46";
 pub const CONTEXT_MESSAGES: usize = 20;
 const MAX_QUOTED_CHARS: usize = 600;
 
-const CHAT_ROLE: &str = "You are in the office chat. Answer as the teammate named in \
+pub(crate) const CHAT_ROLE: &str = "You are in the office chat. Answer as the teammate named in \
 the message, in one to three short sentences of plain text: no headings, no lists, \
 no name prefix. Be specific and useful, and disagree when you have a reason. If \
 someone wants a full deliverable, give your take and suggest they send it as a brief \

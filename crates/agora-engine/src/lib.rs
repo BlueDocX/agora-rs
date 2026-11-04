@@ -16,6 +16,9 @@ pub mod run;
 pub mod scheduler;
 pub mod signing;
 
+#[cfg(test)]
+mod golden;
+
 pub use budget::{Budget, BudgetError, OverBudget, Spend};
 pub use call::{CallError, Caller, Tape, Taped};
 pub use events::{EventSender, ReviewedBy, RunEvent, TaskView};
