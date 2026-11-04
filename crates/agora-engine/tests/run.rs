@@ -254,6 +254,20 @@ async fn a_reply_that_is_not_plan_json_gets_another_attempt() {
 }
 
 #[tokio::test]
+async fn a_filtered_draft_is_its_own_error_not_a_cut_off() {
+    let (base, _) = mock(Script {
+        plan: Arc::new(|_| plan_of(&[task("a", &[])])),
+        verdict: Arc::new(|_, _| pass()),
+        worker_status: "content_filter",
+    })
+    .await;
+    let report = run(client(base), &config(1.0), "brief", None).await.unwrap();
+
+    assert!(matches!(&report.outcomes[0], Outcome::Failed(TaskError::Call(CallError::Filtered { status })) if status.starts_with("content_filter")));
+    assert_eq!(report.spend.calls, 2, "still charged");
+}
+
+#[tokio::test]
 async fn a_cut_off_draft_is_refused_but_still_charged() {
     let (base, seen) = mock(Script {
         plan: Arc::new(|_| plan_of(&[task("a", &[])])),

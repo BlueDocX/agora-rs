@@ -14,6 +14,9 @@ pub enum CallError {
     /// The reply was cut off or failed (e.g. status `incomplete` at the output limit).
     /// It is still charged.
     Unfinished { status: String },
+    /// The host's content filter stopped the reply: asking again won't help. It is
+    /// still charged.
+    Filtered { status: String },
     Journal(JournalError),
     /// The model is served by a host this run has no client for.
     NoHost(String),
@@ -25,6 +28,7 @@ impl std::fmt::Display for CallError {
             Self::Model(e) => write!(f, "{e}"),
             Self::OverBudget(o) => write!(f, "budget spent (${:.4} of ${:.4})", o.spent_usd, o.cap_usd),
             Self::Unfinished { status } => write!(f, "the model's reply did not finish (status \"{status}\")"),
+            Self::Filtered { status } => write!(f, "the model host's content filter stopped the reply (status \"{status}\")"),
             Self::Journal(e) => write!(f, "{e}"),
             Self::NoHost(m) => write!(f, "no host is configured for model \"{m}\""),
         }
@@ -81,7 +85,8 @@ impl Caller {
         if response.status != "completed" {
             // Say which prompt it was, so a cut-off can be traced.
             let which = request.prompt_cache_key.as_deref().unwrap_or("a call");
-            return Err(CallError::Unfinished { status: format!("{} in {which} on {}", response.status, request.model) });
+            let status = format!("{} in {which} on {}", response.status, request.model);
+            return Err(if response.status == "content_filter" { CallError::Filtered { status } } else { CallError::Unfinished { status } });
         }
         // A paid, finished reply is never thrown away because the journal couldn't
         // store it; the run only loses the ability to replay that one call.

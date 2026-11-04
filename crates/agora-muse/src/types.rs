@@ -306,6 +306,9 @@ pub(crate) struct RawResponse {
     pub output: Vec<RawItem>,
     #[serde(default)]
     pub usage: Usage,
+    /// Why an `incomplete` reply stopped (`max_output_tokens`, `content_filter`).
+    #[serde(default)]
+    pub incomplete_details: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -407,7 +410,10 @@ impl RawResponse {
                 RawContent::Other => None,
             })
             .collect::<String>();
-        Response { id: self.id, model: self.model, status: self.status, text, usage: self.usage, rate_limit }
+        // A reply the host's content filter stopped reads as Chat Completions says it.
+        let filtered = self.incomplete_details.as_ref().and_then(|d| d.get("reason")).and_then(Value::as_str) == Some("content_filter");
+        let status = if self.status == "incomplete" && filtered { "content_filter".to_string() } else { self.status };
+        Response { id: self.id, model: self.model, status, text, usage: self.usage, rate_limit }
     }
 }
 
@@ -503,6 +509,17 @@ mod tests {
         assert_eq!(reply("length").status, "incomplete");
         assert_eq!(reply("content_filter").status, "content_filter");
         assert_eq!(reply("tool_calls").status, "tool_calls");
+    }
+
+    #[test]
+    fn a_reply_the_content_filter_stopped_is_told_apart_from_a_cut_off() {
+        let reply = |reason: Value| {
+            let raw: RawResponse = serde_json::from_value(json!({"id": "r", "model": "m", "status": "incomplete", "output": [], "incomplete_details": reason})).unwrap();
+            raw.into_response(RateLimit::default()).status
+        };
+        assert_eq!(reply(json!({"reason": "content_filter"})), "content_filter");
+        assert_eq!(reply(json!({"reason": "max_output_tokens"})), "incomplete");
+        assert_eq!(reply(Value::Null), "incomplete", "no reason: still a cut-off");
     }
 
     #[test]

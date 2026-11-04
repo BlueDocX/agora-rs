@@ -351,7 +351,7 @@ pub async fn run(
         let reply = match caller.call(&turn_request(errand.model, input.clone(), &connected)).await {
             Ok(reply) => reply,
             // A reply cut off at the output limit is a wasted turn, not the end of the
-            // errand: ask for a shorter one.
+            // errand: ask for a shorter one. (A filtered reply ends it: see `CallError`.)
             Err(CallError::Unfinished { status }) => {
                 invalid_turns.push(format!("the reply was cut off ({status})"));
                 input.push(Message::user("Your last reply was cut off before it finished. Reply with one short tool call.".to_string()));
