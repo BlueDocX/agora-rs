@@ -403,7 +403,8 @@ pub async fn run(
                 || !errand.documents.trim().is_empty()
                 || !errand.memory.trim().is_empty()
                 || entries.iter().any(|e| e.action.tool.weight() == agora_core::Weight::PrivateRead);
-            let (action, outcome) = connected::execute(gateway, tool, &turn.args, errand.brief, world.owner, read_private).await;
+            let intend = |action: &Action| ledger.intend(errand.agent, action).map_err(|e| e.to_string());
+            let (action, outcome) = connected::execute(gateway, tool, &turn.args, errand.brief, world.owner, read_private, &intend).await;
             let entry = ledger.append(errand.agent, &action, &outcome).map_err(ErrandError::Ledger)?;
             input.push(Message::user(result_message(&outcome, world.owner)));
             on_step(&entry);

@@ -1265,6 +1265,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
     // Past retention: the store already deleted their streams; forget their ledgers.
     for id in pruned {
         if let Ok(ledger) = Ledger::open(path, id) {
+            let _ = ledger.close_unsettled(); // then forgotten with the rest
             forget_all(&ledger, &hub.memory);
         }
     }
@@ -1272,6 +1273,8 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
     for (id, meta, events) in kept {
         let Ok(meta) = serde_json::from_str::<Meta>(&meta) else { continue };
         let Ok(ledger) = Ledger::open(path, &id) else { continue };
+        // Calls the office stopped during: on the record as "outcome unknown".
+        let _ = ledger.close_unsettled();
         while office.today < meta.day && office.today + 1 < agora_core::world::DAYS.len() {
             office.next_day();
         }
@@ -1289,12 +1292,21 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             Arc::clone(&hub.office)
         };
         let mut history: Vec<ErrandEvent> = events.iter().filter_map(|j| serde_json::from_str(j).ok()).collect();
+        // Entries the stream never showed (closed as unknown at a restart) join it.
+        let shown: Vec<u64> = history.iter().filter_map(|e| if let ErrandEvent::Step { entry } = e { Some(entry.seq) } else { None }).collect();
+        let missing: Vec<Entry> = ledger.entries().unwrap_or_default().into_iter().filter(|e| !shown.contains(&e.seq)).collect();
+        let unknown = missing.iter().filter(|e| e.outcome.result == agora_engine::ledger::UNKNOWN).count();
+        history.extend(missing.into_iter().map(|entry| ErrandEvent::Step { entry }));
         let turns = history.iter().filter_map(|e| if let ErrandEvent::Busy { turn, .. } = e { Some(*turn) } else { None }).max().unwrap_or(0);
         // Cut off: the last turn started (busy) and never went idle.
         let last_busy = history.iter().rposition(|e| matches!(e, ErrandEvent::Busy { .. }));
         let cut_off = last_busy.is_some_and(|at| !history[at..].iter().any(|e| matches!(e, ErrandEvent::Idle)));
         if cut_off {
-            history.push(ErrandEvent::Failed { turn: turns, reason: "the office restarted while this was running".into() });
+            let reason = match unknown {
+                0 => "the office restarted while this was running".to_string(),
+                n => format!("the office restarted while this was running; {} may or may not have happened (see the ledger)", if n == 1 { "1 call".to_string() } else { format!("{n} calls") }),
+            };
+            history.push(ErrandEvent::Failed { turn: turns, reason });
             history.push(ErrandEvent::Idle);
         }
         let report = history.iter().find_map(|e| match e {

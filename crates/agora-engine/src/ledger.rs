@@ -22,6 +22,11 @@
 //! The content hash is salted: SHA-256 of a random per-entry salt and the content.
 //! Forgetting deletes the salt too, so the hash that stays can't be matched against
 //! guesses ("was it the chat with Neha?") the way a bare hash of guessable text could.
+//!
+//! A real tool call is written down *before* it runs ([`Ledger::intend`]) and settled
+//! by its entry. If the office stops in between, the call may or may not have
+//! happened; on restart [`Ledger::close_unsettled`] ledgers it as [`UNKNOWN`], so a
+//! side effect never goes unrecorded.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -39,6 +44,8 @@ use crate::journal::JournalError;
 pub const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 /// Shown in place of forgotten content.
 pub const FORGOTTEN: &str = "[forgotten]";
+/// The result of a call the office stopped during: it was about to run or running.
+pub const UNKNOWN: &str = "Outcome unknown: the office stopped while this call was running, so it may or may not have happened. Check before repeating it.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -107,6 +114,10 @@ fn sha_hex(bytes: &[u8]) -> String {
         let _ = write!(hex, "{b:02x}");
         hex
     })
+}
+
+fn action_json(action: &Action) -> String {
+    serde_json::to_string(action).unwrap_or_default()
 }
 
 fn content_json(action: &Action, outcome: &Outcome) -> String {
@@ -199,7 +210,8 @@ impl Ledger {
                  tool TEXT NOT NULL, ok INTEGER NOT NULL, at_ms INTEGER NOT NULL,
                  content TEXT, content_hash TEXT NOT NULL, forgotten_at_ms INTEGER,
                  prev TEXT NOT NULL, hash TEXT NOT NULL, salt TEXT,
-                 PRIMARY KEY (run_id, seq));",
+                 PRIMARY KEY (run_id, seq));
+             CREATE TABLE IF NOT EXISTS pending (run_id TEXT NOT NULL, agent TEXT NOT NULL, action TEXT NOT NULL);",
         )?;
         // Ledgers from before salting gain the column (their entries keep no salt).
         if !has_salt(&db)? {
@@ -235,10 +247,46 @@ impl Ledger {
         self.db.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Record a call the executor just ran. Reads the head and writes the new entry
-    /// under one lock, so concurrent agents still form a single chain.
+    /// Write down a real call `agent` is about to run, before it runs. Its entry
+    /// settles it; one still unsettled at restart is closed by [`Self::close_unsettled`].
+    pub(crate) fn intend(&self, agent: &str, action: &Action) -> Result<(), JournalError> {
+        self.lock().execute("INSERT INTO pending (run_id, agent, action) VALUES (?1, ?2, ?3)", params![self.run_id, agent, action_json(action)])?;
+        Ok(())
+    }
+
+    /// Ledger every call that was written down but never settled (the office stopped
+    /// while it ran) as failed with the result [`UNKNOWN`]. Returns how many.
+    ///
+    /// # Errors
+    /// If the database can't be read or written.
+    pub fn close_unsettled(&self) -> Result<usize, JournalError> {
+        let open: Vec<(i64, String, String)> = {
+            let db = self.lock();
+            let mut stmt = db.prepare("SELECT rowid, agent, action FROM pending WHERE run_id = ?1 ORDER BY rowid")?;
+            stmt.query_map(params![self.run_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?
+        };
+        for (rowid, agent, action) in &open {
+            // A call whose details no longer read is still on the record, as a call.
+            let (action, result) = match serde_json::from_str::<Action>(action) {
+                Ok(a) => (a, UNKNOWN.to_string()),
+                Err(_) => (Action { tool: Tool::ConnectedAct, target: String::new(), when: String::new(), text: String::new(), call: None }, format!("{UNKNOWN} (Its details couldn't be read.)")),
+            };
+            let subject = match &action.call {
+                Some(call) if action.target.is_empty() => call.tool.clone(),
+                _ => action.target.clone(),
+            };
+            self.append(agent, &action, &Outcome { ok: false, subject, result })?;
+            self.lock().execute("DELETE FROM pending WHERE rowid = ?1", params![rowid])?;
+        }
+        Ok(open.len())
+    }
+
+    /// Record a call the executor just ran, settling the matching call `agent` wrote
+    /// down, if any. Reads the head and writes the new entry under one lock, so
+    /// concurrent agents still form a single chain.
     pub(crate) fn append(&self, agent: &str, action: &Action, outcome: &Outcome) -> Result<Entry, JournalError> {
-        let db = self.lock();
+        let mut db = self.lock();
+        let db = db.transaction()?;
         let head: Option<(i64, String)> = db
             .query_row("SELECT seq, hash FROM ledger WHERE run_id = ?1 ORDER BY seq DESC LIMIT 1", params![self.run_id], |r| {
                 Ok((r.get(0)?, r.get(1)?))
@@ -266,6 +314,11 @@ impl Ledger {
             hash,
             salt
         ])?;
+        db.execute(
+            "DELETE FROM pending WHERE rowid = (SELECT rowid FROM pending WHERE run_id = ?1 AND agent = ?2 AND action = ?3 LIMIT 1)",
+            params![self.run_id, agent, action_json(action)],
+        )?;
+        db.commit()?;
         Ok(Entry {
             seq,
             agent: agent.to_string(),
@@ -627,5 +680,43 @@ mod tests {
         assert_eq!(ledger.verify(), Ok(1));
         ledger.append("Scout", &a, &o).unwrap();
         assert_eq!(ledger.verify(), Ok(2));
+    }
+
+    #[test]
+    fn a_call_the_office_stopped_during_is_ledgered_as_unknown_on_restart() {
+        let dir = std::env::temp_dir().join(format!("agora-pending-{}", crate::signing::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ledger.db");
+        let issue = Action { call: Some(agora_core::Call { tool: "github.create_issue".into(), def: String::new(), args: "{}".into() }), ..act(Tool::ConnectedAct, "") };
+        {
+            let ledger = Ledger::open(&path, "run-p").unwrap();
+            ledger.append("Scout", &act(Tool::ContactsRead, "Arjun"), &World::demo().execute(&act(Tool::ContactsRead, "Arjun"))).unwrap();
+            // A settled call leaves nothing open.
+            ledger.intend("Scout", &issue).unwrap();
+            ledger.append("Scout", &issue, &Outcome { ok: true, subject: "octo/demo".into(), result: "#12".into() }).unwrap();
+            // An entry for a different call doesn't settle this one...
+            ledger.intend("Scout", &issue).unwrap();
+            ledger.append("Scout", &act(Tool::ContactsRead, "Neha"), &World::demo().execute(&act(Tool::ContactsRead, "Neha"))).unwrap();
+            // ...and the office stops before its entry is written.
+        }
+        let ledger = Ledger::open(&path, "run-p").unwrap();
+        assert_eq!(ledger.close_unsettled().unwrap(), 1);
+        assert_eq!(ledger.close_unsettled().unwrap(), 0, "closed once");
+        let e = ledger.entries().unwrap();
+        assert_eq!(e.len(), 4, "a read, the settled call, another read, the unknown one");
+        assert_eq!((e[3].action.clone(), e[3].outcome.ok, e[3].outcome.subject.as_str(), e[3].outcome.result.as_str()), (issue, false, "github.create_issue", UNKNOWN));
+        assert_eq!(ledger.verify(), Ok(4));
+        // Another run's open call in the same file is left for that run.
+        let other = Ledger::open(&path, "run-q").unwrap();
+        other.intend("Scout", &act(Tool::ConnectedAct, "octo/demo")).unwrap();
+        assert_eq!(ledger.close_unsettled().unwrap(), 0);
+        assert_eq!(other.close_unsettled().unwrap(), 1);
+        // A call whose details no longer read is closed all the same.
+        other.lock().execute("INSERT INTO pending (run_id, agent, action) VALUES ('run-q', 'Scout', '{not json')", []).unwrap();
+        assert_eq!(other.close_unsettled().unwrap(), 1);
+        let last = other.entries().unwrap().pop().unwrap();
+        assert!(!last.outcome.ok && last.outcome.result.starts_with(UNKNOWN), "{}", last.outcome.result);
+        assert_eq!(other.close_unsettled().unwrap(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

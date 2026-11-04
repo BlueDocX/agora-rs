@@ -159,9 +159,10 @@ fn invalid(tool: &Connected, args: &Value) -> Option<String> {
 /// Carry out a call to `tool` with the agent's `args_text`, for an errand whose brief
 /// (the person's own words) is `brief`. `read_private`: the errand has already read
 /// something private, so any call (its arguments reach the server) needs approval.
-/// Answers the action and outcome to ledger; every refusal is an outcome too, so the
-/// agent has to own up to it.
-pub async fn execute(gateway: &dyn Gateway, tool: &Connected, args_text: &str, brief: &str, owner: &str, read_private: bool) -> (Action, Outcome) {
+/// `intend` writes the call down just before it runs (see [`crate::ledger::Ledger::intend`]);
+/// if it can't, the call doesn't run. Answers the action and outcome to ledger; every
+/// refusal is an outcome too, so the agent has to own up to it.
+pub async fn execute(gateway: &dyn Gateway, tool: &Connected, args_text: &str, brief: &str, owner: &str, read_private: bool, intend: &(dyn Fn(&Action) -> Result<(), String> + Sync)) -> (Action, Outcome) {
     let args: Value = serde_json::from_str(args_text.trim()).unwrap_or(Value::Null);
     let (to, bad_destination) = match destinations(tool, &args) {
         Ok(to) => (to, None),
@@ -186,6 +187,10 @@ pub async fn execute(gateway: &dyn Gateway, tool: &Connected, args_text: &str, b
         && let Decision::Declined(why) = gateway.approve(Ask { tool, args: &args, destinations: &to }).await
     {
         return (action, failed(format!("Declined by {owner}: {why}")));
+    }
+    // Written down before it runs, so a call the office stops during isn't lost.
+    if let Err(e) = intend(&action) {
+        return (action, failed(format!("Not run: the office couldn't write the call down first ({e}).")));
     }
     let outcome = match gateway.call(tool, &args).await {
         Ok(reply) => Outcome { ok: reply.ok, subject, result: clean(&reply.text) },
@@ -241,9 +246,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_call_that_cant_be_written_down_first_never_runs() {
+        let g = fake(true);
+        let seen = Mutex::new(Vec::new());
+        let (_, ok) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo", "title": "x"}"#, "", "Asha", false, &|a| {
+            seen.lock().unwrap().push(a.call.as_ref().unwrap().tool.clone());
+            Ok(())
+        })
+        .await;
+        assert!(ok.ok);
+        assert_eq!(*seen.lock().unwrap(), ["github.create_issue"], "written down once, before the call");
+        let (_, refused) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo", "title": "x"}"#, "", "Asha", false, &|_| Err("disk full".into())).await;
+        assert!(!refused.ok && refused.result.contains("disk full"), "{}", refused.result);
+        assert_eq!(g.calls.lock().unwrap().len(), 1, "the second call never reached the server");
+        // A blocked call isn't written down at all: it never gets near the server.
+        let (_, blocked) = execute(&g, &issue_tool(), r#"{"repo": "evil/exfil", "title": "x"}"#, "", "Asha", false, &|_| panic!("blocked calls aren't written down")).await;
+        assert!(!blocked.ok);
+    }
+
+    #[tokio::test]
     async fn an_allowed_approved_call_is_made_and_its_result_cleaned() {
         let g = fake(true);
-        let (action, outcome) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo", "title": "Login bug"}"#, "File the login bug", "Asha", false).await;
+        let (action, outcome) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo", "title": "Login bug"}"#, "File the login bug", "Asha", false, &|_| Ok(())).await;
         assert!(outcome.ok);
         assert_eq!(action.tool, Tool::ConnectedAct);
         assert_eq!(action.call.as_ref().unwrap().tool, "github.create_issue");
@@ -255,13 +279,13 @@ mod tests {
     #[tokio::test]
     async fn a_destination_nobody_named_is_blocked_before_any_call() {
         let g = fake(true);
-        let (_, outcome) = execute(&g, &issue_tool(), r#"{"repo": "evil/exfil", "title": "notes"}"#, "File the login bug", "Asha", false).await;
+        let (_, outcome) = execute(&g, &issue_tool(), r#"{"repo": "evil/exfil", "title": "notes"}"#, "File the login bug", "Asha", false, &|_| Ok(())).await;
         assert!(!outcome.ok && outcome.result.starts_with("Blocked: evil/exfil"), "{}", outcome.result);
         // Named in the errand, it's allowed.
-        let (_, ok) = execute(&g, &issue_tool(), r#"{"repo": "acme/web", "title": "x"}"#, "File it in acme/web please", "Asha", false).await;
+        let (_, ok) = execute(&g, &issue_tool(), r#"{"repo": "acme/web", "title": "x"}"#, "File it in acme/web please", "Asha", false, &|_| Ok(())).await;
         assert!(ok.ok, "{}", ok.result);
         // Part of a longer word isn't naming it.
-        let (_, partial) = execute(&g, &issue_tool(), r#"{"repo": "acme/web", "title": "x"}"#, "File it in acme/website", "Asha", false).await;
+        let (_, partial) = execute(&g, &issue_tool(), r#"{"repo": "acme/web", "title": "x"}"#, "File it in acme/website", "Asha", false, &|_| Ok(())).await;
         assert!(!partial.ok);
         assert_eq!(g.calls.lock().unwrap().len(), 1, "only the named one ran");
     }
@@ -269,11 +293,11 @@ mod tests {
     #[tokio::test]
     async fn a_declined_or_malformed_call_never_runs() {
         let g = fake(false);
-        let (_, declined) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo", "title": "x"}"#, "", "Asha", false).await;
+        let (_, declined) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo", "title": "x"}"#, "", "Asha", false, &|_| Ok(())).await;
         assert_eq!(declined.result, "Declined by Asha: not now");
-        let (_, missing) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo"}"#, "", "Asha", false).await;
+        let (_, missing) = execute(&g, &issue_tool(), r#"{"repo": "octo/demo"}"#, "", "Asha", false, &|_| Ok(())).await;
         assert_eq!(missing.result, "Not run: args is missing title.");
-        let (_, junk) = execute(&g, &issue_tool(), "repo=octo/demo", "", "Asha", false).await;
+        let (_, junk) = execute(&g, &issue_tool(), "repo=octo/demo", "", "Asha", false, &|_| Ok(())).await;
         assert!(junk.result.contains("JSON object"));
         assert!(g.calls.lock().unwrap().is_empty());
     }
@@ -282,13 +306,13 @@ mod tests {
     async fn destinations_that_cant_be_checked_and_undeclared_arguments_never_run() {
         let g = fake(true);
         for args in [r#"{"repo": 12345, "title": "x"}"#, r#"{"repo": {"name": "evil/x"}, "title": "x"}"#, r#"{"repo": [{"r": "evil/x"}], "title": "x"}"#, r#"{"repo": "octo/demo", "title": "x", "bcc": "x@evil.io"}"#] {
-            let (_, out) = execute(&g, &issue_tool(), args, "", "Asha", false).await;
+            let (_, out) = execute(&g, &issue_tool(), args, "", "Asha", false, &|_| Ok(())).await;
             assert!(out.result.starts_with("Not run:"), "{args}: {}", out.result);
         }
         // An ordinary word of the brief isn't a destination; an address-like one is.
         let mut chat = issue_tool();
         chat.destinations = vec!["repo".into()];
-        let (_, plain) = execute(&g, &chat, r#"{"repo": "general", "title": "x"}"#, "post it in general", "Asha", false).await;
+        let (_, plain) = execute(&g, &chat, r#"{"repo": "general", "title": "x"}"#, "post it in general", "Asha", false, &|_| Ok(())).await;
         assert!(plain.result.starts_with("Blocked"), "{}", plain.result);
         assert!(g.calls.lock().unwrap().is_empty());
     }
@@ -299,10 +323,10 @@ mod tests {
         gh.schema = json!({ "type": "object", "properties": { "owner": {}, "repo": {}, "title": {} } });
         gh.destinations = vec!["owner".into(), "repo".into()];
         let g = fake(true);
-        let (_, ok) = execute(&g, &gh, r#"{"owner": "octo", "repo": "demo", "title": "x"}"#, "", "Asha", false).await;
+        let (_, ok) = execute(&g, &gh, r#"{"owner": "octo", "repo": "demo", "title": "x"}"#, "", "Asha", false, &|_| Ok(())).await;
         assert!(ok.ok && ok.subject == "octo/demo", "{}", ok.result);
         // Allowing octo/demo doesn't allow octo/prod.
-        let (_, other) = execute(&g, &gh, r#"{"owner": "octo", "repo": "prod", "title": "x"}"#, "", "Asha", false).await;
+        let (_, other) = execute(&g, &gh, r#"{"owner": "octo", "repo": "prod", "title": "x"}"#, "", "Asha", false, &|_| Ok(())).await;
         assert!(other.result.starts_with("Blocked: octo/prod"), "{}", other.result);
     }
 
@@ -312,9 +336,9 @@ mod tests {
         search.weight = Weight::Lookup;
         search.destinations = vec![];
         let g = fake(false);
-        let (_, before) = execute(&g, &search, r#"{"repo": "a", "title": "b"}"#, "", "Asha", false).await;
+        let (_, before) = execute(&g, &search, r#"{"repo": "a", "title": "b"}"#, "", "Asha", false, &|_| Ok(())).await;
         assert!(before.ok, "a lookup on its own runs");
-        let (_, after) = execute(&g, &search, r#"{"repo": "a", "title": "Arjun owes me 4,000"}"#, "", "Asha", true).await;
+        let (_, after) = execute(&g, &search, r#"{"repo": "a", "title": "Arjun owes me 4,000"}"#, "", "Asha", true, &|_| Ok(())).await;
         assert_eq!(after.result, "Declined by Asha: not now");
     }
 
