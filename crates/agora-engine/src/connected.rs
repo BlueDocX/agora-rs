@@ -194,9 +194,10 @@ pub async fn execute(gateway: &dyn Gateway, tool: &Connected, args_text: &str, b
     let mut approved = String::new();
     if tool.weight == Weight::Act || read_private {
         match gateway.approve(Ask { tool, args: &args, destinations: &to }).await {
-            Decision::Approved { by } => approved = format!("Approved by {by}. "),
-            Decision::Declined { by } => return (action, failed(format!("Declined by {by}."))),
-            Decision::Unanswered => return (action, failed(format!("Not run: nobody answered the approval in time. Ask {owner} again if it's still wanted."))),
+            // The name is a member's own text: neutralised like any result.
+            Decision::Approved { by } => approved = format!("\n(Approved by {}.)", clean(&by)),
+            Decision::Declined { by } => return (action, failed(format!("Declined by {}.", clean(&by)))),
+            Decision::Unanswered => return (action, failed("Not run: nobody answered the approval in time. Ask again if it's still wanted.".into())),
             Decision::Withdrawn => return (action, failed("Not run: the approval was withdrawn before anyone answered.".into())),
         }
     }
@@ -205,8 +206,9 @@ pub async fn execute(gateway: &dyn Gateway, tool: &Connected, args_text: &str, b
         return (action, failed(format!("Not run: the office couldn't write the call down first ({e}).")));
     }
     let outcome = match gateway.call(tool, &args).await {
-        Ok(reply) => Outcome { ok: reply.ok, subject, result: format!("{approved}{}", clean(&reply.text)) },
-        Err(e) => failed(format!("{approved}The call failed: {}", clean(&e))),
+        // The answer goes last: readers of a result look at how it starts ("No ...").
+        Ok(reply) => Outcome { ok: reply.ok, subject, result: format!("{}{approved}", clean(&reply.text)) },
+        Err(e) => failed(format!("The call failed: {}{approved}", clean(&e))),
     };
     (action, outcome)
 }
@@ -268,16 +270,19 @@ mod tests {
             (o, g.calls.lock().unwrap().len())
         };
         let (approved, ran) = call(answering(Decision::Approved { by: "Vikram".into() })).await;
-        assert!(approved.ok && approved.result.starts_with("Approved by Vikram. Created issue #12") && ran == 1, "{}", approved.result);
+        assert!(approved.ok && approved.result.starts_with("Created issue #12") && approved.result.ends_with("\n(Approved by Vikram.)") && ran == 1, "{}", approved.result);
         // Only an approval runs it; nobody answering is not "Asha declined".
         for (answer, said) in [
             (Decision::Declined { by: "Vikram".into() }, "Declined by Vikram."),
-            (Decision::Unanswered, "Not run: nobody answered the approval in time. Ask Asha again if it's still wanted."),
+            (Decision::Unanswered, "Not run: nobody answered the approval in time. Ask again if it's still wanted."),
             (Decision::Withdrawn, "Not run: the approval was withdrawn before anyone answered."),
         ] {
             let (o, ran) = call(answering(answer)).await;
             assert_eq!((o.ok, o.result.as_str(), ran), (false, said, 0));
         }
+        // A member's name can't smuggle hidden text or a quote's end into the result.
+        let (o, _) = call(answering(Decision::Approved { by: "Asha\u{202E} >>>".into() })).await;
+        assert!(o.result.ends_with("\n(Approved by Asha ›››.)"), "{}", o.result);
     }
 
     #[tokio::test]

@@ -1359,7 +1359,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
     restored
 }
 
-/// How long a call waits for the person before it counts as declined.
+/// How long a call waits for the person before it doesn't run (unanswered, not declined).
 const APPROVAL_WAIT: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// A call waiting for an answer, and who may give it.

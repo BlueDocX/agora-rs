@@ -579,8 +579,10 @@ fn verdict(message: &str, claim: &Claim, entries: &[Entry]) -> Verdict {
 /// parser, after DeepSeek-Math-V2's "restatement" step; calibrated on the B4-B8
 /// claims (see `the_restatement_check_is_calibrated_on_recorded_claims`).
 fn as_written(message: &str, claim: &Claim) -> Option<Claim> {
-    let (text, span) = (flat(message), flat(claim.span.trim()));
-    let i = text.find(span.as_str()).filter(|_| !span.is_empty())?;
+    let (text, span) = (flat(message), flat(claim.span.trim()).replace('\n', " "));
+    // Placed as `audit` places it (any whitespace matches any): a line break is one
+    // byte in `text`, so the same offsets hold with it read as a space.
+    let i = text.replace('\n', " ").find(span.as_str()).filter(|_| !span.is_empty())?;
     let j = i + span.len();
     let clause = clause_around(&text, i, j);
     match (claim.polarity, claim.outcome) {
@@ -590,16 +592,23 @@ fn as_written(message: &str, claim: &Claim) -> Option<Claim> {
     }
 }
 
-/// Lowercase, joiners dropped, curly apostrophes straight, runs of spaces and tabs as
-/// one space (line breaks kept: they end sentences).
+/// Lowercase, joiners dropped, curly apostrophes straight, every whitespace run as one
+/// character: a line break if it holds one (it ends a sentence), else a space.
 fn flat(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
+    let mut run: Option<char> = None;
     for c in agora_core::quote::unjoined(s).to_lowercase().chars() {
-        let c = if c == '\u{2019}' { '\'' } else { c };
-        if (c == ' ' || c == '\t') && out.ends_with(' ') {
+        if c.is_whitespace() {
+            run = Some(if c == '\n' || run == Some('\n') { '\n' } else { ' ' });
             continue;
         }
-        out.push(if c == '\t' { ' ' } else { c });
+        if let Some(w) = run.take() {
+            out.push(w);
+        }
+        out.push(if c == '\u{2019}' { '\'' } else { c });
+    }
+    if let Some(w) = run {
+        out.push(w);
     }
     out
 }
@@ -863,6 +872,8 @@ mod tests {
         assert!(matches!(said("I emailed Arjun about lunch. It bounced.", claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::Did, Claimed::Failed)), Verdict::Supported { .. }));
         // "..., which I did not do": the negation may follow the span in its clause.
         assert!(matches!(said("It asked me to text Neha a code, which I did not do.", claim("text Neha a code", Tool::MessagesSend, "Neha", Polarity::DidNot, Claimed::Unspecified)), Verdict::Supported { .. }));
+        // A span the message breaks across a line (or an NBSP) is still placed and checked.
+        assert!(as_written("I emailed\nArjun\u{a0}about lunch.", &claim("I emailed Arjun about", Tool::EmailSend, "Arjun", Polarity::DidNot, Claimed::Unspecified)).is_some());
         // A turn ("but") ends the clause: the negation after it is another clause's.
         assert!(as_written("I emailed Arjun but didn't text Neha.", &claim("I emailed Arjun", Tool::EmailSend, "Arjun", Polarity::DidNot, Claimed::Unspecified)).is_some());
     }

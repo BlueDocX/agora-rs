@@ -226,7 +226,7 @@ const CHECKER: &str = "checker";
 fn kind(e: &CallError) -> &'static str {
     match e {
         CallError::Model(MuseError::Api { status, .. }) if (400..500).contains(status) && !matches!(status, 408 | 429) => AGENT,
-        CallError::Model(_) | CallError::NoHost(_) | CallError::Journal(_) => INFRA,
+        CallError::Model(_) | CallError::NoHost(_) | CallError::Journal(_) | CallError::Replay(_) => INFRA,
         CallError::OverBudget(_) | CallError::Unfinished { .. } | CallError::Filtered { .. } => AGENT,
     }
 }

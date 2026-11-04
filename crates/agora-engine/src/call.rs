@@ -24,6 +24,8 @@ pub enum CallError {
     Journal(JournalError),
     /// The model is served by a host this run has no client for.
     NoHost(String),
+    /// A replayed run asked for a reply its tape doesn't hold.
+    Replay(String),
 }
 
 impl std::fmt::Display for CallError {
@@ -35,6 +37,7 @@ impl std::fmt::Display for CallError {
             Self::Filtered { status } => write!(f, "the model host's content filter stopped the reply (status \"{status}\")"),
             Self::Journal(e) => write!(f, "{e}"),
             Self::NoHost(m) => write!(f, "no host is configured for model \"{m}\""),
+            Self::Replay(why) => write!(f, "replay: {why}"),
         }
     }
 }
@@ -104,7 +107,8 @@ impl Tape {
     /// Replay: recorded replies no call asked for.
     #[must_use]
     pub fn unused(&self) -> usize {
-        lock(&self.calls).len() - lock(&self.served).values().sum::<usize>()
+        let served: usize = lock(&self.served).values().sum();
+        lock(&self.calls).len() - served
     }
 
     /// Replay: calls served although their request differs from the recorded one.
@@ -113,29 +117,42 @@ impl Tape {
         *lock(&self.changed)
     }
 
-    fn record(&self, request: &Request, response: &Response) {
-        let u = response.usage;
+    /// Record a reply, or (`Err`) a call that failed: the run saw that too, and a
+    /// replay must fail the same call, not hand its reply to the next one.
+    fn record(&self, request: &Request, response: Result<&Response, &MuseError>) {
+        let (status, text, u) = match response {
+            Ok(r) => (r.status.clone(), r.text.clone(), r.usage),
+            Err(e) => (FAILED.to_string(), e.to_string(), Usage::default()),
+        };
         lock(&self.calls).push(Taped {
             prompt: prompt_of(request),
             model: request.model.clone(),
             request: request_key(request),
-            status: response.status.clone(),
-            text: response.text.clone(),
+            status,
+            text,
             tokens: [u.input_tokens, u.cached_tokens, u.output_tokens, u.reasoning_tokens],
         });
     }
 
-    fn replay(&self, request: &Request) -> Option<Response> {
+    fn replay(&self, request: &Request) -> Result<Response, CallError> {
         let key = (prompt_of(request), request.model.clone());
         let mut served = lock(&self.served);
         let n = served.entry(key.clone()).or_insert(0);
-        let taped = lock(&self.calls).iter().filter(|t| (&t.prompt, &t.model) == (&key.0, &key.1)).nth(*n).cloned()?;
+        let taped = lock(&self.calls)
+            .iter()
+            .filter(|t| (&t.prompt, &t.model) == (&key.0, &key.1))
+            .nth(*n)
+            .cloned()
+            .ok_or_else(|| CallError::Replay(format!("the tape has no reply left for {} on {}", key.0, key.1)))?;
         *n += 1;
         if taped.request != request_key(request) {
             *lock(&self.changed) += 1;
         }
+        if taped.status == FAILED {
+            return Err(CallError::Model(MuseError::Transport(taped.text)));
+        }
         let [input_tokens, cached_tokens, output_tokens, reasoning_tokens] = taped.tokens;
-        Some(Response {
+        Ok(Response {
             id: format!("tape-{}-{n}", key.0),
             model: taped.model,
             status: taped.status,
@@ -145,6 +162,9 @@ impl Tape {
         })
     }
 }
+
+/// The status a taped call that failed is recorded with.
+const FAILED: &str = "call-failed";
 
 fn prompt_of(request: &Request) -> String {
     request.prompt_cache_key.clone().unwrap_or_else(|| "a call".into())
@@ -184,25 +204,26 @@ impl Caller {
         if let Some((journal, (key, n))) = &claim
             && let Some(response) = journal.replay(key, *n).map_err(CallError::Journal)?
         {
+            if let Some(tape) = self.tape.as_deref().filter(|t| !t.replaying) {
+                tape.record(request, Ok(&response));
+            }
             self.budget.charge_replayed(&request.model, &response);
             return Ok(response);
         }
         self.budget.check().map_err(CallError::OverBudget)?;
         let response = match self.tape.as_deref() {
-            Some(tape) if tape.replaying => tape
-                .replay(request)
-                .ok_or_else(|| CallError::Journal(JournalError::new(format!("the tape has no reply left for {} on {}", prompt_of(request), request.model))))?,
+            Some(tape) if tape.replaying => tape.replay(request)?,
             tape => {
                 let client = match host_of(&request.model) {
                     Some(Host::Meta) => &self.muse,
                     Some(Host::Baseten) => self.baseten.as_ref().ok_or_else(|| CallError::NoHost(request.model.clone()))?,
                     None => return Err(CallError::NoHost(request.model.clone())),
                 };
-                let response = client.respond(request).await.map_err(CallError::Model)?;
+                let response = client.respond(request).await;
                 if let Some(tape) = tape {
-                    tape.record(request, &response);
+                    tape.record(request, response.as_ref());
                 }
-                response
+                response.map_err(CallError::Model)?
             }
         };
         self.budget.charge(&request.model, &response);
@@ -218,5 +239,30 @@ impl Caller {
             journal.record(key, *n, &response);
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use agora_muse::Message;
+
+    use super::*;
+
+    fn taped(prompt: &str, status: &str, text: &str) -> Taped {
+        Taped { prompt: prompt.into(), model: "m".into(), request: String::new(), status: status.into(), text: text.into(), tokens: [0; 4] }
+    }
+
+    #[test]
+    fn a_tape_replays_in_order_fails_what_failed_and_counts_what_is_left() {
+        let tape = Tape::replaying(vec![taped("p", "completed", "one"), taped("p", FAILED, "the host hung up"), taped("q", "completed", "other"), taped("p", "completed", "three")]);
+        let ask = || Request::new("m", vec![Message::user("hi".to_string())]).cache_key("p");
+        assert_eq!(tape.replay(&ask()).unwrap().text, "one");
+        // The call that failed when recorded fails again, so the next reply isn't shifted onto it.
+        assert!(matches!(tape.replay(&ask()), Err(CallError::Model(MuseError::Transport(t))) if t == "the host hung up"));
+        assert_eq!(tape.replay(&ask()).unwrap().text, "three");
+        assert!(matches!(tape.replay(&ask()), Err(CallError::Replay(_))), "no reply left is its own error");
+        assert_eq!(tape.unused(), 1, "q was never asked for");
+        assert_eq!(tape.changed(), 3, "the requests differ from the (empty) recorded digests");
     }
 }
