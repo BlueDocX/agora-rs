@@ -127,7 +127,7 @@ impl Gateway for Office {
     fn approve<'a>(&'a self, ask: Ask<'a>) -> BoxFuture<'a, Decision> {
         self.asked.lock().expect("asked").push(format!("{} {}", ask.tool.id, ask.args));
         let no = self.decline.load(std::sync::atomic::Ordering::Relaxed);
-        Box::pin(async move { if no { Decision::Declined("Asha said no".into()) } else { Decision::Approved } })
+        Box::pin(async move { if no { Decision::Declined { by: "Asha".into() } } else { Decision::Approved { by: "Asha".into() } } })
     }
 }
 

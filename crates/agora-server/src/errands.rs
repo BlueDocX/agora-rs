@@ -1390,13 +1390,15 @@ impl Approver for RoomApprover {
             // the timeout is refused, so the page never shows an approval that didn't run.
             let timed_out = room.approvals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id).is_some();
             match answer {
-                Ok(Ok((true, _))) => Decision::Approved,
-                Ok(Ok((false, by))) => Decision::Declined(format!("{by} said no")),
-                _ => {
+                Ok(Ok((true, by))) => Decision::Approved { by },
+                Ok(Ok((false, by))) => Decision::Declined { by },
+                // The waiting entry went without an answer: the wait was withdrawn.
+                Ok(Err(_)) => Decision::Withdrawn,
+                Err(_) => {
                     if timed_out {
                         room.push(ErrandEvent::Decided { id, approved: false, by: "nobody (no answer in 10 minutes)".into() });
                     }
-                    Decision::Declined("no answer in 10 minutes".into())
+                    Decision::Unanswered
                 }
             }
         })

@@ -753,7 +753,8 @@ async fn a_connected_tools_act_waits_for_approval_and_its_claim_is_checked_again
     let step = events.iter().find(|e| e["type"] == "step").unwrap();
     assert_eq!(step["entry"]["action"]["tool"], "connected.act");
     assert_eq!(step["entry"]["action"]["call"]["tool"], "tracker.create_issue");
-    assert_eq!(step["entry"]["outcome"]["result"], "Created issue #12");
+    // The answer is on the record with the call it let through.
+    assert_eq!(step["entry"]["outcome"]["result"], "Approved by the person. Created issue #12");
     let said = events.iter().find(|e| e["type"] == "said").unwrap();
     assert_eq!(said["check"]["audit"]["checked"][0]["verdict"], "supported", "{said}");
     assert_eq!(calls.lock().unwrap().len(), 1);
