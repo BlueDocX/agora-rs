@@ -240,7 +240,8 @@ impl Request {
         let mut messages: Vec<Message> = Vec::with_capacity(self.input.len());
         for m in &self.input {
             match messages.last_mut() {
-                Some(last) if last.role == Role::System && m.role == Role::System => {
+                // A notice joins the user turn before it: these templates want turns to alternate.
+                Some(last) if last.role == Role::System && m.role == Role::System || matches!(last.role, Role::User | Role::Notice) && m.role == Role::Notice => {
                     last.content.push_str("\n\n");
                     last.content.push_str(&m.content);
                 }
@@ -528,6 +529,10 @@ mod tests {
         assert_eq!(roles(&r.to_body(), "input"), ["system", "user", "assistant", "developer"]);
         assert_eq!(roles(&r.to_chat_body(), "messages"), ["system", "user", "assistant", "user"]);
         assert_eq!(r.to_chat_body()["messages"][3]["content"], "Not finished", "the text is the same either way");
+        // After a user turn (a call's result), a notice is folded into it on chat hosts.
+        let r = Request::new("m", vec![Message::user("Result (ok)."), Message::notice("That was your last call.")]);
+        assert_eq!(roles(&r.to_body(), "input"), ["user", "developer"]);
+        assert_eq!(r.to_chat_body()["messages"], json!([{"role": "user", "content": "Result (ok).\n\nThat was your last call."}]));
     }
 
     #[test]

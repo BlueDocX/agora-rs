@@ -57,7 +57,7 @@ async fn mock_model() -> String {
                     let tools = body["text"]["format"]["schema"]["properties"]["tool"]["enum"].to_string();
                     // "slowly": text Priya, then stall (the office restarts meanwhile); resumed
                     // with its ledger, it sees the text went and only reports.
-                    if input.contains("slowly") && input.contains("The office restarted while you were doing this errand") {
+                    if input.contains("slowly") && input.contains("This errand was cut off when the office restarted") {
                         reply(r#"{"tool": "finish", "target": "", "when": "", "text": "I texted Priya about lunch."}"#)
                     } else if input.contains("slowly") && turns > 3 {
                         tokio::time::sleep(std::time::Duration::from_secs(120)).await;
@@ -439,18 +439,29 @@ async fn an_errand_a_restart_cut_off_is_resumed_from_its_ledger_on_request() {
     // It texts Priya, then stalls on its next turn.
     let mut stream = http.get(format!("{first}/api/errands/{id}/events")).send().await.unwrap();
     read_until(&mut stream, r#""type":"step""#).await;
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await; // the store writes behind
-    // The office restarts: a second one on the same files finds it cut off.
-    let again = serve(app(config().await)).await;
-    let errands: Value = http.get(format!("{again}/api/errands")).send().await.unwrap().json().await.unwrap();
-    assert!(errands[0]["failed"].as_str().is_some_and(|r| r.starts_with("the office restarted")), "{errands}");
+    // The office restarts: a second one on the same files finds it cut off (once the
+    // store, which writes behind, has its step).
+    let mut tries = 0;
+    let again = loop {
+        let again = serve(app(config().await)).await;
+        let errands: Value = http.get(format!("{again}/api/errands")).send().await.unwrap().json().await.unwrap();
+        let cut_off = errands[0]["failed"].as_str().is_some_and(|r| r.starts_with("the office restarted"));
+        let stepped = http.get(format!("{again}/api/errands/{id}/ledger")).send().await.unwrap().json::<Value>().await.unwrap()["entries"].as_array().is_some_and(|e| e.len() == 1);
+        if cut_off && stepped {
+            break again;
+        }
+        tries += 1;
+        assert!(tries < 50, "the store never caught up: {errands}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
     // Only on request, and only once.
     let resume = || http.post(format!("{again}/api/errands/{id}/resume")).send();
     assert_eq!(resume().await.unwrap().status(), 202);
     let mut stream = http.get(format!("{again}/api/errands/{id}/events")).send().await.unwrap();
     let events = read_until(&mut stream, r#""type":"said""#).await;
     let note = events.iter().find(|e| e["type"] == "resumed").unwrap()["note"].as_str().unwrap().to_string();
-    assert!(note.contains("messages.send") && note.contains("Don't repeat a call that already went through"), "{note}");
+    assert!(note.contains("- #1 messages.send on Priya Menon") && note.contains("): done") && note.contains("Don't repeat a call that is done"), "{note}");
+    assert!(!note.contains("Message delivered"), "what a call returned is never repeated in the note: {note}");
     // Its report is checked against the whole ledger: the text sent before the restart backs it.
     let said = events.iter().find(|e| e["type"] == "said").unwrap();
     assert_eq!((said["message"].as_str(), &said["check"]["false_claims"]), (Some("I texted Priya about lunch."), &json!([])), "{said}");

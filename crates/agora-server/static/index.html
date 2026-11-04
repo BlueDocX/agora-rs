@@ -1659,15 +1659,21 @@ function verdictItem(steps) {
     if (failed && !errandBusy()) {
       li.classList.add("bad");
       li.append(el("span", "big", "✗ It couldn't finish"), el("span", "why", failed.reason));
-      // Cut off by a restart: the person may pick it up again from its ledger.
-      if (failed.reason.startsWith("the office restarted") && !errand.replay) {
-        const b = el("button", "resume", "Resume from its ledger");
+      // Cut off by a restart before it reported, and not resumed yet (as the server
+      // checks): the person may pick it up again from its ledger.
+      const last = errand.events.filter((e) => e.type !== "idle").pop();
+      if (last === failed && failed.turn === 0 && failed.reason.startsWith("the office restarted") && !errand.events.some((e) => e.type === "resumed") && !errand.replay) {
+        const b = el("button", "resume", "Resume from its ledger"), why = el("span", "why");
         b.onclick = async () => {
-          b.disabled = true;
-          const res = await fetch(`/api/errands/${encodeURIComponent(errand.id)}/resume`, { method: "POST", headers: JSON_HEADERS });
-          if (!res.ok) { const r = await res.json().catch(() => ({})); b.textContent = r.error || "Couldn't resume"; }
+          b.disabled = true; why.textContent = "";
+          const res = await fetch(`/api/errands/${encodeURIComponent(errand.id)}/resume`, { method: "POST", headers: JSON_HEADERS }).catch(() => null);
+          if (!res?.ok) {
+            const r = await res?.json().catch(() => ({}));
+            why.textContent = r?.error || "Couldn't resume: try again.";
+            b.disabled = false;
+          }
         };
-        li.append(b);
+        li.append(b, why);
       }
     } else {
       li.classList.add("busy");

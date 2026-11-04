@@ -329,6 +329,36 @@ fn content_refusal(turn: &Turn) -> Option<String> {
     })
 }
 
+/// What a run picked up after a restart is told about the calls already on its
+/// ledger, by code: each call's number, tool, what it was on and how it ended, never
+/// what it returned. That is data, and this goes in as the office's own words; the
+/// agent reads again what it needs.
+#[must_use]
+pub fn resume_note(entries: &[Entry]) -> String {
+    let lines: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            let tool = e.action.call.as_ref().map_or(e.action.tool.name(), |c| c.tool.as_str());
+            let on = if e.outcome.subject.is_empty() { &e.action.target } else { &e.outcome.subject };
+            let how = if e.outcome.result.starts_with(crate::ledger::UNKNOWN) {
+                "outcome unknown: it may or may not have happened"
+            } else if e.outcome.ok {
+                "done"
+            } else {
+                "failed or not run"
+            };
+            format!("- #{} {tool} on {}: {how}", e.seq, agora_core::quote::neutral(on).replace(['\n', '\t'], " "))
+        })
+        .collect();
+    format!(
+        "This errand was cut off when the office restarted, and you are picking it up. The calls already on your ledger \
+         (the system's record):\n{}\nDon't repeat a call that is done; check before repeating one whose outcome is \
+         unknown. What they returned isn't repeated here: read again what you need. Files attached to the errand \
+         aren't available any more.",
+        lines.join("\n")
+    )
+}
+
 /// Run the errand to `finish` or [`MAX_STEPS`] calls. `on_step` sees each ledger
 /// entry as soon as it is written (for a live view).
 ///
@@ -347,6 +377,9 @@ pub async fn run(
     // What it has done so far: nothing, or (resumed after a restart) the calls already
     // on its ledger, which its report must own and whose private reads still count.
     let mut entries = ledger.entries().map_err(ErrandError::Ledger)?;
+    if !entries.is_empty() {
+        input.push(Message::notice(resume_note(&entries)));
+    }
     let mut invalid_turns = Vec::new();
     let (mut nudges, mut checked) = (0, false);
     for _ in 0..MAX_STEPS {
@@ -455,15 +488,9 @@ fn result_message(outcome: &Outcome, owner: &str) -> String {
 /// guard still gives the person the ledger's account.
 async fn wrap_up(caller: &Caller, model: &str, mut input: Vec<Message>, connected: &[&Connected], invalid_turns: &mut Vec<String>) -> String {
     const LAST: &str = "[System] That was your last tool call. Reply now with finish: answer from what you found, say what you did and what you couldn't find or do.";
-    // The last message is the last call's result: add to it, so roles still alternate.
-    match input.last_mut() {
-        // (A notice is a user turn to Chat Completions hosts: add to it the same way.)
-        Some(m) if matches!(m.role, agora_muse::Role::User | agora_muse::Role::Notice) => {
-            m.content.push_str("\n\n");
-            m.content.push_str(LAST);
-        }
-        _ => input.push(Message::notice(LAST.to_string())),
-    }
+    // A notice: Chat Completions hosts get it folded into the last turn (the last
+    // call's result), so roles still alternate there.
+    input.push(Message::notice(LAST.to_string()));
     let text = match caller.call(&turn_request(model, input, connected)).await {
         Ok(reply) => serde_json::from_str::<Turn>(&reply.text).ok().filter(|t| t.tool == FINISH).map(|t| t.text.trim().to_string()).unwrap_or_default(),
         Err(e) => {

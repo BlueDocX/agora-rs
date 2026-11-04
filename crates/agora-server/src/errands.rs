@@ -196,10 +196,22 @@ struct Meta {
     /// An added agent's connected tools (`None`: a person's bot, every tool on).
     #[serde(default)]
     only_tools: Option<Vec<String>>,
-    /// Stored with `only_tools`, so it can be resumed with the same tools. (False in
-    /// errands stored before: their tools aren't known, so they aren't resumed.)
     #[serde(default)]
-    resumable: bool,
+    resume: Resume,
+}
+
+/// Whether an errand cut off by a restart can be resumed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Resume {
+    /// Stored before errands kept their tools: they aren't known, so it isn't resumed.
+    #[default]
+    Unknown,
+    /// Its tools are stored with it (`only_tools`): it can be resumed with the same ones.
+    Ready,
+    /// Resumed once already. A restored errand's spend isn't kept, so one resume
+    /// bounds what a cut-off errand can cost at twice its cap.
+    Used,
 }
 
 pub(crate) struct ErrandRoom {
@@ -223,8 +235,8 @@ pub(crate) struct ErrandRoom {
     approvals: Mutex<BTreeMap<String, Waiting>>,
     /// An added agent's connected tools (`None` = a person's bot: every tool on).
     only_tools: Option<Vec<String>>,
-    /// Its tools are known (see `Meta::resumable`), so it can be resumed after a restart.
-    resumable: bool,
+    /// See [`Resume`].
+    resume: Mutex<Resume>,
     /// The connected tools it had (id and weight), for the guard's parsers.
     available: Mutex<Vec<(String, agora_core::Weight)>>,
     /// When it was asked for.
@@ -298,7 +310,7 @@ impl ErrandRoom {
             at_ms: self.at_ms,
             day: self.day(),
             only_tools: self.only_tools.clone(),
-            resumable: self.resumable,
+            resume: *self.resume.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
         }
     }
 
@@ -671,7 +683,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         approvals: Mutex::default(),
         available: Mutex::default(),
         only_tools: agent_bot.map(|a| a.tools),
-        resumable: true,
+        resume: Mutex::new(Resume::Ready),
         at_ms: now_ms(),
         caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
         day: std::sync::atomic::AtomicUsize::new(hub.day()),
@@ -710,7 +722,7 @@ pub(crate) async fn begin(hub: &Arc<Hub>, me: Option<Member>, body: Begin) -> Re
         room.push(ErrandEvent::Recalled { text: recalled });
     }
     room.push(ErrandEvent::Busy { turn: 0, question: None });
-    tokio::spawn(work(Arc::clone(hub), room, None));
+    tokio::spawn(work(Arc::clone(hub), room, false));
     Ok(id)
 }
 
@@ -732,18 +744,13 @@ fn announce(hub: &Hub, people: &People, agent: &str, brief: &str, id: &str) {
 const RESTARTED: &str = "the office restarted while this was running";
 
 /// Run the errand, streaming each ledger entry as it is written, then check the report.
-/// `resumed`: picked up after a restart, with this note from its ledger.
-async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>, resumed: Option<String>) {
-    let recalled = match &resumed {
-        // In the memory slot, so the run counts as holding private data (its earlier
-        // reads were): its connected calls ask the person, as they would have.
-        Some(note) => format!("{}\n\n{note}", room.recalled()).trim().to_string(),
-        None => room.recalled(),
-    };
+/// `resumed`: picked up after a restart (the run starts from its ledger's calls).
+async fn work(hub: Arc<Hub>, room: Arc<ErrandRoom>, resumed: bool) {
+    let recalled = room.recalled();
     // The files go to this run once; the room doesn't keep the bytes, and they're
     // dropped as soon as the work is done (before the guard and memory calls).
     let files = room.files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take().unwrap_or_default();
-    if room.poisoned && resumed.is_none() {
+    if room.poisoned && !resumed {
         // The red-team copy: the office as it is now, with the injection planted.
         // (A resumed one keeps its copy, its own calls replayed into it.)
         let mut copy = hub.office.lock().await.clone();
@@ -829,12 +836,8 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
     if !room.may_act(hub.member(&headers).as_ref(), hub.company().members_view().is_empty()) {
         return error(StatusCode::FORBIDDEN, "only whoever asked for this errand, its bot's owner, or the office owner can ask about it");
     }
-    // A question may spend what is left of the errand's own cap: keep that within the
-    // office's too.
-    let committed = hub.errands().committed_usd();
-    let could_spend = ERRAND_CAP_USD - room.caller.spend().cost_usd;
-    if committed + could_spend > hub.config.errands_cap_usd {
-        return error(StatusCode::PAYMENT_REQUIRED, &format!("the office's errand budget is spent (${committed:.2} of ${:.2})", hub.config.errands_cap_usd));
+    if let Some(why) = over_office_budget(&hub, &room) {
+        return error(StatusCode::PAYMENT_REQUIRED, &why);
     }
     let (turn, report) = {
         let mut inner = room.lock();
@@ -868,15 +871,12 @@ pub(crate) async fn ask(State(hub): State<Arc<Hub>>, Path(id): Path<String>, hea
     StatusCode::ACCEPTED.into_response()
 }
 
-/// What a resumed run is told: its calls so far, from the ledger, by code.
-fn recovery_note(entries: &[Entry]) -> String {
-    format!(
-        "The office restarted while you were doing this errand. Your action log so far (written by the system: \
-         these calls happened, or are marked as unknown):\n{}\n\nCarry on from here. Don't repeat a call that already \
-         went through. A call whose result says \"Outcome unknown\" may or may not have happened: check before \
-         repeating it. Files attached to the errand aren't available any more.",
-        if entries.is_empty() { "(no calls yet)".to_string() } else { guard::log(entries) }
-    )
+/// A turn may spend what is left of the errand's own cap: why that would take the
+/// office's errands over their budget, if it would.
+fn over_office_budget(hub: &Hub, room: &ErrandRoom) -> Option<String> {
+    let committed = hub.errands().committed_usd();
+    let could_spend = ERRAND_CAP_USD - room.caller.spend().cost_usd;
+    (committed + could_spend > hub.config.errands_cap_usd).then(|| format!("the office's errand budget is spent (${committed:.2} of ${:.2})", hub.config.errands_cap_usd))
 }
 
 /// `POST /api/errands/{id}/resume`: pick up an errand a restart cut off before it
@@ -891,14 +891,20 @@ pub(crate) async fn resume(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
     if !room.may_act(hub.member(&headers).as_ref(), hub.company().members_view().is_empty()) {
         return error(StatusCode::FORBIDDEN, "only whoever asked for this errand, its bot's owner, or the office owner can resume it");
     }
-    if !room.resumable {
-        return error(StatusCode::CONFLICT, "this errand was stored before resuming existed, so its tools aren't known: start it again instead");
+    match *room.resume.lock().unwrap_or_else(std::sync::PoisonError::into_inner) {
+        Resume::Ready => {}
+        Resume::Unknown => return error(StatusCode::CONFLICT, "this errand was stored before resuming existed, so its tools aren't known: start it again instead"),
+        Resume::Used => return error(StatusCode::CONFLICT, "this errand was resumed once already: start it again instead"),
     }
-    let committed = hub.errands().committed_usd();
-    let could_spend = ERRAND_CAP_USD - room.caller.spend().cost_usd;
-    if committed + could_spend > hub.config.errands_cap_usd {
-        return error(StatusCode::PAYMENT_REQUIRED, &format!("the office's errand budget is spent (${committed:.2} of ${:.2})", hub.config.errands_cap_usd));
+    if let Some(why) = over_office_budget(&hub, &room) {
+        return error(StatusCode::PAYMENT_REQUIRED, &why);
     }
+    // What the run will be told, from the ledger (a ledger that can't be read is no
+    // reason to tell it "no calls yet").
+    let entries = match room.ledger.entries() {
+        Ok(e) => e,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
     {
         let mut inner = room.lock();
         let cut_off = inner.history.iter().rev().find(|e| !matches!(e, ErrandEvent::Idle)).is_some_and(|e| matches!(e, ErrandEvent::Failed { turn: 0, reason } if reason.starts_with(RESTARTED)));
@@ -907,10 +913,13 @@ pub(crate) async fn resume(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
         }
         inner.busy = true;
     }
-    let note = recovery_note(&room.ledger.entries().unwrap_or_default());
-    room.push(ErrandEvent::Resumed { note: note.clone() });
+    *room.resume.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Resume::Used;
+    if let (Some(store), Ok(json)) = (&room.store, serde_json::to_string(&room.meta())) {
+        store.send(Op::Errand { id: room.id.clone(), json });
+    }
+    room.push(ErrandEvent::Resumed { note: errand::resume_note(&entries) });
     room.push(ErrandEvent::Busy { turn: 0, question: None });
-    tokio::spawn(work(hub, room, Some(note)));
+    tokio::spawn(work(hub, room, true));
     StatusCode::ACCEPTED.into_response()
 }
 
@@ -1066,7 +1075,7 @@ pub(crate) async fn forget(State(hub): State<Arc<Hub>>, Path(id): Path<String>, 
                     }
                 }
                 ErrandEvent::Draft { check, .. } => *check = withdrawn_check(),
-                other => scrub_approval(other, &before),
+                other => scrub_event(other, &before, &after),
             }
         }
         if inner.report.is_some() {
@@ -1136,12 +1145,18 @@ async fn scrub_recall(hub: &Hub, errand: &str, seq: u64) -> Vec<(String, String)
 }
 
 /// The approval card for a forgotten call showed its arguments: they go too.
-fn scrub_approval(event: &mut ErrandEvent, forgotten: &Entry) {
-    if let ErrandEvent::Approval { tool, args, destinations, .. } = event
-        && forgotten.action.call.as_ref().is_some_and(|c| c.tool == *tool && serde_json::from_str::<Value>(&c.args).ok().as_ref() == Some(&*args))
-    {
-        *args = Value::String(agora_engine::ledger::FORGOTTEN.into());
-        destinations.clear();
+/// Forget `forgotten` (as it was) from an approval card, and write a resume note again
+/// from the ledger as it now stands (`after`).
+fn scrub_event(event: &mut ErrandEvent, forgotten: &Entry, after: &[Entry]) {
+    match event {
+        ErrandEvent::Approval { tool, args, destinations, .. }
+            if forgotten.action.call.as_ref().is_some_and(|c| c.tool == *tool && serde_json::from_str::<Value>(&c.args).ok().as_ref() == Some(&*args)) =>
+        {
+            *args = Value::String(agora_engine::ledger::FORGOTTEN.into());
+            destinations.clear();
+        }
+        ErrandEvent::Resumed { note } => *note = errand::resume_note(after),
+        _ => {}
     }
 }
 
@@ -1410,7 +1425,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
             approvals: Mutex::default(),
         available: Mutex::default(),
             only_tools: meta.only_tools.clone(),
-            resumable: meta.resumable,
+            resume: Mutex::new(meta.resume),
             at_ms: meta.at_ms,
             day: std::sync::atomic::AtomicUsize::new(meta.day),
             caller: Caller::new(hub.config.muse.clone(), hub.config.baseten.clone(), budget),
