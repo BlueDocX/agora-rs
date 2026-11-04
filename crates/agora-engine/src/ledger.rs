@@ -275,8 +275,7 @@ impl Ledger {
                 Some(call) if action.target.is_empty() => call.tool.clone(),
                 _ => action.target.clone(),
             };
-            self.append(agent, &action, &Outcome { ok: false, subject, result })?;
-            self.lock().execute("DELETE FROM pending WHERE rowid = ?1", params![rowid])?;
+            self.write(agent, &action, &Outcome { ok: false, subject, result }, Some(*rowid))?;
         }
         Ok(open.len())
     }
@@ -285,6 +284,12 @@ impl Ledger {
     /// down, if any. Reads the head and writes the new entry under one lock, so
     /// concurrent agents still form a single chain.
     pub(crate) fn append(&self, agent: &str, action: &Action, outcome: &Outcome) -> Result<Entry, JournalError> {
+        self.write(agent, action, outcome, None)
+    }
+
+    /// Append the entry and, in the same transaction, settle pending row `settles`
+    /// (or, with `None`, the matching call `agent` wrote down).
+    fn write(&self, agent: &str, action: &Action, outcome: &Outcome, settles: Option<i64>) -> Result<Entry, JournalError> {
         let mut db = self.lock();
         let db = db.transaction()?;
         let head: Option<(i64, String)> = db
@@ -314,10 +319,13 @@ impl Ledger {
             hash,
             salt
         ])?;
-        db.execute(
-            "DELETE FROM pending WHERE rowid = (SELECT rowid FROM pending WHERE run_id = ?1 AND agent = ?2 AND action = ?3 LIMIT 1)",
-            params![self.run_id, agent, action_json(action)],
-        )?;
+        match settles {
+            Some(rowid) => db.execute("DELETE FROM pending WHERE rowid = ?1", params![rowid])?,
+            None => db.execute(
+                "DELETE FROM pending WHERE rowid = (SELECT rowid FROM pending WHERE run_id = ?1 AND agent = ?2 AND action = ?3 LIMIT 1)",
+                params![self.run_id, agent, action_json(action)],
+            )?,
+        };
         db.commit()?;
         Ok(Entry {
             seq,

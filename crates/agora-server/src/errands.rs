@@ -1295,7 +1295,7 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
         // Entries the stream never showed (closed as unknown at a restart) join it.
         let shown: Vec<u64> = history.iter().filter_map(|e| if let ErrandEvent::Step { entry } = e { Some(entry.seq) } else { None }).collect();
         let missing: Vec<Entry> = ledger.entries().unwrap_or_default().into_iter().filter(|e| !shown.contains(&e.seq)).collect();
-        let unknown = missing.iter().filter(|e| e.outcome.result == agora_engine::ledger::UNKNOWN).count();
+        let unknown = missing.iter().filter(|e| e.outcome.result.starts_with(agora_engine::ledger::UNKNOWN)).count();
         history.extend(missing.into_iter().map(|entry| ErrandEvent::Step { entry }));
         let turns = history.iter().filter_map(|e| if let ErrandEvent::Busy { turn, .. } = e { Some(*turn) } else { None }).max().unwrap_or(0);
         // Cut off: the last turn started (busy) and never went idle.

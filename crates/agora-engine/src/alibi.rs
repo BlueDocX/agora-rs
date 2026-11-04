@@ -482,8 +482,10 @@ fn judge(claim: &Claim, entries: &[Entry]) -> Verdict {
     }
 }
 
+/// Lowercase, whitespace squashed, joiners (U+200C/U+200D) dropped: a parser may or
+/// may not copy a joiner into its quote.
 fn squash(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.replace(['\u{200C}', '\u{200D}'], "").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 /// Lowercase, with punctuation as spaces, for comparing quoted words with what the

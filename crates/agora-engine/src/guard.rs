@@ -237,8 +237,10 @@ pub fn correction(entries: &[Entry]) -> String {
 
 const ABBREVIATIONS: [&str; 6] = ["mr.", "mrs.", "ms.", "dr.", "e.g.", "i.e."];
 
+/// Lowercase, whitespace squashed, joiners (U+200C/U+200D) dropped: a parser may or
+/// may not copy a joiner into its quote.
 fn squash(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.replace(['\u{200C}', '\u{200D}'], "").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 /// `message` without the sentences that hold any of `spans`.
@@ -458,6 +460,12 @@ mod tests {
         assert_eq!(c.false_claims, ["I emailed Arjun"], "{c:?}");
         assert!(c.unverified.is_none(), "{c:?}");
         assert!(!c.message.contains('\u{200B}') && !c.message.contains(">>>"), "judged and delivered as the parsers saw it: {}", c.message);
+        // A joiner stays in the message (scripts need it), and a quote without it
+        // still matches: the claim is caught and its sentence can be cut.
+        let joined = "I texted Priya. I e\u{200D}mailed Arjun.";
+        let j = judge(joined, &claims, Some(&claims), false, &entries);
+        assert_eq!((j.false_claims.as_slice(), j.message.as_str()), (["I emailed Arjun".to_string()].as_slice(), joined));
+        assert_eq!(without(joined, &j.false_claims), "I texted Priya.");
         let p = revision_prompt("Asha", &c, &entries);
         let quoted = p.split("\n\nYour action log").next().unwrap();
         assert_eq!(quoted.matches(">>>").count(), 1, "{p}");
