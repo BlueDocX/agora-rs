@@ -501,7 +501,7 @@ pub async fn run(muse: MuseClient, config: &RunConfig, brief: &str, journal: Opt
     let reviewer_model = config.reviewer_model.clone().unwrap_or_else(|| config.model.clone());
     let models = config.check_hosts()?;
     let budget = Budget::new(&models, config.cap_usd).map_err(RunError::Budget)?;
-    let caller = Caller { muse, baseten: config.baseten.clone(), budget, journal };
+    let caller = Caller { muse, baseten: config.baseten.clone(), budget, journal, tape: None };
     if let Some(team) = &config.team {
         emit(config.events.as_ref(), RunEvent::Staffed { team: team.clone() });
     }

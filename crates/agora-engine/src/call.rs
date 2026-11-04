@@ -2,10 +2,14 @@
 //! already completed, otherwise check the budget, call, charge, refuse a reply that
 //! did not finish, and journal it before anything acts on it.
 
-use agora_muse::{Host, MuseClient, MuseError, Request, Response, host_of};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use agora_muse::{Host, MuseClient, MuseError, RateLimit, Request, Response, Usage, host_of};
+use serde::{Deserialize, Serialize};
 
 use crate::budget::{Budget, OverBudget};
-use crate::journal::{Journal, JournalError};
+use crate::journal::{Journal, JournalError, request_key};
 
 #[derive(Debug)]
 pub enum CallError {
@@ -47,13 +51,122 @@ pub struct Caller {
     pub(crate) baseten: Option<MuseClient>,
     pub(crate) budget: Budget,
     pub(crate) journal: Option<Journal>,
+    pub(crate) tape: Option<Arc<Tape>>,
+}
+
+/// Every model reply of a run, in order, so the run can be replayed with no model at
+/// all (tests, CI). A reply is found by (prompt, model, how many times that pair was
+/// asked), not by the request's exact bytes: a reworded prompt still replays, so the
+/// replay checks what the code does with the same replies. A call with no reply left
+/// is an error, and [`Tape::unused`] counts replies never asked for.
+#[derive(Debug, Default)]
+pub struct Tape {
+    replaying: bool,
+    calls: Mutex<Vec<Taped>>,
+    /// Replay: how many replies of each (prompt, model) have been served.
+    served: Mutex<HashMap<(String, String), usize>>,
+    /// Replay: calls whose request differs from the recorded one (a changed prompt).
+    changed: Mutex<usize>,
+}
+
+/// One recorded reply, unfinished ones too (the run saw them).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Taped {
+    pub prompt: String,
+    pub model: String,
+    /// SHA-256 of the request body as sent.
+    pub request: String,
+    pub status: String,
+    pub text: String,
+    /// Input, cached, output and reasoning tokens.
+    pub tokens: [u64; 4],
+}
+
+impl Tape {
+    /// An empty tape that records.
+    #[must_use]
+    pub fn recording() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A tape that serves `calls` back.
+    #[must_use]
+    pub fn replaying(calls: Vec<Taped>) -> Arc<Self> {
+        Arc::new(Self { replaying: true, calls: Mutex::new(calls), ..Self::default() })
+    }
+
+    /// The recorded calls.
+    #[must_use]
+    pub fn calls(&self) -> Vec<Taped> {
+        lock(&self.calls).clone()
+    }
+
+    /// Replay: recorded replies no call asked for.
+    #[must_use]
+    pub fn unused(&self) -> usize {
+        lock(&self.calls).len() - lock(&self.served).values().sum::<usize>()
+    }
+
+    /// Replay: calls served although their request differs from the recorded one.
+    #[must_use]
+    pub fn changed(&self) -> usize {
+        *lock(&self.changed)
+    }
+
+    fn record(&self, request: &Request, response: &Response) {
+        let u = response.usage;
+        lock(&self.calls).push(Taped {
+            prompt: prompt_of(request),
+            model: request.model.clone(),
+            request: request_key(request),
+            status: response.status.clone(),
+            text: response.text.clone(),
+            tokens: [u.input_tokens, u.cached_tokens, u.output_tokens, u.reasoning_tokens],
+        });
+    }
+
+    fn replay(&self, request: &Request) -> Option<Response> {
+        let key = (prompt_of(request), request.model.clone());
+        let mut served = lock(&self.served);
+        let n = served.entry(key.clone()).or_insert(0);
+        let taped = lock(&self.calls).iter().filter(|t| (&t.prompt, &t.model) == (&key.0, &key.1)).nth(*n).cloned()?;
+        *n += 1;
+        if taped.request != request_key(request) {
+            *lock(&self.changed) += 1;
+        }
+        let [input_tokens, cached_tokens, output_tokens, reasoning_tokens] = taped.tokens;
+        Some(Response {
+            id: format!("tape-{}-{n}", key.0),
+            model: taped.model,
+            status: taped.status,
+            text: taped.text,
+            usage: Usage { input_tokens, cached_tokens, output_tokens, reasoning_tokens },
+            rate_limit: RateLimit::default(),
+        })
+    }
+}
+
+fn prompt_of(request: &Request) -> String {
+    request.prompt_cache_key.clone().unwrap_or_else(|| "a call".into())
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Caller {
     /// A caller with no journal (nothing to resume).
     #[must_use]
     pub fn new(muse: MuseClient, baseten: Option<MuseClient>, budget: Budget) -> Self {
-        Self { muse, baseten, budget, journal: None }
+        Self { muse, baseten, budget, journal: None, tape: None }
+    }
+
+    /// This caller records every reply on `tape`, or (a replaying tape) answers every
+    /// call from it and never reaches a model.
+    #[must_use]
+    pub fn with_tape(mut self, tape: Arc<Tape>) -> Self {
+        self.tape = Some(tape);
+        self
     }
 
     #[must_use]
@@ -75,12 +188,23 @@ impl Caller {
             return Ok(response);
         }
         self.budget.check().map_err(CallError::OverBudget)?;
-        let client = match host_of(&request.model) {
-            Some(Host::Meta) => &self.muse,
-            Some(Host::Baseten) => self.baseten.as_ref().ok_or_else(|| CallError::NoHost(request.model.clone()))?,
-            None => return Err(CallError::NoHost(request.model.clone())),
+        let response = match self.tape.as_deref() {
+            Some(tape) if tape.replaying => tape
+                .replay(request)
+                .ok_or_else(|| CallError::Journal(JournalError::new(format!("the tape has no reply left for {} on {}", prompt_of(request), request.model))))?,
+            tape => {
+                let client = match host_of(&request.model) {
+                    Some(Host::Meta) => &self.muse,
+                    Some(Host::Baseten) => self.baseten.as_ref().ok_or_else(|| CallError::NoHost(request.model.clone()))?,
+                    None => return Err(CallError::NoHost(request.model.clone())),
+                };
+                let response = client.respond(request).await.map_err(CallError::Model)?;
+                if let Some(tape) = tape {
+                    tape.record(request, &response);
+                }
+                response
+            }
         };
-        let response = client.respond(request).await.map_err(CallError::Model)?;
         self.budget.charge(&request.model, &response);
         if response.status != "completed" {
             // Say which prompt it was, so a cut-off can be traced.

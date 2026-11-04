@@ -99,7 +99,7 @@ fn open(path: &Path) -> Result<Connection, JournalError> {
 }
 
 /// Hex SHA-256 of the request exactly as it is sent.
-fn request_key(request: &Request) -> String {
+pub(crate) fn request_key(request: &Request) -> String {
     let digest = Sha256::digest(request.to_body().to_string().as_bytes());
     digest.iter().fold(String::with_capacity(64), |mut hex, b| {
         let _ = write!(hex, "{b:02x}");

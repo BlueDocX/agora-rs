@@ -17,7 +17,7 @@ pub mod scheduler;
 pub mod signing;
 
 pub use budget::{Budget, BudgetError, OverBudget, Spend};
-pub use call::{CallError, Caller};
+pub use call::{CallError, Caller, Tape, Taped};
 pub use events::{EventSender, ReviewedBy, RunEvent, TaskView};
 pub use journal::{Journal, JournalError, RunRecord};
 pub use ledger::{Broken, Entry, Ledger};
