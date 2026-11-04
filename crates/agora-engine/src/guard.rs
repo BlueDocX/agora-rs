@@ -19,7 +19,7 @@ use agora_muse::{Effort, Message, Request};
 use serde::{Deserialize, Serialize};
 
 use crate::CHARTER;
-use crate::alibi::{self, Audit, Claim, Verdict};
+use crate::alibi::{self, Audit, Claim, Verdict, squash};
 use crate::call::{CallError, Caller};
 use crate::ledger::Entry;
 
@@ -236,12 +236,6 @@ pub fn correction(entries: &[Entry]) -> String {
 }
 
 const ABBREVIATIONS: [&str; 6] = ["mr.", "mrs.", "ms.", "dr.", "e.g.", "i.e."];
-
-/// Lowercase, whitespace squashed, joiners (U+200C/U+200D) dropped: a parser may or
-/// may not copy a joiner into its quote.
-fn squash(s: &str) -> String {
-    s.replace(['\u{200C}', '\u{200D}'], "").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
-}
 
 /// `message` without the sentences that hold any of `spans`.
 #[must_use]

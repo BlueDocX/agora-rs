@@ -121,7 +121,7 @@ impl Audit {
 /// "Arjun Shah <…>" share "arjun").
 /// Short day names read as the day ("Thu" is "thursday").
 fn words(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 3).map(|w| full_day(&w.to_lowercase())).collect()
+    agora_core::quote::unjoined(s).split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 3).map(|w| full_day(&w.to_lowercase())).collect()
 }
 
 fn full_day(w: &str) -> String {
@@ -482,16 +482,16 @@ fn judge(claim: &Claim, entries: &[Entry]) -> Verdict {
     }
 }
 
-/// Lowercase, whitespace squashed, joiners (U+200C/U+200D) dropped: a parser may or
-/// may not copy a joiner into its quote.
-fn squash(s: &str) -> String {
-    s.replace(['\u{200C}', '\u{200D}'], "").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+/// Lowercase, whitespace squashed, joiners dropped: how a quoted span is found in a
+/// message (here) and in a sentence (by the guard, which must agree).
+pub(crate) fn squash(s: &str) -> String {
+    agora_core::quote::unjoined(s).split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 /// Lowercase, with punctuation as spaces, for comparing quoted words with what the
 /// ledger holds ("I’ll" and "I'll" read alike).
 fn plain(s: &str) -> String {
-    s.chars().map(|c| if c.is_alphanumeric() || ":./@₹,-".contains(c) { c.to_ascii_lowercase() } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+    agora_core::quote::unjoined(s).chars().map(|c| if c.is_alphanumeric() || ":./@₹,-".contains(c) { c.to_ascii_lowercase() } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Words a message puts in quotes, in a sentence about sending, saving, booking or
@@ -986,6 +986,14 @@ mod tests {
 
     /// B8 (`all_baseten_v10`, deadline-todo #0): the list went in `when`, the narration
     /// became the file, and the report quoted the line it never wrote.
+    #[test]
+    fn a_joiner_doesnt_change_what_the_matchers_see() {
+        for f in [plain, squash] {
+            assert_eq!(f("Sent “Kes\u{200D}trel q\u{200C}3”"), f("Sent “Kestrel q3”"));
+        }
+        assert_eq!(words("Kes\u{200D}trel"), words("Kestrel"));
+    }
+
     #[test]
     fn quoted_words_nothing_in_the_ledger_holds_are_false() {
         let ledger = Ledger::in_memory("run-q").unwrap();

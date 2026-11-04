@@ -1301,13 +1301,17 @@ fn restore_errands(hub: &Hub, kept: Vec<(String, String, Vec<String>)>, pruned: 
         // Cut off: the last turn started (busy) and never went idle.
         let last_busy = history.iter().rposition(|e| matches!(e, ErrandEvent::Busy { .. }));
         let cut_off = last_busy.is_some_and(|at| !history[at..].iter().any(|e| matches!(e, ErrandEvent::Idle)));
+        let calls = if unknown == 1 { "1 call".to_string() } else { format!("{unknown} calls") };
         if cut_off {
             let reason = match unknown {
                 0 => "the office restarted while this was running".to_string(),
-                n => format!("the office restarted while this was running; {} may or may not have happened (see the ledger)", if n == 1 { "1 call".to_string() } else { format!("{n} calls") }),
+                _ => format!("the office restarted while this was running; {calls} may or may not have happened (see the ledger)"),
             };
             history.push(ErrandEvent::Failed { turn: turns, reason });
             history.push(ErrandEvent::Idle);
+        } else if unknown > 0 {
+            // It had already stopped (its ledger failed mid-call): still say why these are here.
+            history.push(ErrandEvent::Failed { turn: turns, reason: format!("the office stopped during a call; {calls} may or may not have happened (see the ledger)") });
         }
         let report = history.iter().find_map(|e| match e {
             ErrandEvent::Said { turn: 0, message, correction, .. } => Some(match correction {

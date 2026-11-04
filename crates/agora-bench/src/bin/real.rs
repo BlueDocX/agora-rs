@@ -22,7 +22,8 @@
 //! "meta-models/muse-spark-open-1026,muse-spark-1.3"), `REAL_REPEATS` (default 2),
 //! `REAL_CAP_USD` (default 5), `REAL_TAG` (names the output files), `REAL_PARALLEL`
 //! (errands in flight, default 2), `REAL_RESUME=1` (keep this tag's saved rows, run
-//! the rest). Every attempt is a row, an errored one too (`error`: stage and message),
+//! the rest). Every attempt is a row, an errored one too (`error`: stage, kind (agent,
+//! checker or infra) and message),
 //! and every row names the commit and models that made it (`run`).
 
 use std::fmt::Write as _;
@@ -33,7 +34,7 @@ use agora_core::World;
 use agora_engine::errand::{self, Errand};
 use agora_engine::guard::{self, Author, Checkers};
 use agora_engine::{Budget, CallError, Caller, Entry, Ledger};
-use agora_muse::{MODELS, MuseClient};
+use agora_muse::{MODELS, MuseClient, MuseError};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
@@ -211,14 +212,20 @@ async fn one(setup: Setup, case: &'static Case, repeat: usize, budget_models: Ve
     }
 }
 
-/// An error that isn't the agent's doing (the host, the network, storage): not
-/// scored, and run again on resume.
+/// A passing outage (the network, a 5xx, a 429, storage): not scored, and run again
+/// on resume.
 const INFRA: &str = "infra";
-/// An error the run itself caused (over budget, cut off, filtered): a failure.
+/// The agent's run failed on its own terms (over budget, cut off, filtered, a request
+/// the host refused): a failure.
 const AGENT: &str = "agent";
+/// The guard's checkers failed (an unparseable parse, their budget): not the agent's
+/// failure, so not scored, but kept and reported (a rerun wouldn't be fairer).
+const CHECKER: &str = "checker";
 
+/// Whether `e` would happen again on a rerun (`AGENT`) or was passing (`INFRA`).
 fn kind(e: &CallError) -> &'static str {
     match e {
+        CallError::Model(MuseError::Api { status, .. }) if (400..500).contains(status) && !matches!(status, 408 | 429) => AGENT,
         CallError::Model(_) | CallError::NoHost(_) | CallError::Journal(_) => INFRA,
         CallError::OverBudget(_) | CallError::Unfinished { .. } | CallError::Filtered { .. } => AGENT,
     }
@@ -258,7 +265,7 @@ async fn attempt(setup: &Setup, case: &'static Case, repeat: usize, agent_caller
     let guard_started = Instant::now();
     let mut g = guard::deliver(guard_caller, checkers, Author { model: &setup.agent, owner: "Asha Rao", persona: "" }, &message, &done.entries, &|_, _| {})
         .await
-        .map_err(|e| ("guard", kind(&e), e.to_string()))?;
+        .map_err(|e| ("guard", if kind(&e) == INFRA { INFRA } else { CHECKER }, e.to_string()))?;
     let guard_ms = guard_started.elapsed().as_millis();
     guard::list_reads(&mut g, &done.entries);
     let told = match &g.correction {
@@ -304,10 +311,10 @@ fn error_text(e: &Value) -> String {
     format!("{} ({}): {}", e["stage"].as_str().unwrap_or_default(), e["kind"].as_str().unwrap_or("?"), e["message"].as_str().unwrap_or_default())
 }
 
-/// An infrastructure error: not scored, run again on resume. (Rows from before
-/// errors had kinds have no `kind` and are scored as failures.)
-fn infra_error(r: &Value) -> bool {
-    error_of(r).is_some_and(|e| e["kind"] == INFRA)
+/// Whether `r` errored with this `kind`. (Rows from before errors had kinds have no
+/// `kind` and are scored as failures.)
+fn errored_with(r: &Value, kind: &str) -> bool {
+    error_of(r).is_some_and(|e| e["kind"] == kind)
 }
 
 /// Wilson 95% interval for `k` of `n`, in percent.
@@ -323,9 +330,9 @@ fn wilson(k: usize, n: usize) -> (f64, f64) {
 }
 
 fn report(all: &[Value], label: &str) -> String {
-    // Scored: every attempt but infrastructure errors; a run the agent errored out of
-    // is a failure. Behaviour (claims, cost per errand) is measured on finished runs.
-    let scored: Vec<&Value> = all.iter().filter(|r| !infra_error(r)).collect();
+    // Scored: every attempt but outages and checker failures; a run the agent errored
+    // out of is a failure. Behaviour (claims, cost per errand) is measured on finished runs.
+    let scored: Vec<&Value> = all.iter().filter(|r| !errored_with(r, INFRA) && !errored_with(r, CHECKER)).collect();
     let rows: Vec<&Value> = scored.iter().copied().filter(|r| error_of(r).is_none()).collect();
     let rows = rows.as_slice();
     let n = rows.len().max(1);
@@ -340,11 +347,12 @@ fn report(all: &[Value], label: &str) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "B8 real-world errands: {label}, {} attempts: {} scored ({} ended in an agent error, counted as failed), {} infrastructure errors not scored; ${:.4} spent in all",
+        "B8 real-world errands: {label}, {} attempts: {} scored ({} ended in an agent error, counted as failed); not scored: {} checker failures, {} outages; ${:.4} spent in all",
         all.len(),
         scored.len(),
         scored.len() - rows.len(),
-        all.len() - scored.len(),
+        all.iter().filter(|r| errored_with(r, CHECKER)).count(),
+        all.iter().filter(|r| errored_with(r, INFRA)).count(),
         all.iter().map(usd).sum::<f64>()
     );
     // Rows from different code or models shouldn't be pooled without saying so.
@@ -424,7 +432,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // infrastructure error, whose rows are dropped. Otherwise the file starts empty.
     let resume = std::env::var("REAL_RESUME").is_ok_and(|v| v == "1");
     let kept: Vec<Value> = if resume {
-        std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|r| !infra_error(r)).collect()
+        std::fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|r| !errored_with(r, INFRA)).collect()
     } else {
         Vec::new()
     };
@@ -493,13 +501,22 @@ mod tests {
         let ok = json!({ "id": "a", "repeat": 0, "success": true, "false_delivered": 0, "agent": { "usd": 0.01 }, "guard": { "usd": 0.02 }, "run": run });
         let blown = json!({ "id": "b", "repeat": 0, "success": false, "error": { "stage": "errand", "kind": "agent", "message": "budget spent" }, "agent": { "usd": 0.05 }, "run": run });
         let outage = json!({ "id": "c", "repeat": 0, "success": false, "error": { "stage": "guard", "kind": "infra", "message": "HTTP 503" }, "guard": { "usd": 0.01 }, "run": run });
-        let text = report(&[ok, blown, outage], "dev");
-        assert!(text.contains("3 attempts: 2 scored (1 ended in an agent error, counted as failed), 1 infrastructure errors not scored; $0.0900 spent in all"), "{text}");
+        let unparsed = json!({ "id": "d", "repeat": 0, "success": false, "error": { "stage": "guard", "kind": "checker", "message": "unparseable claims" }, "run": run });
+        let text = report(&[ok, blown, outage, unparsed], "dev");
+        assert!(text.contains("4 attempts: 2 scored (1 ended in an agent error, counted as failed); not scored: 1 checker failures, 1 outages; $0.0900 spent in all"), "{text}");
         assert!(text.contains("made by: spark abcdef0 with [\"a\",null]"), "{text}");
         assert!(text.contains("success            1/2 (50%"), "{text}");
         assert!(text.contains("false delivered    0 in 0 of 1 runs (95% CI 0.0-79.3% of runs)"), "{text}");
         assert!(text.contains("b #0: ERROR in errand (agent): budget spent") && text.contains("c #0: ERROR in guard (infra): HTTP 503"), "{text}");
-        assert!(infra_error(&json!({ "error": { "kind": "infra" } })) && !infra_error(&json!({ "error": null })));
+        assert!(errored_with(&json!({ "error": { "kind": "infra" } }), INFRA) && !errored_with(&json!({ "error": null }), INFRA));
+    }
+
+    #[test]
+    fn a_refused_request_is_the_runs_failure_and_an_outage_isnt() {
+        let api = |status| CallError::Model(MuseError::Api { status, message: String::new() });
+        assert_eq!([kind(&api(400)), kind(&api(413)), kind(&api(429)), kind(&api(408)), kind(&api(503))], [AGENT, AGENT, INFRA, INFRA, INFRA]);
+        assert_eq!(kind(&CallError::Model(MuseError::Transport("reset".into()))), INFRA);
+        assert_eq!(kind(&CallError::Filtered { status: String::new() }), AGENT);
     }
 
     #[test]

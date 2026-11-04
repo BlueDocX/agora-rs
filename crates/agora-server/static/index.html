@@ -2955,6 +2955,7 @@ function companyNote(a, live) {
 async function openJoin() {
   if (me) return;
   if (!presets.length) await loadTeams(); // an invite link opens this before the teams arrive
+  if (me) return; // joined while the teams loaded
   botRoleOptions($("joinrole"), "");
   // The first person in owns the office; everyone after needs the owner's invite.
   const first = !company.members.length;
