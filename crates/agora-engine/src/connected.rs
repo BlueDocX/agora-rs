@@ -82,20 +82,12 @@ pub trait Gateway: Send + Sync {
     fn approve<'a>(&'a self, ask: Ask<'a>) -> BoxFuture<'a, Decision>;
 }
 
-/// Characters that can hide text from a person or a model: controls (but newlines
-/// and tabs), format characters, line and paragraph separators.
-fn hidden(c: char) -> bool {
-    (c.is_control() && c != '\n' && c != '\t')
-        || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
-}
-
 /// A result as the agent may see it: hidden characters gone, the `<<<`/`>>>` data
 /// delimiters neutralised (so it can't close its own quote and pose as the system),
 /// at most [`MAX_RESULT_CHARS`].
 #[must_use]
 pub fn clean(text: &str) -> String {
-    let kept: String = text.chars().filter(|&c| !hidden(c)).collect();
-    let kept = kept.replace("<<<", "‹‹‹").replace(">>>", "›››");
+    let kept = agora_core::quote::neutral(text);
     let total = kept.chars().count();
     if total <= MAX_RESULT_CHARS {
         return kept;

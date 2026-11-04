@@ -97,9 +97,8 @@ pub(crate) fn accept(uploads: Vec<Upload>, model: &str) -> Result<Attached, Stri
             if data.len() > MAX_TEXT_BYTES {
                 return Err(format!("{name} must be under {} KB", MAX_TEXT_BYTES / 1024));
             }
-            // The file can't close its own quote: its delimiters are neutralised.
-            let text = text.trim_end().replace("<<<", "‹‹‹").replace(">>>", "›››");
-            let _ = write!(out.text, "\n\nAttached file {name}:\n<<<\n{text}\n>>>");
+            // The file can't close its own quote or hide words (see `agora_core::quote`).
+            let _ = write!(out.text, "\n\nAttached file {name}:\n{}", agora_core::quote(text.trim_end()));
             "text/plain".to_string()
         } else {
             return Err(format!("{name}: attach an image (PNG, JPEG, GIF, WebP), a PDF, or a text file (.txt, .md, .csv, .json)"));

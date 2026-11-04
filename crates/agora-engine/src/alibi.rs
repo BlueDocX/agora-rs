@@ -657,7 +657,7 @@ pub async fn extract_with(caller: &Caller, model: &str, message: &str, connected
     }
     let request = Request::new(model, vec![
         Message::system(EXTRACT_ROLE),
-        Message::user(format!("Tools the assistant had:\n{tools}\n\nThe assistant's message:\n<<<\n{message}\n>>>")),
+        Message::user(format!("Tools the assistant had:\n{tools}\n\nThe assistant's message:\n{}", agora_core::quote(message))),
     ])
     .effort(EXTRACT_EFFORT)
     .json_schema("claims", claims_schema(connected))

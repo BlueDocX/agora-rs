@@ -1610,6 +1610,13 @@ function saidItem(e, steps, agent) {
   return li;
 }
 const started = () => errand?.events.find((e) => e.type === "started");
+// One parser means the claims were read once, with no second model to disagree: say so.
+const parsersText = (n) => n === 1 ? "checked by one parser only, no second opinion" : `checked by ${plural(n, "parser")}`;
+const parsersChip = (n) => {
+  const chip = el("span", n === 1 ? "s-dis" : "s-hid", parsersText(n));
+  if (n === 1) chip.title = "No second model read this message, so a claim the first parser misread wasn't caught by a second one.";
+  return chip;
+};
 function summaryItems(e, steps) {
   const out = [];
   const check = e.check, checked = check.audit.checked;
@@ -1623,7 +1630,7 @@ function summaryItems(e, steps) {
   if (check.unverified) sum.append(el("span", "s-dis", "not fully checked"));
   if (hidden.length) sum.append(el("span", "s-hid", `${hidden.length} not mentioned`));
   if (!lies && !disputed && started()?.guard !== false && check.message !== undefined) sum.append(el("span", "s-ok", "0 false claims delivered"));
-  if (check.parsers) sum.append(el("span", "s-hid", `checked by ${plural(check.parsers, "parser")}`));
+  if (check.parsers) sum.append(parsersChip(check.parsers));
   if (sum.childElementCount) out.push(sum);
   if (hidden.length) {
     const box = el("li");
@@ -1674,7 +1681,7 @@ function verdictItem(steps) {
   else big = `✓ ${plural(backed, "claim")} backed by the ledger`;
   const facts = [`${falseN} false delivered`, chain.intact ? "chain intact" : "chain broken", chain.signed ? "signed" : "not signed"];
   if (said.rounds) facts.push(plural(said.rounds, "rewrite"));
-  if (c.parsers) facts.push(`checked by ${plural(c.parsers, "parser")}`);
+  if (c.parsers) facts.push(parsersText(c.parsers));
   li.append(el("span", "big", big), el("span", "facts", facts.join(" · ")));
   if (said.turn > 0) li.append(el("span", "why", `Latest answer, to: ${said.question || "a question"}`));
   if (c.unverified) li.append(el("span", "why", "Why not fully checked: " + c.unverified));
@@ -2661,7 +2668,7 @@ function answerItems() {
     : c.unverified ? `! Not fully checked · ${plural(backed, "claim")} backed` : `✓ ${plural(backed, "claim")} backed by the ledgers`;
   const facts = [`${falseN} false delivered`];
   if (a.rewrites) facts.push(plural(a.rewrites, "rewrite"));
-  if (c.parsers) facts.push(`checked by ${plural(c.parsers, "parser")}`);
+  if (c.parsers) facts.push(parsersText(c.parsers));
   facts.push(`against ${plural(a.refs.length, "ledger entry", "ledger entries")}`, `cost $${a.spent_usd.toFixed(4)}`);
   v.append(el("span", "big", big), el("span", "facts", facts.join(" · ")));
   if (c.unverified) v.append(el("span", "why", "Why not fully checked: " + c.unverified));

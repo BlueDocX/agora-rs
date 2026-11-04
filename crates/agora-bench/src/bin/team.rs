@@ -98,7 +98,7 @@ async fn judge(caller: &Caller, model: &str, team: &Team, agent: &str, task: &ag
     let rules: Vec<String> = standards(team, agent).iter().map(|s| format!("- {s}")).collect();
     let ids: Vec<&str> = team.agents.iter().map(|m| m.id.as_str()).collect();
     let prompt = format!(
-        "Team roster:\n{}\n\nThe specialist: {} ({}), role: {}.\nStandards for this role:\n{}\n\nTask: {}\n{}\nAcceptance criteria:\n{}\n\nThe result:\n<<<\n{}\n>>>",
+        "Team roster:\n{}\n\nThe specialist: {} ({}), role: {}.\nStandards for this role:\n{}\n\nTask: {}\n{}\nAcceptance criteria:\n{}\n\nThe result:\n{}",
         roster.join("\n"),
         a.id,
         a.name,
@@ -107,7 +107,7 @@ async fn judge(caller: &Caller, model: &str, team: &Team, agent: &str, task: &ag
         task.title,
         task.instructions,
         task.acceptance.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n"),
-        text.trim()
+        agora_core::quote(text.trim())
     );
     let request = Request::new(model, vec![Message::system(JUDGE_ROLE), Message::user(prompt)])
         .effort(Effort::Low)
